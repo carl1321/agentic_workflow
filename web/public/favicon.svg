@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#6e8efb"/>
+      <stop offset="100%" stop-color="#a777e3"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.8"/>
+    </linearGradient>
+  </defs>
+  <rect rx="56" ry="56" width="256" height="256" fill="url(#g)"/>
+  <!-- Bot head -->
+  <rect x="64" y="64" width="128" height="96" rx="24" fill="url(#g2)" />
+  <!-- Antenna -->
+  <circle cx="128" cy="48" r="10" fill="#ffffff" opacity="0.9"/>
+  <rect x="124" y="48" width="8" height="16" fill="#ffffff" opacity="0.9"/>
+  <!-- Eyes -->
+  <circle cx="98" cy="104" r="12" fill="#6e8efb"/>
+  <circle cx="158" cy="104" r="12" fill="#6e8efb"/>
+  <!-- Smile -->
+  <path d="M96 128 C 112 148, 144 148, 160 128" fill="none" stroke="#a777e3" stroke-width="8" stroke-linecap="round"/>
+  <!-- Accent ring -->
+  <circle cx="128" cy="128" r="118" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="6"/>
+</svg>
+

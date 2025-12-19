@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="filename" content="equipment_system.html">
+    <title>装备集成调度系统</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.2/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --secondary: #3498db;
+            --success: #27ae60;
+            --warning: #f39c12;
+            --danger: #e74c3c;
+            --light-bg: #ecf0f1;
+            --highlight: #1abc9c;
+            --dark: #1a252f;
+            --card-bg: #fff;
+            --text-dark: #2c3e50;
+            --text-light: #7f8c8d;
+            --shadow: 0 6px 15px rgba(0,0,0,0.1);
+            --radius: 10px;
+            --transition: all 0.3s ease;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #f5f7fa;
+            color: var(--text-dark);
+            font-size: 0.875rem;
+            line-height: 1.6;
+            padding: 1.5rem;
+        }
+        
+        .dashboard {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 1.5rem;
+            max-width: 1440px;
+            margin: 0 auto;
+        }
+        
+        .system-title {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: var(--primary);
+            font-size: 1.75rem;
+            font-weight: 700;
+            width: 100%;
+            padding: 1rem 0;
+            border-bottom: 1px solid #e0e6ed;
+        }
+        
+        /* 卡片基础样式 */
+        .module-card {
+            background: var(--card-bg);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 430px;
+            min-height: 780px;
+            transition: var(--transition);
+        }
+        
+        .module-card:hover {
+            box-shadow: 0 12px 25px rgba(0,0,0,0.15);
+            transform: translateY(-5px);
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid var(--light-bg);
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .btn {
+            background: var(--secondary);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .btn i {
+            font-size: 0.8rem;
+        }
+        
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+        }
+        
+        .btn-new {
+            background: var(--success);
+        }
+        
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+        
+        /* 筛选器样式 */
+        .filters {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .filter-item {
+            flex: 1;
+            min-width: 120px;
+        }
+        
+        .filter-item label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+        }
+        
+        select, input {
+            width: 100%;
+            padding: 0.5rem;
+            border-radius: 5px;
+            border: 1px solid #dcdde1;
+            font-family: 'Roboto', sans-serif;
+            background: white;
+        }
+        
+        /* 列表样式 */
+        .equipment-list {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 1.5rem;
+        }
+        
+        .list-item {
+            background: var(--light-bg);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 1rem;
+            grid-template-areas: 
+                "status header"
+                ". details"
+                ". usage";
+            transition: var(--transition);
+        }
+        
+        .list-item:hover {
+            background: #dde7f0;
+        }
+        
+        .item-status {
+            grid-area: status;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-top: 4px;
+        }
+        
+        .status-running { background: var(--success); }
+        .status-idle { background: var(--warning); }
+        .status-down { background: var(--danger); }
+        
+        .item-header {
+            grid-area: header;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .item-title {
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .item-subtitle {
+            color: var(--text-light);
+            font-size: 0.75rem;
+        }
+        
+        .item-details {
+            grid-area: details;
+            display: flex;
+            gap: 1rem;
+            font-size: 0.8rem;
+        }
+        
+        .item-details > div {
+            flex: 1;
+        }
+        
+        .detail-label {
+            font-size: 0.75rem;
+            color: var(--text-light);
+            margin-bottom: 0.25rem;
+        }
+        
+        .usage-chart {
+            grid-area: usage;
+            height: 25px;
+            margin-top: 0.5rem;
+        }
+        
+        /* 实时监控 */
+        .live-monitor {
+            background: #2c3e50;
+            border-radius: 8px;
+            height: 180px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .live-icon {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: var(--danger);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        
+        .monitor-placeholder {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.9rem;
+        }
+        
+        /* 任务调度管理 */
+        .task-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .task-list {
+            width: 45%;
+            overflow-y: auto;
+            border-right: 1px solid var(--light-bg);
+            padding-right: 1rem;
+        }
+        
+        .task-detail {
+            width: 55%;
+            padding-left: 1rem;
+            overflow-y: auto;
+        }
+        
+        /* 表格样式 */
+        .task-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .task-table th {
+            text-align: left;
+            font-size: 0.75rem;
+            color: var(--text-light);
+            padding: 0.5rem;
+            position: sticky;
+            top: 0;
+            background: white;
+            font-weight: 600;
+        }
+        
+        .task-table td {
+            padding: 0.75rem 0.5rem;
+            border-bottom: 1px solid var(--light-bg);
+            cursor: pointer;
+        }
+        
+        .task-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .status-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 30px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        
+        .status-pending { background: #fef5e7; color: #f39c12; }
+        .status-running { background: #eafaf1; color: #27ae60; }
+        .status-done { background: #e9f8fb; color: #2980b9; }
+        
+        /* 详情面板 */
+        .detail-panel {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.5rem;
+            height: 100%;
+        }
+        
+        .detail-title {
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin: 1.5rem 0;
+        }
+        
+        .btn-outline {
+            background: transparent;
+            border: 1px solid;
+            color: var(--secondary);
+        }
+        
+        /* 表单样式 */
+        .form-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-item {
+            margin-bottom: 1rem;
+        }
+        
+        .form-item label {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-light);
+        }
+        
+        .protocol-config {
+            grid-column: span 2;
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 8px;
+        }
+        
+        .text-center {
+            text-align: center;
+        }
+        
+        .flex-center {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin: 1.5rem 0;
+        }
+        
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--success);
+            font-weight: 500;
+            justify-content: center;
+        }
+        
+        .status-connected {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 1400px) {
+            .dashboard {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .module-card {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="system-title">
+            <i class="fas fa-microchip"></i> 装备集成调度系统
+        </div>
+        
+        <!-- 装备管理模块 -->
+        <div class="module-card">
+            <div class="card-header">
+                <div class="card-title">
+                    <i class="fas fa-server"></i> 装备管理
+                </div>
+                <button class="btn btn-new">
+                    <i class="fas fa-plus"></i> 新建装备
+                </button>
+            </div>
+            
+            <div class="filters">
+                <div class="filter-item">
+                    <label>所属子平台</label>
+                    <select>
+                        <option value="">全部</option>
+                        <option value="polymer">聚合物</option>
+                        <option value="alloy">功能合金</option>
+                        <option value="storage">储能材料</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label>装备类型</label>
+                    <select>
+                        <option value="">全部</option>
+                        <option value="prepare">制备</option>
+                        <option value="characterization">表征</option>
+                        <option value="testing">检测</option>
+                    </select>
+                </div>
+                <div class="filter-item">
+                    <label>状态</label>
+                    <select>
+                        <option value="">全部</option>
+                        <option value="running">运行中</option>
+                        <option value="idle">空闲</option>
+                        <option value="down">故障</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="equipment-list">
+                <div class="list-item">
+                    <div class="item-status status-running"></div>
+                    <div>
+                        <div class="item-header">
+                            <div class="item-title">高精度搅拌装机 HMS-700</div>
+                            <div class="item-subtitle">型号: HMS-700-B2</div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">所属子平台</div>
+                                <div>聚合物</div>
+                            </div>
+                            <div>
+                                <div class="detail-label">最近维护</div>
+                                <div>2023-10-15</div>
+                            </div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">资源占用率</div>
+                                <div class="usage-chart" id="usage-1"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="list-item">
+                    <div class="item-status status-idle"></div>
+                    <div>
+                        <div class="item-header">
+                            <div class="item-title">高温熔炼炉 HTF-2000</div>
+                            <div class="item-subtitle">型号: HTF-2000-G</div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">所属子平台</div>
+                                <div>功能合金</div>
+                            </div>
+                            <div>
+                                <div class="detail-label">最近维护</div>
+                                <div>2023-09-28</div>
+                            </div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">资源占用率</div>
+                                <div class="usage-chart" id="usage-2"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="list-item">
+                    <div class="item-status status-running"></div>
+                    <div>
+                        <div class="item-header">
+                            <div class="item-title">电化学工作站 ECW-9000</div>
+                            <div class="item-subtitle">型号: ECW-9000-P</div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">所属子平台</div>
+                                <div>储能材料</div>
+                            </div>
+                            <div>
+                                <div class="detail-label">最近维护</div>
+                                <div>2023-10-20</div>
+                            </div>
+                        </div>
+                        <div class="item-details">
+                            <div>
+                                <div class="detail-label">资源占用率</div>
+                                <div class="usage-chart" id="usage-3"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="live-monitor">
+                <span class="live-icon">LIVE</span>
+                <div class="monitor-placeholder">
+                    <i class="fas fa-video fa-2x"></i>
+                    <div>实时监控画面: 高精度搅拌装机 HMS-700</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 任务调度管理模块 -->
+        <div class="module-card">
+            <div class="card-header">
+                <div class="card-title">
+                    <i class="fas fa-tasks"></i> 任务调度管理
+                </div>
+                <button class="btn">
+                    <i class="fas fa-plus"></i> 创建任务
+                </button>
+            </div>
+            
+            <div class="filters">
+                <div class="filter-item">
+                    <input type="text" placeholder="任务ID">
+                </div>
+                <div class="filter-item">
+                    <input type="text" placeholder="实验名称">
+                </div>
+                <div class="filter-item">
+                    <select>
+                        <option value="">状态</option>
+                        <option value="pending">未开始</option>
+                        <option value="running">运行中</option>
+                        <option value="done">已完成</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="task-container">
+                <div class="task-list">
+                    <table class="task-table">
+                        <thead>
+                            <tr>
+                                <th>任务 ID</th>
+                                <th>实验名称</th>
+                                <th>状态</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>#T20231001</td>
+                                <td>聚合物复合实验</td>
+                                <td><span class="status-badge status-running">运行中</span></td>
+                            </tr>
+                            <tr>
+                                <td>#T20231002</td>
+                                <td>合金疲劳测试</td>
+                                <td><span class="status-badge status-pending">未开始</span></td>
+                            </tr>
+                            <tr>
+                                <td>#T20231003</td>
+                                <td>电池材料充放电</td>
+                                <td><span class="status-badge status-running">运行中</span></td>
+                            </tr>
+                            <tr>
+                                <td>#T20231004</td>
+                                <td>薄膜涂层测试</td>
+                                <td><span class="status-badge status-done">已完成</span></td>
+                            </tr>
+                            <tr>
+                                <td>#T20231005</td>
+                                <td>金属硬度测试</td>
+                                <td><span class="status-badge status-pending">未开始</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="task-detail">
+                    <div class="detail-panel">
+                        <div class="detail-title">
+                            <i class="fas fa-info-circle"></i> 任务详情 #T20231001
+                        </div>
+                        <div>
+                            <p><strong>实验名称：</strong>聚合物复合实验</p>
+                            <p><strong>所属子平台：</strong>聚合物</p>
+                            <p><strong>优先级：</strong>高</p>
+                            <p><strong>分配装备：</strong>高精度搅拌装机 HMS-700，恒温控制器 TC-120</p>
+                            <p><strong>开始时间：</strong>2023-10-22 08:30:00</p>
+                            <p><strong>预计完成时间：</strong>2023-10-23 14:00:00</p>
+                            <p><strong>操作人：</strong>李博士</p>
+                            <p><strong>当前进度：</strong>65%</p>
+                            <div style="height: 10px; background: #e0e6ed; border-radius: 10px; margin: 10px 0;">
+                                <div style="width: 65%; height: 100%; background: var(--success); border-radius: 10px;"></div>
+                            </div>
+                        </div>
+                        <div class="action-buttons">
+                            <button class="btn btn-sm">暂停任务</button>
+                            <button class="btn btn-sm">调整参数</button>
+                            <button class="btn btn-sm">迁移装备</button>
+                            <button class="btn btn-sm">查看详情</button>
+                        </div>
+                        <div class="detail-title">
+                            <i class="fas fa-chart-line"></i> 实验数据监控
+                        </div>
+                        <div id="chart-container" style="height: 100px;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 装备接入配置模块 -->
+        <div class="module-card">
+            <div class="card-header">
+                <div class="card-title">
+                    <i class="fas fa-plug"></i> 装备接入配置
+                </div>
+            </div>
+            
+            <div class="form-container">
+                <div class="form-item">
+                    <label>装备名称</label>
+                    <input type="text" placeholder="请输入装备名称">
+                </div>
+                <div class="form-item">
+                    <label>型号</label>
+                    <input type="text" placeholder="请输入型号">
+                </div>
+                <div class="form-item">
+                    <label>厂商</label>
+                    <input type="text" placeholder="请输入厂商">
+                </div>
+                <div class="form-item">
+                    <label>所属子平台</label>
+                    <select>
+                        <option value="">请选择子平台</option>
+                        <option value="polymer">聚合物</option>
+                        <option value="alloy">功能合金</option>
+                        <option value="storage">储能材料</option>
+                    </select>
+                </div>
+                <div class="form-item">
+                    <label>安装位置</label>
+                    <input type="text" placeholder="实验室A区，机位3">
+                </div>
+                <div class="form-item">
+                    <label>通信协议</label>
+                    <select>
+                        <option value="">请选择协议</option>
+                        <option value="modbus">Modbus TCP</option>
+                        <option value="opcua">OPC UA</option>
+                        <option value="mqtt">MQTT</option>
+                    </select>
+                </div>
+                
+                <div class="protocol-config">
+                    <label>协议配置项</label>
+                    <div class="filters" style="margin-top: 0.5rem;">
+                        <div class="filter-item">
+                            <label>IP地址</label>
+                            <input type="text" placeholder="192.168.xxx.xxx">
+                        </div>
+                        <div class="filter-item">
+                            <label>端口号</label>
+                            <input type="text" placeholder="502">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-item">
+                    <label>访问白名单</label>
+                    <input type="text" placeholder="192.168.10.2,192.168.10.3">
+                </div>
+                
+                <div class="form-item">
+                    <label>操作权限分配</label>
+                    <select multiple style="height: 100px;">
+                        <option>管理员组</option>
+                        <option>研发团队</option>
+                        <option>操作员组</option>
+                        <option>运维部门</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="text-center">
+                <div class="connection-status">
+                    <span class="status-connected"></span> 连接测试成功 - 响应时间: 165ms
+                </div>
+            </div>
+            
+            <div class="flex-center">
+                <button class="btn">连接测试</button>
+                <button class="btn btn-new">保存并生效</button>
+                <button class="btn btn-outline">导入配置模板</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 初始化图表
+        document.addEventListener('DOMContentLoaded', function() {
+            // 资源占用率图表
+            initUsageChart('usage-1', 75);
+            initUsageChart('usage-2', 15);
+            initUsageChart('usage-3', 90);
+            
+            // 任务监控图表
+            initTaskChart();
+        });
+        
+        function initUsageChart(dom, value) {
+            const chart = echarts.init(document.getElementById(dom));
+            chart.setOption({
+                grid: { top: 0, right: 0, bottom: 5, left: 0 },
+                xAxis: { show: false },
+                yAxis: { show: false },
+                series: [{
+                    name: '使用率',
+                    type: 'bar',
+                    data: [value],
+                    barWidth: 10,
+                    itemStyle: {
+                        color: value > 80 ? '#e74c3c' : (value > 50 ? '#f39c12' : '#27ae60'),
+                        borderRadius: [3, 3, 0, 0]
+                    },
+                    label: {
+                        show: true,
+                        position: 'top',
+                        color: value > 80 ? '#e74c3c' : '#2c3e50',
+                        fontWeight: 'bold'
+                    }
+                }]
+            });
+        }
+        
+        function initTaskChart() {
+            const chart = echarts.init(document.getElementById('chart-container'));
+            chart.setOption({
+                grid: { top: 10, right: 10, bottom: 20, left: 40 },
+                xAxis: {
+                    type: 'category',
+                    data: ['8:00', '9:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00']
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '温度(℃)'
+                },
+                series: [{
+                    data: [65, 70, 78, 82, 80, 77, 75, 74],
+                    type: 'line',
+                    smooth: true,
+                    lineStyle: { width: 2, color: '#3498db' },
+                    itemStyle: { color: '#3498db' },
+                    areaStyle: {
+                        color: {
+                            type: 'linear',
+                            x: 0, y: 0, x2: 0, y2: 1,
+                            colorStops: [{
+                                offset: 0, color: 'rgba(52, 152, 219, 0.5)'
+                            }, {
+                                offset: 1, color: 'rgba(52, 152, 219, 0)'
+                            }]
+                        }
+                    }
+                }]
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown 图片渲染测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .test-section {
+            margin: 30px 0;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        .markdown-content {
+            background: #ffffff;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .markdown-content img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin: 15px 0;
+        }
+        .status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Markdown 图片渲染测试</h1>
+        <p>测试不同类型的 Markdown 图片语法在浏览器中的渲染效果</p>
+        <div class="test-section" style="background: #fff3cd; border-left-color: #ffc107;">
+            <h3>⚠️ 重要提示</h3>
+            <p>此测试文件用于验证图片 URL 的可访问性。</p>
+            <p><strong>在 Next.js 应用中，Markdown 图片语法 <code>![alt](/path)</code> 会通过 ReactMarkdown 组件渲染。</strong></p>
+            <p>这里展示的是直接使用 <code>&lt;img&gt;</code> 标签的结果，用于验证图片文件可以被访问。</p>
+        </div>
+
+        <!-- 测试 1: 相对路径 -->
+        <div class="test-section">
+            <h2>测试 1: Markdown 相对路径图片</h2>
+            <p class="status success">预期：应能正确显示</p>
+            <div class="code-block">
+![Molecular Structures Grid](/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg)
+            </div>
+            <div class="markdown-content">
+                <p><strong>渲染结果：</strong></p>
+                <p>![Molecular Structures Grid](/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg)</p>
+                <p><em>注意：上面的 Markdown 语法需要 ReactMarkdown 组件来渲染。当前直接打开 HTML 文件无法渲染 Markdown。</em></p>
+                <p><strong>直接使用 img 标签测试：</strong></p>
+                <p><img src="/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg" alt="Molecular Structures Grid" loading="lazy"></p>
+            </div>
+        </div>
+
+        <!-- 测试 2: 另一个文件 -->
+        <div class="test-section">
+            <h2>测试 2: 另一个 SVG 文件</h2>
+            <p class="status success">预期：应能正确显示</p>
+            <div class="code-block">
+![Molecular Structures Grid](/molecular_images/c414dcf3-a28d-4684-918f-8c43aa62e0f2.svg)
+            </div>
+            <div class="markdown-content">
+                <p><strong>渲染结果：</strong></p>
+                <p><img src="/molecular_images/c414dcf3-a28d-4684-918f-8c43aa62e0f2.svg" alt="Molecular Structures Grid"></p>
+            </div>
+        </div>
+
+        <!-- 测试 3: 模拟完整的报告 -->
+        <div class="test-section">
+            <h2>测试 3: 完整的分子报告（模拟 LLM 输出）</h2>
+            <p class="status success">预期：应能正确显示所有元素</p>
+            <div class="code-block">
+# 分子生成报告
+
+## 执行摘要
+
+本次任务成功生成了 3 个包含咔唑骨架和磷酸锚定基团的自组装单分子（SAM）。这些分子结合了咔唑基团的刚性结构和磷酸锚定基团的表面结合能力。
+
+## 生成的分子
+
+### 分子 1
+- SMILES: `O=P(O)(O)CCCCn1c2ccccc2c2ccccc21`
+- 特点：具有最长的连接链
+
+### 分子 2
+- SMILES: `O=P(O)(O)CCn1c2ccc(Br)cc2c2cc(Br)ccc21`
+- 特点：包含溴取代基
+
+### 分子 3
+- SMILES: `O=P(O)(O)CCCCn1c2ccccc2c2ccccc21`
+- 特点：具有更长的柔性连接链
+
+## 分子结构图
+
+![Molecular Structures Grid](/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg)
+
+---
+报告生成时间: 2025-10-28
+            </div>
+            <div class="markdown-content">
+                <h1>分子生成报告</h1>
+                <h2>执行摘要</h2>
+                <p>本次任务成功生成了 3 个包含咔唑骨架和磷酸锚定基团的自组装单分子（SAM）。这些分子结合了咔唑基团的刚性结构和磷酸锚定基团的表面结合能力。</p>
+                
+                <h2>生成的分子</h2>
+                <h3>分子 1</h3>
+                <p>SMILES: <code>O=P(O)(O)CCCCn1c2ccccc2c2ccccc21</code></p>
+                
+                <h3>分子 2</h3>
+                <p>SMILES: <code>O=P(O)(O)CCn1c2ccc(Br)cc2c2cc(Br)ccc21</code></p>
+                
+                <h3>分子 3</h3>
+                <p>SMILES: <code>O=P(O)(O)CCCCn1c2ccccc2c2ccccc21</code></p>
+                
+                <h2>分子结构图</h2>
+                <p><img src="/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg" alt="Molecular Structures Grid"></p>
+                
+                <hr>
+                <p><small>报告生成时间: 2025-10-28</small></p>
+            </div>
+        </div>
+
+        <!-- 测试 4: 检查文件是否存在 -->
+        <div class="test-section">
+            <h2>文件状态检查</h2>
+            <div id="file-status"></div>
+        </div>
+
+        <script>
+            // 检查文件是否可以访问
+            const files = [
+                '/molecular_images/aceb9935-5efa-4f0e-9d9e-636fa875f4cb.svg',
+                '/molecular_images/c414dcf3-a28d-4684-918f-8c43aa62e0f2.svg'
+            ];
+
+            const statusDiv = document.getElementById('file-status');
+            
+            files.forEach(file => {
+                const img = new Image();
+                img.onload = function() {
+                    statusDiv.innerHTML += `<p class="status success">✓ ${file} - 文件存在且可访问</p>`;
+                };
+                img.onerror = function() {
+                    statusDiv.innerHTML += `<p class="status error">✗ ${file} - 文件不存在或无法访问</p>`;
+                };
+                img.src = file;
+            });
+        </script>
+    </div>
+</body>
+</html>
+
