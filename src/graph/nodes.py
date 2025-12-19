@@ -1030,6 +1030,27 @@ def common_reporter_node(state: State, config: RunnableConfig):
     
     # Return both final_report and messages to trigger streaming
     # Also preserve molecular_images in state for frontend access
+    # #region debug log
+    try:
+        import time
+        with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+            f.write(json.dumps({
+                "location": "nodes.py:common_reporter_node:1033",
+                "message": "Common reporter returning result",
+                "data": {
+                    "final_content_length": len(final_content),
+                    "has_img_tag": "<img" in final_content,
+                    "has_data_image": "data:image" in final_content,
+                    "molecular_images_count": len(molecular_images),
+                    "task_type": task_type,
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+    except: pass
+    # #endregion
     return {
         "final_report": final_content,
         "messages": [AIMessage(content=final_content, name="reporter")],
@@ -1054,6 +1075,26 @@ async def _execute_agent_step(
     # Find the first unexecuted step
     current_step = None
     completed_steps = []
+    # #region debug log
+    import time
+    debug_log_path = "/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log"
+    try:
+        with open(debug_log_path, "a") as f:
+            f.write(json.dumps({
+                "location": "nodes.py:_execute_agent_step:1057",
+                "message": "Finding unexecuted step",
+                "data": {
+                    "total_steps": len(current_plan.steps),
+                    "step_titles": [s.title for s in current_plan.steps],
+                    "step_execution_status": [bool(s.execution_res) for s in current_plan.steps],
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+    except: pass
+    # #endregion
     for step in current_plan.steps:
         if not step.execution_res:
             current_step = step
@@ -1063,9 +1104,42 @@ async def _execute_agent_step(
 
     if not current_step:
         logger.warning("No unexecuted step found")
+        # #region debug log
+        try:
+            with open(debug_log_path, "a") as f:
+                f.write(json.dumps({
+                    "location": "nodes.py:_execute_agent_step:1065",
+                    "message": "No unexecuted step found - all steps completed",
+                    "data": {"completed_steps_count": len(completed_steps)},
+                    "timestamp": int(__import__("time").time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A"
+                }) + "\n")
+        except: pass
+        # #endregion
         return Command(goto="research_team")
 
     logger.info(f"Executing step: {current_step.title}, agent: {agent_name}")
+    # #region debug log
+    try:
+        with open(debug_log_path, "a") as f:
+            f.write(json.dumps({
+                "location": "nodes.py:_execute_agent_step:1068",
+                "message": "Executing step",
+                "data": {
+                    "step_title": current_step.title,
+                    "step_description": current_step.description[:200],
+                    "agent_name": agent_name,
+                    "completed_steps_count": len(completed_steps),
+                },
+                "timestamp": int(__import__("time").time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }) + "\n")
+    except: pass
+    # #endregion
 
     # Format completed steps information
     completed_steps_info = ""
@@ -1087,10 +1161,13 @@ async def _execute_agent_step(
             completed_steps_info += f"<finding>\n{step.execution_res}\n</finding>\n\n"
 
     # Prepare the input for the agent with completed steps info
+    # CRITICAL: Emphasize that agent should ONLY execute the current step
+    step_boundary_warning = "\n\n**CRITICAL STEP BOUNDARY**:\n- You are working on **ONE STEP ONLY** at a time\n- Focus **ONLY** on the current step's description below\n- Do **NOT** execute tools for other steps\n- Do **NOT** mix tasks from different steps\n- Execute tools **ONLY** as specified in the current step description\n"
+    
     agent_input = {
         "messages": [
             HumanMessage(
-                content=f"# Research Topic\n\n{plan_title}\n\n{completed_steps_info}# Current Step\n\n## Title\n\n{current_step.title}\n\n## Description\n\n{current_step.description}\n\n## Locale\n\n{state.get('locale', 'en-US')}"
+                content=f"# Research Topic\n\n{plan_title}\n\n{completed_steps_info}{step_boundary_warning}# Current Step\n\n## Title\n\n{current_step.title}\n\n## Description\n\n{current_step.description}\n\n## Locale\n\n{state.get('locale', 'en-US')}"
             )
         ]
     }
@@ -1240,11 +1317,51 @@ async def _execute_agent_step(
     
     # Collect all ToolMessage contents (actual tool execution results)
     tool_results = []
+    # #region debug log
+    try:
+        import time
+        with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+            f.write(json.dumps({
+                "location": "nodes.py:_execute_agent_step:1242",
+                "message": "Processing tool results",
+                "data": {
+                    "total_messages": len(result['messages']),
+                    "message_types": [type(m).__name__ for m in result['messages']],
+                    "agent_name": agent_name,
+                    "step_title": current_step.title,
+                },
+                "timestamp": int(time.time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }) + "\n")
+    except: pass
+    # #endregion
     for idx, msg in enumerate(result['messages']):
         if isinstance(msg, ToolMessage):
             tool_content = str(msg.content)
             tool_results.append(tool_content)
             logger.info(f"Found ToolMessage {idx}: length={len(tool_content)}, preview={tool_content[:200]}")
+            # #region debug log
+            try:
+                import time
+                with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps({
+                        "location": "nodes.py:_execute_agent_step:1247",
+                        "message": "Found ToolMessage",
+                        "data": {
+                            "tool_call_id": getattr(msg, 'tool_call_id', None),
+                            "content_length": len(tool_content),
+                            "content_preview": tool_content[:100],
+                            "step_title": current_step.title,
+                        },
+                        "timestamp": int(time.time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B"
+                    }) + "\n")
+            except: pass
+            # #endregion
     
     # Get the last message content (usually AIMessage if no tools, or final response)
     response_content = result["messages"][-1].content

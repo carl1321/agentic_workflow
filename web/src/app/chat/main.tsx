@@ -134,9 +134,31 @@ export default function Main() {
       const msgs: ConversationMessage[] = detail.messages || [];
       const loadedMessages: any[] = [];
       
+      // Validate message structure and log for debugging
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[Chat] Loading ${msgs.length} messages for thread_id=${detail.thread_id}`);
+      }
+      
+      // #region debug log
+      fetch('http://127.0.0.1:7243/ingest/6232be75-7c1f-49ab-bc65-3603d4853f26',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.tsx:handleSelectChat:137',message:'Loading messages from backend',data:{messageCount:msgs.length,threadId:detail.thread_id,agents:msgs.map((m:any)=>m.agent)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
+      
       // First, load all messages (including user messages)
       for (let i = 0; i < msgs.length; i++) {
         const m = msgs[i];
+        
+        // Validate message structure
+        if (!m || typeof m !== "object") {
+          console.warn(`[Chat] Invalid message at index ${i}:`, m);
+          continue;
+        }
+        
+        // #region debug log
+        if (m.agent === "reporter" || m.agent === "common_reporter") {
+          fetch('http://127.0.0.1:7243/ingest/6232be75-7c1f-49ab-bc65-3603d4853f26',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.tsx:handleSelectChat:150',message:'Found reporter message',data:{index:i,agent:m.agent,hasContent:!!m.content,contentLength:m.content?.length||0,hasFinishReason:!!m.finish_reason,finishReason:m.finish_reason},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        }
+        // #endregion
+        
         const msg = {
           id: m.id || `${detail.thread_id}-${i}`,
           threadId: detail.thread_id,
@@ -144,10 +166,31 @@ export default function Main() {
           agent: m.agent as any,
           content: m.content ?? "",
           contentChunks: m.content ? [m.content] : [],
+          reasoningContent: (m as any).reasoning_content ?? "",
+          reasoningContentChunks: (m as any).reasoning_content ? [(m as any).reasoning_content] : [],
+          toolCalls: (m as any).tool_calls as any, // Add tool calls field
           finishReason: m.finish_reason as any,
           options: m.options as any, // Include options field for interrupt messages
           isStreaming: false,
         } as any;
+        // Add tool_call_id for tool messages (role === "tool")
+        if (m.role === "tool" && (m as any).tool_call_id) {
+          (msg as any).tool_call_id = (m as any).tool_call_id;
+        }
+        
+        // Log message structure for debugging
+        if (process.env.NODE_ENV === "development") {
+          const hasToolCalls = !!(msg.toolCalls && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0);
+          const hasToolCallId = !!(msg as any).tool_call_id;
+          const hasReasoning = !!msg.reasoningContent;
+          if (hasToolCalls || hasToolCallId || hasReasoning) {
+            console.log(
+              `[Chat] Message ${i}: id=${msg.id}, agent=${msg.agent}, ` +
+              `toolCalls=${hasToolCalls}, tool_call_id=${hasToolCallId}, reasoning=${hasReasoning}`
+            );
+          }
+        }
+        
         loadedMessages.push(msg);
         useStore.getState().appendMessage(msg);
       }
@@ -192,6 +235,22 @@ export default function Main() {
             baseMsg.content = mergedContent;
             baseMsg.contentChunks = mergedContent ? [mergedContent] : [];
             baseMsg.isStreaming = false; // Ensure it's marked as completed
+            
+            // Preserve tool calls, tool_call_id, and reasoning content during merge
+            // Use the first chunk's toolCalls if available, or merge from all chunks
+            if (sortedChunks.some(c => c.toolCalls)) {
+              baseMsg.toolCalls = sortedChunks.find(c => c.toolCalls)?.toolCalls || baseMsg.toolCalls;
+            }
+            if (sortedChunks.some(c => c.tool_call_id)) {
+              baseMsg.tool_call_id = sortedChunks.find(c => c.tool_call_id)?.tool_call_id || baseMsg.tool_call_id;
+            }
+            // Merge reasoning content
+            const mergedReasoning = sortedChunks.map(c => c.reasoningContent || "").join("");
+            if (mergedReasoning) {
+              baseMsg.reasoningContent = mergedReasoning;
+              baseMsg.reasoningContentChunks = mergedReasoning ? [mergedReasoning] : [];
+            }
+            
             mergedMessages.push(baseMsg);
             
             // Update the merged message in store
@@ -247,9 +306,9 @@ export default function Main() {
           }
           
           // If this is a reporter/coder/researcher message, associate it with current plan
-          // 注意：对于 molecular_planner 的 plan，不应该创建 research（使用工作流模式）
+          // 注意：对于 molecular_planner 的 plan，也需要创建 research 以显示工具执行卡片和结果卡片
           if (agent === "reporter" || agent === "common_reporter" || agent === "coder" || agent === "researcher") {
-            if (currentPlanMessage && currentPlanMessage.agent !== "molecular_planner") {
+            if (currentPlanMessage) {
               // Use the first reporter/coder/researcher as research ID
               if (!currentResearchId) {
                 currentResearchId = msg.id;
@@ -339,6 +398,77 @@ export default function Main() {
           researchReportIds,
           researchActivityIds,
         });
+        
+        // Clear interrupt messages if final_report exists (reporter/common_reporter with finishReason="stop")
+        // This ensures that "Edit plan" and "Start research" buttons are hidden for completed conversations
+        const state = useStore.getState();
+        const hasFinalReport = state.messageIds.some((msgId) => {
+          const msg = state.messages.get(msgId);
+          return (
+            (msg?.agent === "reporter" || msg?.agent === "common_reporter") &&
+            msg?.finishReason === "stop"
+          );
+        });
+        
+        // #region debug log - Check research mappings and toolCalls
+        const debugData: any = {
+          messageCount: state.messageIds.length,
+          researchIds: researchIds.length,
+          researchPlanIds: Array.from(researchPlanIds.entries()).length,
+          researchReportIds: Array.from(researchReportIds.entries()).length,
+          researchActivityIds: Array.from(researchActivityIds.entries()).length,
+          hasFinalReport,
+        };
+        
+        // Check toolCalls in messages
+        const messagesWithToolCalls = state.messageIds.filter((msgId) => {
+          const msg = state.messages.get(msgId);
+          return msg?.toolCalls && msg.toolCalls.length > 0;
+        });
+        debugData.messagesWithToolCalls = messagesWithToolCalls.length;
+        debugData.messagesWithToolCallsDetails = messagesWithToolCalls.map((msgId) => {
+          const msg = state.messages.get(msgId);
+          return {
+            id: msgId,
+            agent: msg?.agent,
+            toolCallsCount: msg?.toolCalls?.length || 0,
+            toolCallNames: msg?.toolCalls?.map((tc: any) => tc.name) || [],
+          };
+        });
+        
+        // Check activityIds for each research
+        debugData.researchActivityDetails = Array.from(researchActivityIds.entries()).map(([researchId, activityIds]) => {
+          const activities = activityIds.map((activityId) => {
+            const msg = state.messages.get(activityId);
+            return {
+              id: activityId,
+              agent: msg?.agent,
+              hasToolCalls: !!(msg?.toolCalls && msg.toolCalls.length > 0),
+              toolCallsCount: msg?.toolCalls?.length || 0,
+            };
+          });
+          return { researchId, activityCount: activityIds.length, activities };
+        });
+        
+        fetch('http://127.0.0.1:7243/ingest/6232be75-7c1f-49ab-bc65-3603d4853f26',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.tsx:handleSelectChat:400',message:'Research mappings and toolCalls check',data:debugData,timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+        
+        if (hasFinalReport) {
+          // Find and clear all interrupt messages by updating their finishReason
+          for (let i = state.messageIds.length - 1; i >= 0; i--) {
+            const msgId = state.messageIds[i];
+            if (!msgId) continue;
+            const interruptMsg = state.messages.get(msgId);
+            if (interruptMsg?.finishReason === "interrupt") {
+              // Update interrupt message to mark it as completed
+              const updatedInterruptMsg = { ...interruptMsg, finishReason: "stop" as const };
+              useStore.getState().updateMessage(updatedInterruptMsg);
+              // #region debug log
+              fetch('http://127.0.0.1:7243/ingest/6232be75-7c1f-49ab-bc65-3603d4853f26',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'main.tsx:handleSelectChat:415',message:'Cleared interrupt message',data:{interruptMessageId:msgId,agent:interruptMsg.agent},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+              // #endregion
+            }
+          }
+        }
         
         // Auto-open the first research if exists
         // 注意：不自动打开 research，让用户手动选择

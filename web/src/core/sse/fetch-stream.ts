@@ -7,13 +7,22 @@ export async function* fetchStream(
   url: string,
   init: RequestInit,
 ): AsyncIterable<StreamEvent> {
+  // 合并 headers，允许传入的 headers 覆盖默认值
+  const defaultHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-cache",
+  };
+  const mergedHeaders = {
+    ...defaultHeaders,
+    ...(init.headers as Record<string, string>),
+  };
+  
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Cache-Control": "no-cache",
-    },
+    headers: mergedHeaders,
     ...init,
+    // 确保 headers 不会被覆盖
+    headers: mergedHeaders,
   });
   if (response.status !== 200) {
     throw new Error(`Failed to fetch from ${url}: ${response.status}`);

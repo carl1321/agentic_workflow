@@ -291,7 +291,7 @@ async def chat_stream(
     else:
         # Check if conversation exists in database to determine if it's truly a new conversation
         try:
-            existing_conv = get_conversation_by_thread_id(thread_id)
+            existing_conv = get_conversation_by_thread_id(thread_id, None, True)
             if existing_conv:
                 # Conversation exists, this is a continuation
                 is_new_conversation = False
@@ -416,6 +416,14 @@ def _create_event_stream_message(
         event_stream_message["finish_reason"] = message_chunk.response_metadata.get(
             "finish_reason"
         )
+    
+    # Add tool_calls if present (for AIMessageChunk)
+    if hasattr(message_chunk, "tool_calls") and message_chunk.tool_calls:
+        event_stream_message["tool_calls"] = message_chunk.tool_calls
+    
+    # Add tool_call_id if present (for ToolMessage)
+    if hasattr(message_chunk, "tool_call_id") and message_chunk.tool_call_id:
+        event_stream_message["tool_call_id"] = message_chunk.tool_call_id
 
     return event_stream_message
 
@@ -596,6 +604,25 @@ async def _stream_graph_events(
                         if "final_report" in node_data:
                             report_content = node_data["final_report"]
                             logger.info(f"Yielding final_report from {node_name}, content length: {len(report_content)}")
+                            # #region debug log
+                            try:
+                                import time
+                                with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+                                    f.write(json.dumps({
+                                        "location": "app.py:_stream_graph_events:604",
+                                        "message": "Processing final_report",
+                                        "data": {
+                                            "node_name": node_name,
+                                            "content_length": len(report_content),
+                                            "has_img_tag": "<img" in report_content,
+                                        },
+                                        "timestamp": int(time.time() * 1000),
+                                        "sessionId": "debug-session",
+                                        "runId": "run1",
+                                        "hypothesisId": "A"
+                                    }) + "\n")
+                            except: pass
+                            # #endregion
                             # Generate a unique ID for the final report
                             report_id = f"report--{uuid4()}"
                             final_report_id = report_id
@@ -607,6 +634,26 @@ async def _stream_graph_events(
                                 "content": report_content,
                                 "finish_reason": "stop",
                             }
+                            # #region debug log
+                            try:
+                                import time
+                                with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+                                    f.write(json.dumps({
+                                        "location": "app.py:_stream_graph_events:616",
+                                        "message": "Created final_report event_data",
+                                        "data": {
+                                            "id": report_id,
+                                            "agent": event_data.get("agent"),
+                                            "finish_reason": event_data.get("finish_reason"),
+                                            "content_length": len(event_data.get("content", "")),
+                                        },
+                                        "timestamp": int(time.time() * 1000),
+                                        "sessionId": "debug-session",
+                                        "runId": "run1",
+                                        "hypothesisId": "A"
+                                    }) + "\n")
+                            except: pass
+                            # #endregion
                             # Ensure agent is a string, not a list
                             if isinstance(event_data.get("agent"), list):
                                 event_data["agent"] = event_data["agent"][0] if event_data["agent"] else "unknown"
@@ -822,13 +869,29 @@ async def _astream_workflow_generator(
             if persisted_messages and len(persisted_messages) - last_message_update >= message_update_interval:
                 if get_bool_env("LANGGRAPH_CHECKPOINT_SAVER", False) and not is_tool_execution:
                     try:
+                        # Validate message structure before saving
+                        for idx, msg in enumerate(persisted_messages[-message_update_interval:]):
+                            if not isinstance(msg, dict):
+                                logger.warning(f"Invalid message type at index {idx}: {type(msg)}")
+                                continue
+                            # Log message structure for debugging
+                            has_tool_calls = "tool_calls" in msg and msg.get("tool_calls")
+                            has_tool_call_id = "tool_call_id" in msg and msg.get("tool_call_id")
+                            has_reasoning = "reasoning_content" in msg and msg.get("reasoning_content")
+                            if has_tool_calls or has_tool_call_id or has_reasoning:
+                                logger.debug(
+                                    f"Message {idx} structure: id={msg.get('id')}, agent={msg.get('agent')}, "
+                                    f"tool_calls={has_tool_calls}, tool_call_id={has_tool_call_id}, "
+                                    f"reasoning_content={has_reasoning}"
+                                )
+                        
                         # Real-time updates: append if continuation, replace if new conversation
                         # This ensures existing messages are preserved when continuing a conversation
                         update_conversation(thread_id, messages=persisted_messages, append=is_continuation)
                         last_message_update = len(persisted_messages)
                         logger.debug(f"Updated conversation messages in real-time: thread_id={thread_id}, count={len(persisted_messages)}, append={is_continuation}")
                     except Exception as e:
-                        logger.warning(f"Failed to update conversation messages: {e}")
+                        logger.warning(f"Failed to update conversation messages: {e}", exc_info=True)
         
         # Stream completed - save conversation with title
         if persisted_messages and get_bool_env("LANGGRAPH_CHECKPOINT_SAVER", False):
@@ -1021,6 +1084,27 @@ async def _astream_workflow_generator(
                                         final_msg.pop("_is_final_report", None)
                                         ordered_merged.append(final_msg)
                                         logger.info(f"Preserved final_report message (id: {final_msg.get('id')}, content_length: {len(final_msg.get('content', ''))}, agent: {msg.get('agent')})")
+                                        # #region debug log
+                                        try:
+                                            import time
+                                            with open("/Users/carl/workspace/tools/AgenticWorkflow/.cursor/debug.log", "a") as f:
+                                                f.write(json.dumps({
+                                                    "location": "app.py:_astream_workflow_generator:1047",
+                                                    "message": "Preserved final_report message",
+                                                    "data": {
+                                                        "message_id": final_msg.get('id'),
+                                                        "agent": final_msg.get('agent'),
+                                                        "content_length": len(final_msg.get('content', '')),
+                                                        "has_finish_reason": "finish_reason" in final_msg,
+                                                        "finish_reason": final_msg.get('finish_reason'),
+                                                    },
+                                                    "timestamp": int(time.time() * 1000),
+                                                    "sessionId": "debug-session",
+                                                    "runId": "run1",
+                                                    "hypothesisId": "A"
+                                                }) + "\n")
+                                        except: pass
+                                        # #endregion
                                     else:
                                         ordered_merged.append(msg)
                                     found = True
@@ -1042,7 +1126,7 @@ async def _astream_workflow_generator(
                 # Only update title if it hasn't been finalized (not "新对话")
                 existing_title = None
                 try:
-                    existing_conv = get_conversation_by_thread_id(thread_id)
+                    existing_conv = get_conversation_by_thread_id(thread_id, None, True)
                     if existing_conv:
                         existing_title = existing_conv.get("title", "新对话")
                 except Exception as e:
@@ -1068,7 +1152,7 @@ async def _astream_workflow_generator(
                 existing_db_count = 0
                 if is_continuation:
                     try:
-                        existing_conv = get_conversation_by_thread_id(thread_id)
+                        existing_conv = get_conversation_by_thread_id(thread_id, None, True)
                         if existing_conv:
                             existing_messages = existing_conv.get("messages", [])
                             existing_db_count = len(existing_messages) if isinstance(existing_messages, list) else 0
@@ -1090,7 +1174,7 @@ async def _astream_workflow_generator(
                 # Verify after update
                 if is_continuation and existing_db_count > 0:
                     try:
-                        updated_conv = get_conversation_by_thread_id(thread_id)
+                        updated_conv = get_conversation_by_thread_id(thread_id, None, True)
                         if updated_conv:
                             updated_messages = updated_conv.get("messages", [])
                             updated_count = len(updated_messages) if isinstance(updated_messages, list) else 0
@@ -1558,18 +1642,27 @@ async def list_conversations_compat(
 
 
 @app.get("/api/conversations/{thread_id}")
-async def get_conversation(thread_id: str):
+async def get_conversation(
+    thread_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Get a single conversation by thread_id.
 
     Args:
         thread_id: Unique identifier for the conversation thread
+        current_user: Current authenticated user
 
     Returns:
         Conversation object with id, thread_id, title, messages, created_at, updated_at
     """
     try:
-        conversation = get_conversation_by_thread_id(thread_id)
+        # 管理员或拥有 chat:read_all 权限的用户可以查看全部会话；
+        # 普通用户仅能看到与自己 user_id 绑定的会话。
+        can_read_all = current_user.is_superuser or current_user.has_permission("chat:read_all")
+        user_id_str = None if can_read_all else str(current_user.id)
+        
+        conversation = get_conversation_by_thread_id(thread_id, user_id_str, can_read_all)
         if conversation is None:
             raise HTTPException(status_code=404, detail=f"Conversation {thread_id} not found")
         return conversation
@@ -1586,18 +1679,32 @@ async def options_conversation(thread_id: str):
     return Response(status_code=200)
 
 @app.delete("/api/conversations/{thread_id}")
-async def delete_conversation_endpoint(thread_id: str):
+async def delete_conversation_endpoint(
+    thread_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Delete a conversation by thread_id.
 
     Args:
         thread_id: Unique identifier for the conversation thread
+        current_user: Current authenticated user
 
     Returns:
         Success message with deleted conversation ID
     """
     try:
-        success = delete_conversation(thread_id)
+        # 管理员或拥有 chat:delete_all 权限的用户可以删除全部会话；
+        # 普通用户仅能删除与自己 user_id 绑定的会话。
+        can_read_all = current_user.is_superuser or current_user.has_permission("chat:delete_all")
+        user_id_str = None if can_read_all else str(current_user.id)
+        
+        # 先验证对话是否存在且用户有权限访问
+        conversation = get_conversation_by_thread_id(thread_id, user_id_str, can_read_all)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail=f"Conversation {thread_id} not found")
+        
+        success = delete_conversation(thread_id, user_id_str, can_read_all)
         if not success:
             raise HTTPException(status_code=404, detail=f"Conversation {thread_id} not found")
         return {"success": True, "thread_id": thread_id, "message": f"Conversation {thread_id} deleted successfully"}
@@ -2060,7 +2167,6 @@ async def execute_workflow_stream(request: WorkflowExecuteRequest):
         # 发送错误事件
         error_message = str(e)
         async def error_stream():
-            import json
             event_data = {
                 "type": "error",
                 "success": False,

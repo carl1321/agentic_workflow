@@ -74,6 +74,20 @@ export function MessageListView({
   const messageIds = useMessageIds();
   const interruptMessage = useLastInterruptMessage();
   const waitingForFeedbackMessageId = useLastFeedbackMessageId();
+  
+  // #region debug log
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+      const hasReporter = messageIds.some(id => {
+        const msg = useStore.getState().messages.get(id);
+        return msg?.agent === "reporter" || msg?.agent === "common_reporter";
+      });
+      if (hasReporter) {
+        fetch('http://127.0.0.1:7243/ingest/6232be75-7c1f-49ab-bc65-3603d4853f26',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'message-list-view.tsx:MessageListView:75',message:'Checking interrupt message and reporter',data:{hasInterruptMessage:!!interruptMessage,interruptMessageOptions:interruptMessage?.options?.length||0,hasReporter,messageCount:messageIds.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      }
+    }
+  }, [messageIds, interruptMessage]);
+  // #endregion
   const responding = useStore((state) => state.responding);
   const noOngoingResearch = useStore(
     (state) => state.ongoingResearchId === null,
@@ -103,9 +117,9 @@ export function MessageListView({
       ref={scrollContainerRef}
     >
       <ul className="flex flex-col">
-        {messageIds.map((messageId) => (
+        {messageIds.map((messageId, index) => (
           <MessageListItem
-            key={messageId}
+            key={messageId || `msg-${index}`}
             messageId={messageId}
             waitForFeedback={waitingForFeedbackMessageId === messageId}
             interruptMessage={interruptMessage}
@@ -114,7 +128,7 @@ export function MessageListView({
             onToggleResearch={handleToggleResearch}
           />
         ))}
-        <div key="spacer" className="flex h-8 w-full shrink-0"></div>
+        <li key="spacer" className="flex h-8 w-full shrink-0"></li>
       </ul>
       {responding && (noOngoingResearch || !ongoingResearchIsOpen) && (
         <LoadingAnimation className="ml-4" />
@@ -628,10 +642,7 @@ function PlanCard({
               </div>
             </CardContent>
             <CardFooter className="flex justify-end">
-              {/* 对于分子生成任务，如果有执行结果，显示"报告已生成"面板 */}
-              {/* Dify workflow removed - using ReactFlow workflow system instead */}
-              {/* Dify workflow removed - using ReactFlow workflow system instead */}
-              {/* 对于非分子生成任务，显示Edit plan和Start research按钮 */}
+              {/* 显示Edit plan和Start research按钮（包括分子生成任务） */}
               {(() => {
                 // Debug logging for button display conditions
                 if (process.env.NODE_ENV === "development") {
@@ -641,10 +652,11 @@ function PlanCard({
                     hasInterruptMessage: !!interruptMessage,
                     interruptMessageOptions: interruptMessage?.options,
                     interruptMessageOptionsLength: interruptMessage?.options?.length,
-                    shouldShow: !isMolecularPlan && !message.isStreaming && interruptMessage?.options?.length,
+                    shouldShow: !message.isStreaming && interruptMessage?.options?.length,
                   });
                 }
-                return !isMolecularPlan && !message.isStreaming && interruptMessage?.options?.length;
+                // 移除 isMolecularPlan 的限制，所有计划都应该显示按钮
+                return !message.isStreaming && interruptMessage?.options?.length;
               })() && (
                 <motion.div
                   className="flex gap-2"

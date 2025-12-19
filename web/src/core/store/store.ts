@@ -215,6 +215,27 @@ export async function sendMessage(
       if (message) {
         message = mergeMessage(message, event);
         updateMessage(message);
+        
+        // Clear interrupt message when final_report is received (reporter/common_reporter with finish_reason="stop")
+        // This ensures that "Edit plan" and "Start research" buttons are hidden after completion
+        if (
+          (message.agent === "reporter" || message.agent === "common_reporter") &&
+          message.finishReason === "stop"
+        ) {
+          // Find and clear the interrupt message by updating its finishReason
+          const state = useStore.getState();
+          for (let i = state.messageIds.length - 1; i >= 0; i--) {
+            const msgId = state.messageIds[i];
+            if (!msgId) continue;
+            const interruptMsg = state.messages.get(msgId);
+            if (interruptMsg?.finishReason === "interrupt") {
+              // Update interrupt message to mark it as completed
+              const updatedInterruptMsg = { ...interruptMsg, finishReason: "stop" as const };
+              useStore.getState().updateMessage(updatedInterruptMsg);
+              break; // Only clear the last interrupt message
+            }
+          }
+        }
       }
     }
     

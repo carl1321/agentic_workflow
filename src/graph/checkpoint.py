@@ -144,6 +144,13 @@ class ChatStreamManager:
                         SET updated_at = ts, created_at = COALESCE(created_at, ts)
                         WHERE updated_at IS NULL OR created_at IS NULL;
                     END IF;
+                    
+                    -- Add user_id column if it doesn't exist
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                    WHERE table_name='chat_streams' AND column_name='user_id') THEN
+                        ALTER TABLE chat_streams ADD COLUMN user_id VARCHAR(255);
+                        CREATE INDEX IF NOT EXISTS idx_chat_streams_user_id ON chat_streams(user_id);
+                    END IF;
                 END $$;
                 """
                 cursor.execute(alter_table_sql)
@@ -557,12 +564,14 @@ class ChatStreamManager:
             self.logger.error(f"Error getting conversations from MongoDB: {e}")
             return []
 
-    def get_conversation_by_thread_id(self, thread_id: str) -> Optional[dict]:
+    def get_conversation_by_thread_id(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> Optional[dict]:
         """
         Get a single conversation by thread_id.
 
         Args:
             thread_id: Unique identifier for the conversation thread
+            user_id: Optional user ID to filter by (for non-admin users)
+            can_read_all: If True, ignore user_id filter (for admins)
 
         Returns:
             Conversation dictionary with id, thread_id, title, messages, created_at, updated_at
@@ -574,9 +583,9 @@ class ChatStreamManager:
 
         try:
             if self.postgres_conn is not None:
-                return self._get_conversation_from_postgresql(thread_id)
+                return self._get_conversation_from_postgresql(thread_id, user_id, can_read_all)
             elif self.mongo_db is not None:
-                return self._get_conversation_from_mongodb(thread_id)
+                return self._get_conversation_from_mongodb(thread_id, user_id, can_read_all)
             else:
                 self.logger.warning("No database connection available")
                 return None
@@ -584,13 +593,24 @@ class ChatStreamManager:
             self.logger.error(f"Error getting conversation {thread_id}: {e}")
             return None
 
-    def _get_conversation_from_postgresql(self, thread_id: str) -> Optional[dict]:
+    def _get_conversation_from_postgresql(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> Optional[dict]:
         """Get conversation from PostgreSQL."""
         try:
             with self.postgres_conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT id, thread_id, title, messages, created_at, updated_at
+                # Build query with user_id filter if needed
+                if user_id and not can_read_all:
+                    cursor.execute(
+                        """
+                        SELECT id, thread_id, title, messages, created_at, updated_at, user_id
+                        FROM chat_streams
+                        WHERE thread_id = %s AND user_id = %s
+                        """,
+                        (thread_id, user_id),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        SELECT id, thread_id, title, messages, created_at, updated_at, user_id
                     FROM chat_streams
                     WHERE thread_id = %s
                     """,
@@ -605,6 +625,23 @@ class ChatStreamManager:
                 if isinstance(messages, str):
                     messages = json.loads(messages)
 
+                # Validate and log message structure
+                if messages and isinstance(messages, list):
+                    for idx, msg in enumerate(messages):
+                        if not isinstance(msg, dict):
+                            self.logger.warning(f"Invalid message type at index {idx} for thread_id={thread_id}: {type(msg)}")
+                            continue
+                        # Log message structure for debugging
+                        has_tool_calls = "tool_calls" in msg and msg.get("tool_calls")
+                        has_tool_call_id = "tool_call_id" in msg and msg.get("tool_call_id")
+                        has_reasoning = "reasoning_content" in msg and msg.get("reasoning_content")
+                        if has_tool_calls or has_tool_call_id or has_reasoning:
+                            self.logger.debug(
+                                f"Loaded message {idx} for thread_id={thread_id}: id={msg.get('id')}, "
+                                f"agent={msg.get('agent')}, tool_calls={has_tool_calls}, "
+                                f"tool_call_id={has_tool_call_id}, reasoning_content={has_reasoning}"
+                            )
+
                 return {
                     "id": str(row["id"]),
                     "thread_id": row["thread_id"],
@@ -617,11 +654,16 @@ class ChatStreamManager:
             self.logger.error(f"Error getting conversation from PostgreSQL: {e}")
             return None
 
-    def _get_conversation_from_mongodb(self, thread_id: str) -> Optional[dict]:
+    def _get_conversation_from_mongodb(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> Optional[dict]:
         """Get conversation from MongoDB."""
         try:
             collection = self.mongo_db.chat_streams
-            doc = collection.find_one({"thread_id": thread_id})
+            # Build query with user_id filter if needed
+            query = {"thread_id": thread_id}
+            if user_id and not can_read_all:
+                query["user_id"] = user_id
+            
+            doc = collection.find_one(query)
             if not doc:
                 return None
 
@@ -637,12 +679,14 @@ class ChatStreamManager:
             self.logger.error(f"Error getting conversation from MongoDB: {e}")
             return None
 
-    def delete_conversation(self, thread_id: str) -> bool:
+    def delete_conversation(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> bool:
         """
         Delete a conversation by thread_id.
 
         Args:
             thread_id: Unique identifier for the conversation thread
+            user_id: Optional user ID to verify ownership (for non-admin users)
+            can_read_all: If True, ignore user_id filter (for admins)
 
         Returns:
             bool: True if conversation was deleted successfully, False otherwise
@@ -653,9 +697,9 @@ class ChatStreamManager:
 
         try:
             if self.mongo_db is not None:
-                return self._delete_conversation_from_mongodb(thread_id)
+                return self._delete_conversation_from_mongodb(thread_id, user_id, can_read_all)
             elif self.postgres_conn is not None:
-                return self._delete_conversation_from_postgresql(thread_id)
+                return self._delete_conversation_from_postgresql(thread_id, user_id, can_read_all)
             else:
                 self.logger.warning("No database connection available for deletion")
                 return False
@@ -663,17 +707,24 @@ class ChatStreamManager:
             self.logger.error(f"Error deleting conversation {thread_id}: {e}")
             return False
 
-    def _delete_conversation_from_postgresql(self, thread_id: str) -> bool:
+    def _delete_conversation_from_postgresql(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> bool:
         """Delete conversation from PostgreSQL."""
         try:
             with self.postgres_conn.cursor() as cursor:
-                cursor.execute(
-                    "DELETE FROM chat_streams WHERE thread_id = %s",
-                    (thread_id,),
-                )
+                # Build query with user_id filter if needed
+                if user_id and not can_read_all:
+                    cursor.execute(
+                        "DELETE FROM chat_streams WHERE thread_id = %s AND user_id = %s",
+                        (thread_id, user_id),
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM chat_streams WHERE thread_id = %s",
+                        (thread_id,),
+                    )
                 deleted_count = cursor.rowcount
                 self.postgres_conn.commit()
-                self.logger.info(f"Deleted {deleted_count} conversation(s) with thread_id={thread_id}")
+                self.logger.info(f"Deleted {deleted_count} conversation(s) with thread_id={thread_id}, user_id={user_id or 'all'}")
                 return deleted_count > 0
         except Exception as e:
             self.logger.error(f"Error deleting conversation from PostgreSQL: {e}")
@@ -681,13 +732,18 @@ class ChatStreamManager:
                 self.postgres_conn.rollback()
             return False
 
-    def _delete_conversation_from_mongodb(self, thread_id: str) -> bool:
+    def _delete_conversation_from_mongodb(self, thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> bool:
         """Delete conversation from MongoDB."""
         try:
             collection = self.mongo_db.chat_streams
-            result = collection.delete_one({"thread_id": thread_id})
+            # Build query with user_id filter if needed
+            query = {"thread_id": thread_id}
+            if user_id and not can_read_all:
+                query["user_id"] = user_id
+            
+            result = collection.delete_one(query)
             deleted_count = result.deleted_count
-            self.logger.info(f"Deleted {deleted_count} conversation(s) with thread_id={thread_id}")
+            self.logger.info(f"Deleted {deleted_count} conversation(s) with thread_id={thread_id}, user_id={user_id or 'all'}")
             return deleted_count > 0
         except Exception as e:
             self.logger.error(f"Error deleting conversation from MongoDB: {e}")
@@ -1265,33 +1321,37 @@ def get_conversations(
     )
 
 
-def get_conversation_by_thread_id(thread_id: str) -> Optional[dict]:
+def get_conversation_by_thread_id(thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> Optional[dict]:
     """
     Get a single conversation by thread_id.
 
     Args:
         thread_id: Unique identifier for the conversation thread
+        user_id: Optional user ID to filter by (for non-admin users)
+        can_read_all: If True, ignore user_id filter (for admins)
 
     Returns:
         Conversation dictionary or None if not found
     """
-    return _default_manager.get_conversation_by_thread_id(thread_id)
+    return _default_manager.get_conversation_by_thread_id(thread_id, user_id, can_read_all)
 
 
-def delete_conversation(thread_id: str) -> bool:
+def delete_conversation(thread_id: str, user_id: Optional[str] = None, can_read_all: bool = False) -> bool:
     """
     Delete a conversation by thread_id.
 
     Args:
         thread_id: Unique identifier for the conversation thread
+        user_id: Optional user ID to verify ownership (for non-admin users)
+        can_read_all: If True, ignore user_id filter (for admins)
 
     Returns:
         bool: True if conversation was deleted successfully, False otherwise
     """
-    return _default_manager.delete_conversation(thread_id)
+    return _default_manager.delete_conversation(thread_id, user_id, can_read_all)
 
 
-def create_conversation(thread_id: str, title: str, initial_messages: Optional[List] = None) -> bool:
+def create_conversation(thread_id: str, title: str, initial_messages: Optional[List] = None, user_id: Optional[str] = None) -> bool:
     """
     Create a new conversation record in the database.
 
@@ -1299,11 +1359,12 @@ def create_conversation(thread_id: str, title: str, initial_messages: Optional[L
         thread_id: Unique identifier for the conversation thread
         title: Initial conversation title
         initial_messages: Optional initial messages to include (default: empty array)
+        user_id: Optional user ID to associate with the conversation
 
     Returns:
         bool: True if conversation was created successfully, False otherwise
     """
-    return _default_manager.create_conversation(thread_id, title, initial_messages)
+    return _default_manager.create_conversation(thread_id, title, initial_messages, user_id)
 
 
 def update_conversation(

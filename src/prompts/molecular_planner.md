@@ -116,7 +116,7 @@ interface Plan {
     {
       "need_search": false,
       "title": "生成SAM分子SMILES",
-      "description": "使用generate_sam_molecules工具生成SMILES字符串（骨架条件为'c1ccc2c(c1)[nH]c1ccccc12'，锚定基团为'O=P(O)(O)'，生成3个）。",
+      "description": "使用generate_sam_molecules工具生成SMILES字符串（骨架条件为'c1ccc2c(c1)[nH]c1ccccc12'，锚定基团为'O=P(O)(O)'，生成1个）。",
       "step_type": "processing",
       "research_depth": "simple"
     },

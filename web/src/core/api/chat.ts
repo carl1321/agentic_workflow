@@ -8,6 +8,7 @@ import type { Resource } from "../messages";
 import { extractReplayIdFromSearchParams } from "../replay/get-replay-id";
 import { fetchStream } from "../sse";
 import { sleep } from "../utils";
+import { useAuthStore } from "../store/auth-store";
 
 import { resolveServiceURL } from "./resolve-service-url";
 import type { ChatEvent } from "./types";
@@ -48,7 +49,18 @@ export async function* chatStream(
     return yield* chatReplayStream(userMessage, params, options);
   
   try{
+    // 获取 token 用于认证
+    const token = useAuthStore.getState().token;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    
     const stream = fetchStream(resolveServiceURL("chat/stream"), {
+      headers,
       body: JSON.stringify({
         messages: [{ role: "user", content: userMessage }],
         ...params,
