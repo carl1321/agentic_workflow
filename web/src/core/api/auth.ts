@@ -58,13 +58,20 @@ export interface LoginResponse {
 }
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
+  // Encrypt password before sending
+  const { encryptPassword } = await import("../utils/crypto");
+  const encryptedPassword = await encryptPassword(request.password);
+
   const url = resolveServiceURL("auth/login");
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify({
+      username: request.username,
+      password: encryptedPassword, // Send encrypted password
+    }),
   });
 
   if (!res.ok) {
@@ -76,19 +83,15 @@ export async function login(request: LoginRequest): Promise<LoginResponse> {
 }
 
 export async function fetchCurrentUser(token: string): Promise<UserInfo> {
-  const url = resolveServiceURL("auth/me");
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
+  // 使用 apiRequest 以便自动处理 401 错误
+  const { apiRequest } = await import("./api-client");
+  return apiRequest<UserInfo>(
+    "auth/me",
+    {
+      method: "GET",
     },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `获取用户信息失败，HTTP ${res.status}`);
-  }
-
-  return res.json();
+    token,
+  );
 }
 
 

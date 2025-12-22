@@ -24,6 +24,15 @@ export async function* fetchStream(
     // 确保 headers 不会被覆盖
     headers: mergedHeaders,
   });
+  
+  // 处理 401 未授权错误
+  if (response.status === 401) {
+    // 动态导入以避免循环依赖
+    const { checkResponseStatus } = await import("../api/api-client");
+    checkResponseStatus(response);
+    throw new Error("未授权，请重新登录");
+  }
+  
   if (response.status !== 200) {
     throw new Error(`Failed to fetch from ${url}: ${response.status}`);
   }

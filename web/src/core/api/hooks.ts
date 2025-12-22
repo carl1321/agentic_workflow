@@ -56,28 +56,21 @@ export function useConfig(): {
       setLoading(false);
       return;
     }
-    // 使用相对路径，确保最终 URL 为 http://localhost:8008/api/config
-    const url = resolveServiceURL("config");
-    console.log("[useConfig] Fetching config from:", url);
-    fetch(url)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        }
-        return res.json();
-      })
-      .then((config) => {
-        console.log("[useConfig] Config loaded successfully:", config);
-        setConfig(config);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error("[useConfig] Failed to fetch config:", err);
-        console.error("[useConfig] URL was:", url);
-        console.error("[useConfig] Make sure the backend server is running on the correct port");
-        setConfig(null);
-        setLoading(false);
-      });
+    // 使用 apiRequest 以便统一处理 401 错误
+    import("./api-client").then(({ apiRequest }) => {
+      apiRequest<AIResearchAgentConfig>("config", { method: "GET" })
+        .then((config) => {
+          console.log("[useConfig] Config loaded successfully:", config);
+          setConfig(config);
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error("[useConfig] Failed to fetch config:", err);
+          console.error("[useConfig] Make sure the backend server is running on the correct port");
+          setConfig(null);
+          setLoading(false);
+        });
+    });
   }, []);
 
   return { config, loading };

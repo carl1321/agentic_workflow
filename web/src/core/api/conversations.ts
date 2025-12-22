@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { resolveServiceURL } from "./resolve-service-url";
+import { apiRequest } from "./api-client";
 
 export interface ConversationSummary {
   id: string;
@@ -34,48 +34,39 @@ export async function fetchConversations(
   limit = 50,
   offset = 0,
 ): Promise<ConversationListResponse> {
-  const url = resolveServiceURL(`conversations?limit=${limit}&offset=${offset}`);
-  const res = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+  return apiRequest<ConversationListResponse>(
+    `conversations?limit=${limit}&offset=${offset}`,
+    {
+      method: "GET",
     },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
-  return res.json();
+    token,
+  );
 }
 
 export async function fetchConversation(
   token: string,
   threadId: string,
 ): Promise<ConversationDetail> {
-  const url = resolveServiceURL(`conversations/${threadId}`);
-  const res = await fetch(url, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+  return apiRequest<ConversationDetail>(
+    `conversations/${threadId}`,
+    {
+      method: "GET",
     },
-  });
-  if (!res.ok) {
-    // Include status code in error message for easier handling
-    throw new Error(`Failed to fetch conversation ${threadId}: ${res.status}`);
-  }
-  return res.json();
+    token,
+  );
 }
 
 export async function deleteConversation(
   token: string,
   threadId: string,
 ): Promise<void> {
-  const url = resolveServiceURL(`conversations/${threadId}`);
-  const res = await fetch(url, {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+  return apiRequest<void>(
+    `conversations/${threadId}`,
+    {
+      method: "DELETE",
     },
-  });
-  if (!res.ok) throw new Error(`Failed to delete conversation ${threadId}: ${res.status}`);
+    token,
+  );
 }
 
 

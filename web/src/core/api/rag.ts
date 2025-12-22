@@ -14,21 +14,21 @@ export interface RAGDocumentsResponse {
   total: number;
 }
 
-export function queryRAGResources(query: string) {
-  // 确保访问的是后端的 /api/rag/resources
-  return fetch(resolveServiceURL(`rag/resources?query=${encodeURIComponent(query)}`), {
-    method: "GET",
-  })
-    .then((res) => res.json())
-    .then((res) => {
-      return res.resources as Array<Resource>;
-    })
-    .catch(() => {
-      return [];
-    });
+export async function queryRAGResources(query: string) {
+  // 使用 apiRequest 以便统一处理 401 错误
+  const { apiRequest } = await import("./api-client");
+  try {
+    const res = await apiRequest<{ resources: Array<Resource> }>(
+      `rag/resources?query=${encodeURIComponent(query)}`,
+      { method: "GET" },
+    );
+    return res.resources;
+  } catch {
+    return [];
+  }
 }
 
-export function getRAGDocuments(
+export async function getRAGDocuments(
   resourceId: string,
   page: number = 1,
   pageSize: number = 50
@@ -43,25 +43,16 @@ export function getRAGDocuments(
     page_size: pageSize.toString(),
   });
 
-  return fetch(resolveServiceURL(`rag/resources/${datasetId}/documents?${params}`), {
-    method: "GET",
-  })
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error(`Failed to fetch documents: ${res.statusText}`);
-      }
-      return res.json();
-    })
-    .then((res) => {
-      return {
-        documents: res.documents as Array<RAGDocument>,
-        total: res.total as number,
-      };
-    })
-    .catch((error) => {
-      console.error("Error fetching RAG documents:", error);
-      throw error;
-    });
+  // 使用 apiRequest 以便统一处理 401 错误
+  const { apiRequest } = await import("./api-client");
+  const res = await apiRequest<{ documents: Array<RAGDocument>; total: number }>(
+    `rag/resources/${datasetId}/documents?${params}`,
+    { method: "GET" },
+  );
+  return {
+    documents: res.documents,
+    total: res.total,
+  };
 }
 
 export function downloadRAGDocument(

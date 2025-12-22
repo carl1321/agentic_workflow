@@ -18,12 +18,36 @@ from .db import TokenBlacklist, UserDB
 from .jwt import create_access_token, decode_token, get_token_jti
 from .models import LoginRequest, LoginResponse, TokenResponse, UserInfoResponse
 from .password import verify_password
+from .crypto import decrypt_password, get_public_key
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 security = HTTPBearer()
+
+
+@router.get("/public-key")
+async def get_public_key_endpoint():
+    """
+    Get RSA public key for client-side password encryption.
+    
+    This endpoint returns the public key that clients should use to encrypt
+    passwords before sending them to the login endpoint.
+    """
+    try:
+        public_key = get_public_key()
+        return {
+            "public_key": public_key,
+            "algorithm": "RSA",
+            "key_size": 2048,
+        }
+    except Exception as e:
+        logger.error(f"Error getting public key: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve public key",
+        )
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -48,9 +72,26 @@ async def login(request: LoginRequest):
             detail="User account is disabled",
         )
     
+    # Decrypt password if it's encrypted (base64 encoded)
+    password = request.password
+    # Check if password looks like base64-encoded encrypted data (starts with common base64 chars and is longer)
+    # Simple heuristic: if it's base64 and longer than typical plaintext passwords, try decrypting
+    if len(password) > 100 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in password):
+        decrypted = decrypt_password(password)
+        if decrypted is not None:
+            password = decrypted
+            logger.debug("Password decrypted successfully")
+        else:
+            # If decryption fails but it looks encrypted, reject
+            logger.warning("Failed to decrypt password, treating as invalid")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid username or password",
+            )
+    
     # Verify password
     password_hash = user_data.get("password_hash")
-    if not password_hash or not verify_password(request.password, password_hash):
+    if not password_hash or not verify_password(password, password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",

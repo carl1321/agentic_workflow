@@ -1,6 +1,6 @@
 // Admin API helpers for RBAC resources
 
-import { resolveServiceURL } from "./resolve-service-url";
+import { apiRequest } from "./api-client";
 import type {
   LoginResponse,
   MenuInfo,
@@ -15,23 +15,7 @@ async function request<T>(
   options: RequestInit = {},
   token?: string | null,
 ): Promise<T> {
-  const url = resolveServiceURL(path);
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...(options.headers || {}),
-  };
-  if (token) {
-    (headers as any).Authorization = `Bearer ${token}`;
-  }
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `请求失败: ${res.status}`);
-  }
-  return res.json();
+  return apiRequest<T>(path, options, token);
 }
 
 // --- Users ---
