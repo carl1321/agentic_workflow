@@ -20,10 +20,12 @@ import { Toolbox } from "./components/toolbox";
 import { KnowledgeBase } from "./components/knowledge-base";
 import { KnowledgeBaseDetail } from "./components/knowledge-base-detail";
 import { ToolExecutor } from "./components/tool-executor";
+import { WorkflowList } from "./components/workflow-list";
+import { WorkflowsPage } from "./components/workflows-page";
 import type { ToolConfig } from "~/core/config/tools";
 import type { Resource } from "~/core/messages";
 
-type ViewMode = "chat" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor";
+type ViewMode = "chat" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor" | "workflow";
 
 export default function Main() {
   const searchParams = useSearchParams();
@@ -49,7 +51,7 @@ export default function Main() {
   // 从 URL 参数中读取 view 参数，设置初始视图模式
   useEffect(() => {
     const viewParam = searchParams.get("view");
-    if (viewParam && ["chat", "toolbox", "knowledge", "knowledge-detail", "tool-executor"].includes(viewParam)) {
+    if (viewParam && ["chat", "toolbox", "knowledge", "knowledge-detail", "tool-executor", "workflow"].includes(viewParam)) {
       setViewMode(viewParam as ViewMode);
     }
   }, [searchParams]);
@@ -493,12 +495,19 @@ export default function Main() {
     setSelectedResource(null);
   };
 
-  // Dify workflow removed - using ReactFlow workflow system instead
-  // const handleOpenWorkflow = () => {
-  //   setViewMode("workflow");
-  //   setSelectedTool(null);
-  //   setSelectedResource(null);
-  // };
+  const handleOpenWorkflow = () => {
+    setViewMode("workflow");
+    setSelectedTool(null);
+    setSelectedResource(null);
+  };
+
+  const handleWorkflowEdit = (workflowId: string) => {
+    window.open(`/workflows/${workflowId}/editor`, "_blank");
+  };
+
+  const handleWorkflowViewRuns = (workflowId: string) => {
+    window.open(`/workflow/${workflowId}/runs`, "_blank");
+  };
 
   const handleResourceSelect = (resource: Resource) => {
     setSelectedResource(resource);
@@ -534,6 +543,7 @@ export default function Main() {
         onSelectChat={handleSelectChat}
         onOpenToolbox={handleOpenToolbox}
         onOpenKnowledgeBase={handleOpenKnowledgeBase}
+        onOpenWorkflow={handleOpenWorkflow}
       />
       
       <div className="flex flex-1 h-full flex-col overflow-visible">
@@ -598,7 +608,12 @@ export default function Main() {
             />
           </div>
         )}
-        {/* Dify workflow removed - using ReactFlow workflow system instead */}
+
+        {viewMode === "workflow" && (
+          <div className="flex-1 overflow-hidden">
+            <WorkflowsPage />
+          </div>
+        )}
       </div>
     </div>
   );

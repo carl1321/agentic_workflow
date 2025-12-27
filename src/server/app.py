@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import logging
+from datetime import datetime
 
 # 设置日志级别为INFO，避免过多的DEBUG日志
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +94,10 @@ from src.server.workflow_request import (
     NodeExecuteResponse,
     WorkflowListResponse,
     ToolDefinition,
+    CreateWorkflowRequest,
+    UpdateWorkflowRequest,
+    SaveDraftRequest,
+    CreateReleaseRequest,
 )
 from src.server.workflow_storage import get_workflow_storage
 from src.tools import (
@@ -261,6 +266,30 @@ async def setup_checkpoint_tables():
             logger.info("PostgreSQL checkpoint tables initialized successfully")
     except Exception as e:
         logger.warning(f"Failed to initialize checkpoint tables: {e}")
+    
+    # Start workflow worker
+    try:
+        from src.server.workflow.worker import get_workflow_worker
+        from src.server.workflow.executor import get_workflow_executor
+        worker = get_workflow_worker()
+        executor = get_workflow_executor()
+        worker.set_executor(executor)
+        await worker.start()
+        logger.info("Workflow worker started")
+    except Exception as e:
+        logger.warning(f"Failed to start workflow worker: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_worker():
+    """Stop workflow worker on application shutdown."""
+    try:
+        from src.server.workflow.worker import get_workflow_worker
+        worker = get_workflow_worker()
+        await worker.stop()
+        logger.info("Workflow worker stopped")
+    except Exception as e:
+        logger.warning(f"Failed to stop workflow worker: {e}")
 
 
 @app.post("/api/chat/stream")
@@ -2113,46 +2142,109 @@ async def get_workflow(workflow_id: str):
 
 
 @app.post("/api/workflow/execute", response_model=WorkflowExecuteResponse)
-async def execute_workflow(request: WorkflowExecuteRequest):
-    """执行工作流"""
+async def execute_workflow(request: WorkflowExecuteRequest, current_user: Optional[CurrentUser] = Depends(get_current_user_optional)):
+    """执行工作流（创建运行记录，由 worker 异步执行）"""
     try:
-        from src.workflow.executor import get_workflow_executor
+        from src.server.workflow.executor import get_workflow_executor
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
         executor = get_workflow_executor()
+        
         # 合并执行请求中的 inputs 和 files
         workflow_inputs = request.inputs or {}
         if request.files:
             workflow_inputs["files"] = request.files
         
-        result = await executor.execute_workflow(
-            workflow_id=request.workflow_id,
-            inputs=workflow_inputs,
-            thread_id=request.thread_id,
-        )
-        return WorkflowExecuteResponse(**result)
+        # 获取工作流的当前发布版本
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT current_release_id, id as workflow_id
+                    FROM workflows
+                    WHERE id = %s
+                """, (UUID(request.workflow_id),))
+                workflow = cursor.fetchone()
+                if not workflow:
+                    raise ValueError(f"Workflow {request.workflow_id} not found")
+                
+                if not workflow['current_release_id']:
+                    raise ValueError(f"Workflow {request.workflow_id} has no release")
+                
+                release_id = workflow['current_release_id']
+                workflow_id = workflow['workflow_id']
+                created_by = current_user.id if current_user else UUID('00000000-0000-0000-0000-000000000000')
+            
+            # 创建运行记录
+            run_id = await executor.create_run(
+                workflow_id=workflow_id,
+                release_id=release_id,
+                inputs=workflow_inputs,
+                created_by=created_by,
+            )
+            
+            return WorkflowExecuteResponse(
+                success=True,
+                result={"run_id": str(run_id)},
+            )
+        finally:
+            conn.close()
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error executing workflow: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to execute workflow: {str(e)}")
+        logger.exception(f"Error creating workflow run: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create workflow run: {str(e)}")
 
 
 @app.post("/api/workflow/execute/stream")
-async def execute_workflow_stream(request: WorkflowExecuteRequest):
+async def execute_workflow_stream(request: WorkflowExecuteRequest, current_user: Optional[CurrentUser] = Depends(get_current_user_optional)):
     """流式执行工作流，实时返回节点状态更新"""
     try:
-        from src.workflow.executor import get_workflow_executor
+        from src.server.workflow.executor import get_workflow_executor
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
         executor = get_workflow_executor()
+        
         # 合并执行请求中的 inputs 和 files
         workflow_inputs = request.inputs or {}
         if request.files:
             workflow_inputs["files"] = request.files
         
-        return StreamingResponse(
-            executor.execute_workflow_stream(
-                workflow_id=request.workflow_id,
+        # 获取工作流的当前发布版本
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT current_release_id, id as workflow_id
+                    FROM workflows
+                    WHERE id = %s
+                """, (UUID(request.workflow_id),))
+                workflow = cursor.fetchone()
+                if not workflow:
+                    raise ValueError(f"Workflow {request.workflow_id} not found")
+                
+                if not workflow['current_release_id']:
+                    raise ValueError(f"Workflow {request.workflow_id} has no release")
+                
+                release_id = workflow['current_release_id']
+                workflow_id = workflow['workflow_id']
+                created_by = current_user.id if current_user else UUID('00000000-0000-0000-0000-000000000000')
+            
+            # 创建运行记录
+            run_id = await executor.create_run(
+                workflow_id=workflow_id,
+                release_id=release_id,
                 inputs=workflow_inputs,
-                thread_id=request.thread_id,
-            ),
+                created_by=created_by,
+            )
+        finally:
+            conn.close()
+        
+        # 返回流式执行
+        return StreamingResponse(
+            executor.execute_run_stream(run_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -2209,6 +2301,696 @@ async def execute_node(request: NodeExecuteRequest):
     except Exception as e:
         logger.exception(f"Error executing node: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to execute node: {str(e)}")
+
+
+# ============= 工作流管理端点 =============
+
+@app.get("/api/workflows")
+async def list_workflows_from_db(
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """从数据库获取工作流列表"""
+    try:
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            query = """
+                SELECT w.*, u.username as created_by_name
+                FROM workflows w
+                LEFT JOIN users u ON w.created_by = u.id
+                WHERE 1=1
+            """
+            params = []
+            
+            if status:
+                query += " AND w.status = %s"
+                params.append(status)
+            
+            query += " ORDER BY w.updated_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                workflows = []
+                for row in rows:
+                    workflow_dict = {}
+                    for key, value in row.items():
+                        # Convert UUID to string
+                        if isinstance(value, UUID):
+                            workflow_dict[key] = str(value)
+                        # Convert datetime to ISO string
+                        elif isinstance(value, datetime):
+                            workflow_dict[key] = value.isoformat()
+                        else:
+                            workflow_dict[key] = value
+                    workflows.append(workflow_dict)
+            
+            # 获取总数
+            count_query = """
+                SELECT COUNT(*) as total
+                FROM workflows
+                WHERE 1=1
+            """
+            count_params = []
+            if status:
+                count_query += " AND status = %s"
+                count_params.append(status)
+            
+            with conn.cursor() as cursor:
+                cursor.execute(count_query, count_params)
+                total = cursor.fetchone()['total']
+            
+            return {
+                "workflows": workflows,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"Error getting workflows: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get workflows: {str(e)}")
+
+
+@app.post("/api/workflows")
+async def create_workflow(
+    request: CreateWorkflowRequest,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """创建工作流"""
+    try:
+        from src.server.workflow.db import get_db_connection, create_workflow as db_create_workflow
+        from uuid import UUID
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        conn = get_db_connection()
+        try:
+            workflow_id = db_create_workflow(
+                conn,
+                name=request.name,
+                description=request.description,
+                created_by=UUID(str(current_user.id)),
+                status=request.status,
+            )
+            conn.commit()
+            
+            # 获取创建的工作流
+            from src.server.workflow.db import get_workflow
+            workflow = get_workflow(conn, workflow_id)
+            
+            if workflow:
+                # Convert UUID and datetime to string
+                workflow_dict = {}
+                for key, value in workflow.items():
+                    if isinstance(value, UUID):
+                        workflow_dict[key] = str(value)
+                    elif isinstance(value, datetime):
+                        workflow_dict[key] = value.isoformat()
+                    else:
+                        workflow_dict[key] = value
+                return workflow_dict
+            else:
+                raise HTTPException(status_code=500, detail="Failed to retrieve created workflow")
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error creating workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}")
+async def get_workflow_by_id(
+    workflow_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取工作流详情"""
+    try:
+        from src.server.workflow.db import get_db_connection, get_workflow
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            workflow = get_workflow(conn, UUID(workflow_id))
+            
+            if not workflow:
+                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
+            # Convert UUID and datetime to string
+            workflow_dict = {}
+            for key, value in workflow.items():
+                if isinstance(value, UUID):
+                    workflow_dict[key] = str(value)
+                elif isinstance(value, datetime):
+                    workflow_dict[key] = value.isoformat()
+                else:
+                    workflow_dict[key] = value
+            
+            return workflow_dict
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get workflow: {str(e)}")
+
+
+@app.put("/api/workflows/{workflow_id}")
+async def update_workflow_by_id(
+    workflow_id: str,
+    request: UpdateWorkflowRequest,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """更新工作流"""
+    try:
+        from src.server.workflow.db import get_db_connection, update_workflow, get_workflow
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            success = update_workflow(
+                conn,
+                UUID(workflow_id),
+                name=request.name,
+                description=request.description,
+                status=request.status,
+            )
+            
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
+            conn.commit()
+            
+            # 获取更新后的工作流
+            workflow = get_workflow(conn, UUID(workflow_id))
+            
+            if workflow:
+                # Convert UUID and datetime to string
+                workflow_dict = {}
+                for key, value in workflow.items():
+                    if isinstance(value, UUID):
+                        workflow_dict[key] = str(value)
+                    elif isinstance(value, datetime):
+                        workflow_dict[key] = value.isoformat()
+                    else:
+                        workflow_dict[key] = value
+                return workflow_dict
+            else:
+                raise HTTPException(status_code=500, detail="Failed to retrieve updated workflow")
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error updating workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update workflow: {str(e)}")
+
+
+@app.delete("/api/workflows/{workflow_id}")
+async def delete_workflow_by_id(
+    workflow_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """删除工作流"""
+    try:
+        from src.server.workflow.db import get_db_connection, delete_workflow
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            success = delete_workflow(conn, UUID(workflow_id))
+            
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
+            conn.commit()
+            return {"success": True, "message": f"Workflow {workflow_id} deleted"}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting workflow: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete workflow: {str(e)}")
+
+
+@app.post("/api/workflows/{workflow_id}/draft")
+async def save_workflow_draft(
+    workflow_id: str,
+    request: SaveDraftRequest,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """保存工作流草稿"""
+    try:
+        from src.server.workflow.db import get_db_connection, save_draft, get_draft
+        from uuid import UUID
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        conn = get_db_connection()
+        try:
+            draft_id = save_draft(
+                conn,
+                UUID(workflow_id),
+                graph=request.graph,
+                created_by=UUID(str(current_user.id)),
+                is_autosave=request.is_autosave,
+            )
+            conn.commit()
+            
+            # 获取保存的草稿
+            draft = get_draft(conn, UUID(workflow_id))
+            
+            if draft:
+                # Convert UUID and datetime to string
+                draft_dict = {}
+                for key, value in draft.items():
+                    if isinstance(value, UUID):
+                        draft_dict[key] = str(value)
+                    elif isinstance(value, datetime):
+                        draft_dict[key] = value.isoformat()
+                    else:
+                        draft_dict[key] = value
+                return draft_dict
+            else:
+                raise HTTPException(status_code=500, detail="Failed to retrieve saved draft")
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error saving draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save draft: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/draft")
+async def get_workflow_draft(
+    workflow_id: str,
+    version: Optional[int] = None,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取工作流草稿"""
+    try:
+        from src.server.workflow.db import get_db_connection, get_draft
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            draft = get_draft(conn, UUID(workflow_id), version=version)
+            
+            if not draft:
+                raise HTTPException(status_code=404, detail=f"Draft not found for workflow {workflow_id}")
+            
+            # Convert UUID and datetime to string
+            draft_dict = {}
+            for key, value in draft.items():
+                if isinstance(value, UUID):
+                    draft_dict[key] = str(value)
+                elif isinstance(value, datetime):
+                    draft_dict[key] = value.isoformat()
+                else:
+                    draft_dict[key] = value
+            
+            return draft_dict
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get draft: {str(e)}")
+
+
+@app.delete("/api/workflows/{workflow_id}/draft")
+async def delete_workflow_draft(
+    workflow_id: str,
+    version: Optional[int] = None,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """删除工作流草稿"""
+    try:
+        from src.server.workflow.db import get_db_connection, delete_draft
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            success = delete_draft(conn, UUID(workflow_id), version=version)
+            
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Draft not found for workflow {workflow_id}")
+            
+            conn.commit()
+            return {"success": True, "message": f"Draft deleted for workflow {workflow_id}"}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting draft: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete draft: {str(e)}")
+
+
+@app.post("/api/workflows/{workflow_id}/release")
+async def create_workflow_release(
+    workflow_id: str,
+    request: CreateReleaseRequest,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """发布工作流"""
+    try:
+        from src.server.workflow.db import get_db_connection, create_release
+        from uuid import UUID
+        
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
+        conn = get_db_connection()
+        try:
+            release_id = create_release(
+                conn,
+                UUID(workflow_id),
+                UUID(request.source_draft_id),
+                spec=request.spec,
+                checksum=request.checksum,
+                created_by=UUID(str(current_user.id)),
+            )
+            conn.commit()
+            
+            # 获取创建的发布
+            from src.server.workflow.db import get_release
+            release = get_release(conn, release_id)
+            
+            if release:
+                # Convert UUID and datetime to string
+                release_dict = {}
+                for key, value in release.items():
+                    if isinstance(value, UUID):
+                        release_dict[key] = str(value)
+                    elif isinstance(value, datetime):
+                        release_dict[key] = value.isoformat()
+                    else:
+                        release_dict[key] = value
+                return release_dict
+            else:
+                raise HTTPException(status_code=500, detail="Failed to retrieve created release")
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error creating release: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create release: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/releases")
+async def get_workflow_releases(
+    workflow_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取工作流的发布列表"""
+    try:
+        from src.server.workflow.db import get_db_connection, list_releases
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            releases = list_releases(conn, UUID(workflow_id))
+            
+            # Convert UUID and datetime to string
+            releases_list = []
+            for release in releases:
+                release_dict = {}
+                for key, value in release.items():
+                    if isinstance(value, UUID):
+                        release_dict[key] = str(value)
+                    elif isinstance(value, datetime):
+                        release_dict[key] = value.isoformat()
+                    else:
+                        release_dict[key] = value
+                releases_list.append(release_dict)
+            
+            return {"releases": releases_list}
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"Error getting releases: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get releases: {str(e)}")
+
+
+# ============= 运行管理端点 =============
+
+@app.get("/api/workflows/{workflow_id}/runs")
+async def get_workflow_runs(
+    workflow_id: str,
+    status: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取工作流的运行列表"""
+    try:
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            query = """
+                SELECT wr.*, u.username as created_by_name
+                FROM workflow_runs wr
+                LEFT JOIN users u ON wr.created_by = u.id
+                WHERE wr.workflow_id = %s
+            """
+            params = [UUID(workflow_id)]
+            
+            if status:
+                query += " AND wr.status = %s"
+                params.append(status)
+            
+            query += " ORDER BY wr.created_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                runs = [dict(row) for row in cursor.fetchall()]
+            
+            # 获取总数
+            count_query = """
+                SELECT COUNT(*) as total
+                FROM workflow_runs
+                WHERE workflow_id = %s
+            """
+            count_params = [UUID(workflow_id)]
+            if status:
+                count_query += " AND status = %s"
+                count_params.append(status)
+            
+            with conn.cursor() as cursor:
+                cursor.execute(count_query, count_params)
+                total = cursor.fetchone()['total']
+            
+            return {
+                "runs": runs,
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"Error getting workflow runs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get workflow runs: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/runs/{run_id}")
+async def get_workflow_run(
+    workflow_id: str,
+    run_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取运行详情"""
+    try:
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT wr.*, u.username as created_by_name
+                    FROM workflow_runs wr
+                    LEFT JOIN users u ON wr.created_by = u.id
+                    WHERE wr.id = %s AND wr.workflow_id = %s
+                """, (UUID(run_id), UUID(workflow_id)))
+                run = cursor.fetchone()
+                if not run:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                
+                return dict(run)
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting workflow run: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get workflow run: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/runs/{run_id}/tasks")
+async def get_run_tasks(
+    workflow_id: str,
+    run_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取运行的任务列表"""
+    try:
+        from src.server.workflow.db import get_run_tasks, get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            tasks = get_run_tasks(conn, UUID(run_id))
+            return {"tasks": tasks}
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"Error getting run tasks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get run tasks: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/runs/{run_id}/status")
+async def get_run_status(
+    workflow_id: str,
+    run_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取运行的状态摘要（用于状态恢复）"""
+    try:
+        from src.server.workflow.db import get_db_connection, get_run_tasks
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            # 获取运行信息
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id, status, created_at, started_at, finished_at
+                    FROM workflow_runs
+                    WHERE id = %s AND workflow_id = %s
+                """, (UUID(run_id), UUID(workflow_id)))
+                run = cursor.fetchone()
+                if not run:
+                    raise HTTPException(status_code=404, detail="Run not found")
+            
+            # 获取所有任务的状态
+            tasks = get_run_tasks(conn, UUID(run_id))
+            
+            # 构建节点状态映射
+            node_statuses = {}
+            for task in tasks:
+                node_id = task['node_id']
+                status = task['status']
+                node_statuses[node_id] = {
+                    'status': status,
+                    'output': task.get('output'),
+                    'error': task.get('error'),
+                    'metrics': task.get('metrics'),
+                    'started_at': task.get('started_at').isoformat() if task.get('started_at') else None,
+                    'finished_at': task.get('finished_at').isoformat() if task.get('finished_at') else None,
+                }
+            
+            return {
+                'run_id': str(run['id']),
+                'run_status': run['status'],
+                'node_statuses': node_statuses,
+            }
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting run status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get run status: {str(e)}")
+
+
+@app.get("/api/workflows/{workflow_id}/runs/{run_id}/logs")
+async def get_run_logs(
+    workflow_id: str,
+    run_id: str,
+    after_seq: Optional[int] = None,
+    limit: Optional[int] = None,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """获取运行日志"""
+    try:
+        from src.server.workflow.db import get_run_logs, get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            logs = get_run_logs(conn, UUID(run_id), after_seq=after_seq, limit=limit)
+            return {"logs": logs}
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"Error getting run logs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get run logs: {str(e)}")
+
+
+@app.post("/api/workflows/{workflow_id}/runs/{run_id}/cancel")
+async def cancel_run(
+    workflow_id: str,
+    run_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """取消运行"""
+    try:
+        from src.server.workflow.db import update_run_status, get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            # 检查运行状态
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT status FROM workflow_runs
+                    WHERE id = %s AND workflow_id = %s
+                """, (UUID(run_id), UUID(workflow_id)))
+                run = cursor.fetchone()
+                if not run:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                
+                if run['status'] not in ('queued', 'running'):
+                    raise HTTPException(status_code=400, detail=f"Cannot cancel run with status {run['status']}")
+            
+            # 更新状态为 canceled
+            update_run_status(
+                conn,
+                UUID(run_id),
+                'canceled',
+                finished_at=datetime.now(),
+            )
+            conn.commit()
+            
+            return {"success": True, "message": "Run canceled"}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error canceling run: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to cancel run: {str(e)}")
 
 
 @app.post("/api/workflow/validate")

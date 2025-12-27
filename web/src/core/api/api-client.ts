@@ -53,8 +53,39 @@ export async function apiRequest<T>(
   }
   
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(text || `请求失败: ${res.status}`);
+    // 尝试解析 JSON 错误响应
+    let errorMessage = `请求失败: ${res.status}`;
+    try {
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const errorData = await res.json();
+        errorMessage = errorData.detail || errorData.message || errorMessage;
+      } else {
+        // 如果不是 JSON，尝试读取文本
+        const text = await res.text().catch(() => "");
+        // 如果是 HTML（通常是错误页面），提取有用的信息
+        if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+          errorMessage = `服务器返回了错误页面 (${res.status})`;
+        } else if (text) {
+          errorMessage = text;
+        }
+      }
+    } catch (e) {
+      // 如果解析失败，使用默认错误消息
+      console.error("Error parsing error response:", e);
+    }
+    throw new Error(errorMessage);
+  }
+  
+  // 检查响应内容类型
+  const contentType = res.headers.get("content-type");
+  if (!contentType || !contentType.includes("application/json")) {
+    const text = await res.text();
+    // 如果是 HTML，说明路径可能错误
+    if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+      throw new Error(`API 路径错误，收到了 HTML 响应。请检查 API 路径: ${url}`);
+    }
+    throw new Error(`期望 JSON 响应，但收到了: ${contentType}`);
   }
   
   return res.json();

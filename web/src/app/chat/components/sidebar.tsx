@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, MessageSquare, Trash2, BookOpen, Wrench } from "lucide-react";
+import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState, useImperativeHandle, forwardRef } from "react";
 
@@ -25,6 +25,7 @@ interface SidebarProps {
   currentChatId?: string | null;
   onOpenToolbox?: () => void;
   onOpenKnowledgeBase?: () => void;
+  onOpenWorkflow?: () => void;
 }
 
 export interface SidebarRef {
@@ -38,6 +39,7 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   currentChatId,
   onOpenToolbox,
   onOpenKnowledgeBase,
+  onOpenWorkflow,
 }, ref) => {
   const { token } = useAuthStore();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -192,7 +194,14 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
           <BookOpen className="h-4 w-4 mr-2" />
           知识库
         </Button>
-        {/* Dify workflow removed - using ReactFlow workflow system instead */}
+        <Button
+          variant="outline"
+          className="w-full justify-start"
+          onClick={onOpenWorkflow}
+        >
+          <Workflow className="h-4 w-4 mr-2" />
+          工作流
+        </Button>
       </div>
 
       {/* Chat History */}

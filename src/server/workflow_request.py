@@ -29,6 +29,8 @@ class WorkflowNodeData(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     
     label: str
+    node_name: Optional[str] = Field(None, alias="nodeName")  # 节点名称（用于程序运行和记录）
+    display_name: Optional[str] = Field(None, alias="displayName")  # 显示名称（用于UI展示）
     # Start 节点
     start_inputs: Optional[Dict[str, Any]] = Field(None, alias="startInputs")
     start_input_field: Optional[str] = Field(None, alias="startInputField")
@@ -77,14 +79,6 @@ class WorkflowNode(BaseModel):
     data: WorkflowNodeData
 
 
-class ParameterMapping(BaseModel):
-    """参数映射"""
-    model_config = ConfigDict(populate_by_name=True)
-    
-    source_output: Optional[str] = Field(None, alias="sourceOutput")
-    target_input: Optional[str] = Field(None, alias="targetInput")
-
-
 class WorkflowEdge(BaseModel):
     """工作流边/连接"""
     model_config = ConfigDict(populate_by_name=True)
@@ -95,7 +89,7 @@ class WorkflowEdge(BaseModel):
     source_handle: Optional[str] = Field(None, alias="sourceHandle")
     target_handle: Optional[str] = Field(None, alias="targetHandle")
     condition: Optional[str] = None  # Condition 节点的条件分支
-    parameter_mapping: Optional[ParameterMapping] = Field(None, alias="parameterMapping")  # 参数映射配置
+    # 参数映射已移除，改为在节点配置中使用 {{节点名.字段名}} 模板语法
 
 
 class WorkflowConfigRequest(BaseModel):
@@ -185,4 +179,31 @@ class ToolDefinition(BaseModel):
 class WorkflowListResponse(BaseModel):
     """工作流列表响应"""
     workflows: List[Dict[str, Any]]
+
+
+class CreateWorkflowRequest(BaseModel):
+    """创建工作流请求"""
+    name: str
+    description: Optional[str] = None
+    status: str = "draft"
+
+
+class UpdateWorkflowRequest(BaseModel):
+    """更新工作流请求"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+class SaveDraftRequest(BaseModel):
+    """保存草稿请求"""
+    graph: Dict[str, Any]  # 包含nodes和edges
+    is_autosave: bool = False
+
+
+class CreateReleaseRequest(BaseModel):
+    """创建发布请求"""
+    source_draft_id: str
+    spec: Dict[str, Any]  # 执行规范
+    checksum: str
 

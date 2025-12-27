@@ -11,9 +11,9 @@ import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "~/components/ui/button";
 
-import { ThemeToggle } from "../../components/ui/theme-toggle";
-import { Tooltip } from "../../components/ui/tooltip";
-import { SettingsDialog } from "../settings/dialogs/settings-dialog";
+import { ThemeToggle } from "~/components/ui/theme-toggle";
+import { Tooltip } from "~/components/ui/tooltip";
+import { SettingsDialog } from "~/app/settings/dialogs/settings-dialog";
 import { useAuthStore } from "~/core/store/auth-store";
 import {
   DropdownMenu,
