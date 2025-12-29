@@ -274,32 +274,14 @@ class WorkflowExecutor:
         """
         流式执行运行（SSE）
         
+        API 只负责创建任务并轮询日志，实际执行由 Worker 负责
+        
         Args:
             run_id: 运行 ID
             
         Yields:
             SSE 事件字符串
         """
-        event_queue = asyncio.Queue()
-        
-        # 在后台执行运行
-        async def execute_in_background():
-            try:
-                await self.execute_run(run_id)
-                await event_queue.put({
-                    "type": "run_end",
-                    "success": True,
-                })
-            except Exception as e:
-                await event_queue.put({
-                    "type": "error",
-                    "success": False,
-                    "error": str(e),
-                })
-        
-        # 启动后台任务
-        task = asyncio.create_task(execute_in_background())
-        
         # 发送初始事件
         yield f"data: {json.dumps({'type': 'run_start', 'run_id': str(run_id)})}\n\n"
         
@@ -308,7 +290,7 @@ class WorkflowExecutor:
         conn = get_db_connection()
         try:
             # 继续轮询直到任务完成且没有新日志
-            max_empty_polls = 10  # 最多连续10次空轮询后停止（从5次增加到10次）
+            max_empty_polls = 10  # 最多连续10次空轮询后停止
             empty_polls = 0
             task_completed = False
             post_completion_polls = 0  # 任务完成后的轮询次数
@@ -337,6 +319,12 @@ class WorkflowExecutor:
                         # 调试日志
                         logger.debug(f"SSE Event: event={event_type}, node_id={node_id}, payload={payload}")
                         
+                        # 检查是否是工作流结束事件
+                        if event_type == 'workflow_end':
+                            task_completed = True
+                        elif event_type == 'workflow_error':
+                            task_completed = True
+                        
                         event = {
                             "type": "log",
                             "level": log['level'],
@@ -352,18 +340,25 @@ class WorkflowExecutor:
                     if task_completed:
                         post_completion_polls += 1
                 
-                # 检查是否有事件队列中的事件
-                try:
-                    event = await asyncio.wait_for(event_queue.get(), timeout=0.1)
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("type") in ("run_end", "error"):
-                        task_completed = True
-                        # 任务完成，继续轮询一段时间确保获取所有日志
-                        logger.info(f"Task completed, continuing to poll logs for run {run_id}")
-                        # 添加显式的日志刷新等待
-                        await asyncio.sleep(0.2)  # 等待日志写入
-                except asyncio.TimeoutError:
-                    pass
+                # 检查任务状态（如果日志中没有 workflow_end 事件，通过状态判断）
+                if not task_completed:
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT status FROM workflow_runs WHERE id = %s
+                        """, (run_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            status = row['status']
+                            if status in ('success', 'failed', 'canceled'):
+                                task_completed = True
+                                logger.info(f"Task {run_id} completed with status: {status}")
+                                # 发送完成事件
+                                event = {
+                                    "type": "run_end",
+                                    "success": status == 'success',
+                                    "status": status,
+                                }
+                                yield f"data: {json.dumps(event)}\n\n"
                 
                 # 如果任务已完成，继续轮询一段时间
                 if task_completed:
@@ -393,17 +388,29 @@ class WorkflowExecutor:
                             yield f"data: {json.dumps(event)}\n\n"
                             last_seq = log['seq']
                         break
-                elif task.done() and not task_completed:
-                    # 任务刚完成，标记为已完成但继续轮询
-                    task_completed = True
-                    logger.info(f"Task done detected, continuing to poll logs for run {run_id}")
-                    # 添加显式的日志刷新等待
-                    await asyncio.sleep(0.2)  # 等待日志写入
+                elif empty_polls >= max_empty_polls:
+                    # 如果长时间没有新日志，检查任务状态
+                    with conn.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT status FROM workflow_runs WHERE id = %s
+                        """, (run_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            status = row['status']
+                            if status in ('success', 'failed', 'canceled'):
+                                task_completed = True
+                                logger.info(f"Task {run_id} completed with status: {status} (detected by status check)")
+                                event = {
+                                    "type": "run_end",
+                                    "success": status == 'success',
+                                    "status": status,
+                                }
+                                yield f"data: {json.dumps(event)}\n\n"
+                            else:
+                                # 任务还在运行，重置空轮询计数
+                                empty_polls = 0
                 
-                await asyncio.sleep(0.5)  # 轮询间隔（从0.3秒增加到0.5秒）
-            
-            # 等待任务完成
-            await task
+                await asyncio.sleep(0.5)  # 轮询间隔
         finally:
             conn.close()
 

@@ -18,13 +18,13 @@ interface UpstreamNodeSelectorProps {
   onClose: () => void;
 }
 
-// 定义各节点类型的输出字段
-const getNodeOutputFields = (nodeType: string): string[] => {
+// 定义各节点类型的默认输出字段
+const getDefaultOutputFields = (nodeType: string): string[] => {
   switch (nodeType) {
     case "start":
       return ["inputs", "input"];
     case "llm":
-      return ["response", "content", "output"];
+      return ["output"];
     case "tool":
       return ["result", "output"];
     case "condition":
@@ -34,6 +34,38 @@ const getNodeOutputFields = (nodeType: string): string[] => {
     default:
       return ["output"];
   }
+};
+
+// 根据节点的输出格式和定义的字段返回对应的输出字段
+const getNodeOutputFields = (node: Node): string[] => {
+  const nodeType = node.type || "start";
+  const outputFormat = node.data?.outputFormat || node.data?.output_format || "json";
+  const outputFields = node.data?.outputFields || node.data?.output_fields || [];
+  
+  // 始终包含 output 字段（原始输出）
+  const fields: string[] = ["output"];
+  
+  // 如果定义了输出字段，添加这些字段
+  if (Array.isArray(outputFields) && outputFields.length > 0) {
+    outputFields.forEach((field: any) => {
+      if (field && field.name && typeof field.name === 'string') {
+        fields.push(field.name);
+      }
+    });
+  } else {
+    // 如果没有定义字段，返回默认字段（针对特定节点类型）
+    if (nodeType === "start") {
+      fields.push("inputs", "input");
+    } else if (nodeType === "tool") {
+      fields.push("result");
+    } else if (nodeType === "condition") {
+      fields.push("result", "conditionResult");
+    } else if (nodeType === "loop") {
+      fields.push("iterations");
+    }
+  }
+  
+  return fields;
 };
 
 // 获取节点类型图标
@@ -64,12 +96,50 @@ export function UpstreamNodeSelector({
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
   // 查找所有连接到当前节点的上游节点
+  // 对于循环体内的节点，还需要包含：
+  // 1. 连接到循环体的节点（循环体外的节点）
+  // 2. 循环体内的其他节点
   const upstreamNodes = useMemo(() => {
+    const currentNode = nodes.find((n) => n.id === currentNodeId);
+    if (!currentNode) return [];
+    
+    // 获取当前节点所在的循环体ID（如果有）
+    const currentLoopId = currentNode.data?.loopId || currentNode.data?.loop_id;
+    
+    // 1. 通过边连接的上游节点
     const sourceNodeIds = edges
       .filter((edge) => edge.target === currentNodeId)
       .map((edge) => edge.source);
     
-    return nodes.filter((node) => sourceNodeIds.includes(node.id));
+    let upstreamNodeIds = new Set(sourceNodeIds);
+    
+    // 2. 如果当前节点在循环体内，添加循环体外的节点（连接到循环体的节点）
+    if (currentLoopId) {
+      // 找到循环体节点
+      const loopNode = nodes.find((n) => n.id === currentLoopId && n.type === "loop");
+      if (loopNode) {
+        // 找到所有连接到循环体的节点（循环体外的节点）
+        const loopSourceNodeIds = edges
+          .filter((edge) => edge.target === currentLoopId)
+          .map((edge) => edge.source);
+        
+        loopSourceNodeIds.forEach((id) => upstreamNodeIds.add(id));
+        
+        // 3. 添加循环体内的其他节点（除了当前节点）
+        const loopBodyNodeIds = nodes
+          .filter(
+            (n) =>
+              (n.data?.loopId === currentLoopId || n.data?.loop_id === currentLoopId) &&
+              n.id !== currentNodeId &&
+              n.id !== currentLoopId
+          )
+          .map((n) => n.id);
+        
+        loopBodyNodeIds.forEach((id) => upstreamNodeIds.add(id));
+      }
+    }
+    
+    return nodes.filter((node) => upstreamNodeIds.has(node.id));
   }, [currentNodeId, nodes, edges]);
 
   // 生成节点唯一标识（使用节点名称 taskName）
@@ -124,7 +194,7 @@ export function UpstreamNodeSelector({
           {upstreamNodes.map((node) => {
             const Icon = getNodeIcon(node.type || "start");
             const isExpanded = expandedNodes.has(node.id);
-            const outputFields = getNodeOutputFields(node.type || "start");
+            const outputFields = getNodeOutputFields(node);
             // 确保所有值都是字符串
             const nodeLabel = typeof node.data?.displayName === 'string' 
               ? node.data.displayName 

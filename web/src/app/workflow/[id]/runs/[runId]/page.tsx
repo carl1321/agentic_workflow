@@ -9,6 +9,8 @@ import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface Run {
   id: string;
@@ -24,6 +26,7 @@ interface Run {
 interface Task {
   id: string;
   node_id: string;
+  node_display_name?: string;  // 节点显示名称
   status: string;
   input?: any;
   output?: any;
@@ -134,14 +137,44 @@ export default function WorkflowRunDetailPage() {
 
   const handleCancel = async () => {
     try {
-      const response = await fetch(`/api/workflows/${workflowId}/runs/${runId}/cancel`, {
+      const { resolveServiceURL } = await import("~/core/api/resolve-service-url");
+      const url = resolveServiceURL(`workflows/${workflowId}/runs/${runId}/cancel`);
+      const response = await fetch(url, {
         method: "POST",
       });
       if (response.ok) {
+        toast.success("运行已取消");
         loadRun();
       }
     } catch (error) {
       console.error("Error canceling run:", error);
+      toast.error("取消运行失败");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm("确定要删除这个运行记录吗？此操作不可恢复。")) {
+      return;
+    }
+
+    try {
+      const { resolveServiceURL } = await import("~/core/api/resolve-service-url");
+      const url = resolveServiceURL(`workflows/${workflowId}/runs/${runId}`);
+      const response = await fetch(url, {
+        method: "DELETE",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "删除失败");
+      }
+      
+      toast.success("运行记录已删除");
+      // 返回运行历史页面
+      router.push(`/workflow/${workflowId}/runs`);
+    } catch (error: any) {
+      console.error("Error deleting run:", error);
+      toast.error(error.message || "删除运行记录失败");
     }
   };
 
@@ -175,6 +208,16 @@ export default function WorkflowRunDetailPage() {
           {run.status === "running" && (
             <Button variant="destructive" onClick={handleCancel}>
               取消运行
+            </Button>
+          )}
+          {run.status !== "running" && run.status !== "queued" && (
+            <Button 
+              variant="destructive" 
+              onClick={handleDelete}
+              className="gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              删除
             </Button>
           )}
           <Button variant="outline" onClick={() => router.back()}>
@@ -239,7 +282,7 @@ export default function WorkflowRunDetailPage() {
               <Card key={task.id}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">节点: {task.node_id}</CardTitle>
+                    <CardTitle className="text-lg">节点: {task.node_display_name || task.node_id}</CardTitle>
                     {getStatusBadge(task.status)}
                   </div>
                 </CardHeader>
@@ -315,7 +358,11 @@ export default function WorkflowRunDetailPage() {
                         }) : ""}
                       </span>
                       <span className="font-semibold">{log.event}</span>
-                      {log.node_id && <span className="text-muted-foreground">({log.node_id})</span>}
+                      {log.node_id && (
+                        <span className="text-muted-foreground">
+                          ({tasks.find(t => t.node_id === log.node_id)?.node_display_name || log.node_id})
+                        </span>
+                      )}
                     </div>
                     {log.payload && (
                       <pre className="mt-1 rounded bg-muted p-2 text-xs">

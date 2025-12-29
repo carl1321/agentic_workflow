@@ -27,12 +27,12 @@ export function ToolNode({ data, selected }: NodeProps) {
 
   const statusIcons = {
     pending: null,
-    ready: <Loader2 className="h-3 w-3 text-blue-500" />,
-    running: <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />,
-    success: <CheckCircle2 className="h-3 w-3 text-green-500" />,
-    error: <XCircle className="h-3 w-3 text-red-500" />,
-    skipped: <span className="text-xs text-gray-500">⏭</span>,
-    cancelled: <span className="text-xs text-gray-500">✕</span>,
+    ready: <Loader2 className="h-2.5 w-2.5 text-blue-500" />,
+    running: <Loader2 className="h-2.5 w-2.5 animate-spin text-yellow-500" />,
+    success: <CheckCircle2 className="h-2.5 w-2.5 text-green-500" />,
+    error: <XCircle className="h-2.5 w-2.5 text-red-500" />,
+    skipped: <span className="text-[10px] text-gray-500">⏭</span>,
+    cancelled: <span className="text-[10px] text-gray-500">✕</span>,
   };
 
   const result = data.executionResult;
@@ -43,14 +43,14 @@ export function ToolNode({ data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        "rounded-lg border-2 p-2 shadow-sm transition-all bg-card",
+        "rounded-lg border-2 p-1.5 shadow-sm transition-all bg-card",
         borderColor
       )}
-      style={{ width: "200px" }}
+      style={{ width: "160px" }}
     >
-      <div className="flex items-center gap-2">
-        <div className="flex h-6 w-6 items-center justify-center rounded bg-purple-100 dark:bg-purple-900/30">
-          <Wrench className="h-3 w-3 text-purple-600 dark:text-purple-400" />
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-5 w-5 items-center justify-center rounded bg-purple-100 dark:bg-purple-900/30">
+          <Wrench className="h-2.5 w-2.5 text-purple-600 dark:text-purple-400" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-1">

@@ -58,10 +58,15 @@ class WorkflowNodeData(BaseModel):
     variable_value: Optional[Any] = Field(None, alias="variableValue")
     # 循环标记：标记节点属于哪个循环（通过 loopId）
     loop_id: Optional[str] = Field(None, alias="loopId")  # 节点所属的循环ID
+    # 输出格式：定义节点的输出格式（json 或 array）
+    output_format: Optional[str] = Field("json", alias="outputFormat")  # 输出格式，默认值为 json（{}）或 array（[{}]）
+    # 输出字段定义：定义输出字段的结构
+    output_fields: Optional[List[Dict[str, Any]]] = Field(None, alias="outputFields")  # 输出字段列表，每个字段包含 name 和 type
     # Loop 节点专用字段
     loop_count: Optional[int] = Field(None, alias="loopCount")  # 最大循环次数
     break_conditions: Optional[List[BreakCondition]] = Field(None, alias="breakConditions")  # 退出条件列表
     logical_operator: Optional[str] = Field("and", alias="logicalOperator")  # 逻辑运算符："and" 或 "or"
+    pending_items_variable_name: Optional[str] = Field("pending_items", alias="pendingItemsVariableName")  # 待优化数据的循环变量名，默认为 "pending_items"
     start_node_id: Optional[str] = Field(None, alias="startNodeId")  # 循环开始节点ID
     loop_variables: Optional[List[LoopVariableData]] = Field(None, alias="loopVariables")  # 循环变量列表
     # Loop 节点尺寸和位置字段

@@ -2180,9 +2180,9 @@ async def execute_workflow(request: WorkflowExecuteRequest, current_user: Option
             run_id = await executor.create_run(
                 workflow_id=workflow_id,
                 release_id=release_id,
-                inputs=workflow_inputs,
+            inputs=workflow_inputs,
                 created_by=created_by,
-            )
+        )
             
             return WorkflowExecuteResponse(
                 success=True,
@@ -2855,12 +2855,44 @@ async def get_run_tasks(
 ):
     """获取运行的任务列表"""
     try:
-        from src.server.workflow.db import get_run_tasks, get_db_connection
+        from src.server.workflow.db import get_run_tasks, get_db_connection, get_release
         from uuid import UUID
+        import json
         
         conn = get_db_connection()
         try:
             tasks = get_run_tasks(conn, UUID(run_id))
+            
+            # 获取运行对应的 release，以便获取节点显示名称
+            node_display_names = {}
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT release_id FROM workflow_runs WHERE id = %s
+                """, (UUID(run_id),))
+                run = cursor.fetchone()
+                if run and run.get('release_id'):
+                    release = get_release(conn, run['release_id'])
+                    if release and release.get('spec'):
+                        spec = release['spec']
+                        if isinstance(spec, str):
+                            spec = json.loads(spec)
+                        # 从 spec 中提取节点显示名称映射
+                        nodes = spec.get('nodes', [])
+                        for node in nodes:
+                            node_id = node.get('id')
+                            node_data = node.get('data', {})
+                            display_name = node_data.get('displayName') or node_data.get('display_name') or node_data.get('label') or node_id
+                            if node_id:
+                                node_display_names[node_id] = display_name
+            
+            # 为每个任务添加节点显示名称
+            for task in tasks:
+                node_id = task.get('node_id')
+                if node_id:
+                    task['node_display_name'] = node_display_names.get(node_id, node_id)
+                else:
+                    task['node_display_name'] = node_id or '未知节点'
+            
             return {"tasks": tasks}
         finally:
             conn.close()
@@ -2991,6 +3023,55 @@ async def cancel_run(
     except Exception as e:
         logger.exception(f"Error canceling run: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to cancel run: {str(e)}")
+
+
+@app.delete("/api/workflows/{workflow_id}/runs/{run_id}")
+async def delete_workflow_run(
+    workflow_id: str,
+    run_id: str,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """删除运行"""
+    try:
+        from src.server.workflow.db import get_db_connection
+        from uuid import UUID
+        
+        conn = get_db_connection()
+        try:
+            # 检查运行是否存在
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT status FROM workflow_runs
+                    WHERE id = %s AND workflow_id = %s
+                """, (UUID(run_id), UUID(workflow_id)))
+                run = cursor.fetchone()
+                if not run:
+                    raise HTTPException(status_code=404, detail="Run not found")
+                
+                # 如果运行正在进行中，不允许删除
+                if run['status'] in ('queued', 'running'):
+                    raise HTTPException(status_code=400, detail=f"Cannot delete run with status {run['status']}")
+            
+            # 删除运行（级联删除相关的任务和日志）
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    DELETE FROM workflow_runs
+                    WHERE id = %s AND workflow_id = %s
+                """, (UUID(run_id), UUID(workflow_id)))
+                deleted = cursor.rowcount > 0
+            
+            if not deleted:
+                raise HTTPException(status_code=404, detail="Run not found")
+            
+            conn.commit()
+            return {"success": True, "message": "Run deleted"}
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting run: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete run: {str(e)}")
 
 
 @app.post("/api/workflow/validate")

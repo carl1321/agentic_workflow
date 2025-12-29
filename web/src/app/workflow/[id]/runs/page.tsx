@@ -8,6 +8,8 @@ import { useParams, useRouter } from "next/navigation";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface Run {
   id: string;
@@ -36,7 +38,12 @@ export default function WorkflowRunsPage() {
   const loadRuns = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/workflows/${workflowId}/runs?limit=${limit}&offset=${offset}`);
+      const { resolveServiceURL } = await import("~/core/api/resolve-service-url");
+      const url = resolveServiceURL(`workflows/${workflowId}/runs?limit=${limit}&offset=${offset}`);
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to load runs: ${response.status}`);
+      }
       const data = await response.json();
       setRuns(data.runs || []);
       setTotal(data.total || 0);
@@ -58,6 +65,34 @@ export default function WorkflowRunsPage() {
     return <Badge variant={variants[status] || "default"}>{status}</Badge>;
   };
 
+  const handleDelete = async (runId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止触发卡片的点击事件
+    
+    if (!confirm("确定要删除这个运行记录吗？此操作不可恢复。")) {
+      return;
+    }
+
+    try {
+      const { resolveServiceURL } = await import("~/core/api/resolve-service-url");
+      const url = resolveServiceURL(`workflows/${workflowId}/runs/${runId}`);
+      const response = await fetch(url, {
+        method: "DELETE",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "删除失败");
+      }
+      
+      toast.success("运行记录已删除");
+      // 重新加载列表
+      loadRuns();
+    } catch (error: any) {
+      console.error("Error deleting run:", error);
+      toast.error(error.message || "删除运行记录失败");
+    }
+  };
+
   return (
     <div className="container mx-auto p-6">
       <div className="mb-6">
@@ -71,11 +106,28 @@ export default function WorkflowRunsPage() {
         <>
           <div className="space-y-4">
             {runs.map((run) => (
-              <Card key={run.id} className="cursor-pointer hover:bg-accent" onClick={() => router.push(`/workflow/${workflowId}/runs/${run.id}`)}>
+              <Card key={run.id} className="hover:bg-accent">
                 <CardHeader>
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg">运行 {run.id.slice(0, 8)}</CardTitle>
-                    {getStatusBadge(run.status)}
+                    <div 
+                      className="flex-1 cursor-pointer" 
+                      onClick={() => router.push(`/workflow/${workflowId}/runs/${run.id}`)}
+                    >
+                      <CardTitle className="text-lg">运行 {run.id.slice(0, 8)}</CardTitle>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {getStatusBadge(run.status)}
+                      {run.status !== "running" && run.status !== "queued" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => handleDelete(run.id, e)}
+                          className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
