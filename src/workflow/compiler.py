@@ -14,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from src.server.workflow_request import WorkflowConfigRequest, WorkflowNode, WorkflowEdge
 from src.server.workflow.template_parser import render_template
 from src.llms.llm import get_llm_by_model_name
+from src.llms.rate_limiter import acquire_llm_call_permission
 
 logger = logging.getLogger(__name__)
 
@@ -835,6 +836,8 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         # 调用LLM
                         logger.info(f"Invoking LLM node {nid} (model: {model_name})")
                         try:
+                            # 限流检查：1秒内最多5次调用
+                            await acquire_llm_call_permission()
                             response = await llm.ainvoke(messages)
                             logger.info(f"LLM node {nid} invocation successful")
                         except BaseException as e:

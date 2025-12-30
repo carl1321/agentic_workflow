@@ -14,7 +14,8 @@ export function LLMNode({ data, selected }: NodeProps) {
   const executionStatus: ExecutionStatus = data.executionStatus || "pending";
   const statusColors = {
     pending: "border-border",
-    ready: "border-blue-500 animate-pulse", // 蓝色边框，闪烁动画
+    // ready 是“未执行但可执行”的初始态，不应该闪烁、也不应该显示图标
+    ready: "border-blue-500",
     running: "border-yellow-500",
     success: "border-green-500",
     error: "border-red-500",
@@ -28,7 +29,7 @@ export function LLMNode({ data, selected }: NodeProps) {
 
   const statusIcons = {
     pending: null,
-    ready: <Loader2 className="h-2.5 w-2.5 text-blue-500" />, // 蓝色加载图标
+    ready: null,
     running: <Loader2 className="h-2.5 w-2.5 animate-spin text-yellow-500" />,
     success: <CheckCircle2 className="h-2.5 w-2.5 text-green-500" />,
     error: <XCircle className="h-2.5 w-2.5 text-red-500" />,

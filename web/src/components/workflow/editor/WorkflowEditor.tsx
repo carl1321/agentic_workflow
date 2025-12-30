@@ -35,7 +35,7 @@ import { EdgeConfigPanel } from "./EdgeConfigPanel";
 import { NodePalette } from "./NodePalette";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { createRelease, executeWorkflowStream, getRunStatus, type WorkflowExecutionEvent } from "~/core/api/workflow";
+import { createRelease, executeWorkflowStream, getRunStatus, getWorkflowRuns, type WorkflowExecutionEvent } from "~/core/api/workflow";
 import { toast } from "sonner";
 
 // 参考 szlabAgent 的 LOOP_PADDING 常量
@@ -64,6 +64,168 @@ interface WorkflowEditorProps {
   onBack: () => void;
 }
 
+// 规范化节点数据的函数（移出组件以在初始化时使用）
+const normalizeNodesData = (nodes: Node[]): Node[] => {
+  return nodes.map((node) => {
+    const nodeData = node.data || {};
+    
+    // 为所有节点确保 taskName 和 displayName 都是字符串
+    let taskName: string;
+    let displayName: string;
+    
+    // 优先使用 taskName，其次是 nodeName (旧数据兼容)
+    if (nodeData.taskName) {
+      taskName = typeof nodeData.taskName === 'string' ? nodeData.taskName : String(nodeData.taskName);
+    } else if (nodeData.nodeName) {
+      taskName = typeof nodeData.nodeName === 'string' ? nodeData.nodeName : String(nodeData.nodeName);
+    } else {
+      // 为旧数据生成 taskName
+      if (node.type === "start") {
+        taskName = "start";
+      } else if (node.type === "end") {
+        taskName = "end";
+      } else {
+        // 统计同类型节点数量
+        const sameTypeNodes = nodes.filter(n => n.type === node.type);
+        const typeLabels: Record<string, string> = {
+          llm: "LLM",
+          tool: "工具",
+          condition: "条件",
+          loop: "loop",
+        };
+        const baseName = typeLabels[node.type || ""] || node.type || "节点";
+        const index = sameTypeNodes.findIndex(n => n.id === node.id);
+        taskName = index === 0 ? baseName : `${baseName}${index}`;
+      }
+    }
+    
+    // 确保 displayName 是字符串
+    if (node.type === "start") {
+      displayName = "开始";
+    } else if (node.type === "end") {
+      displayName = "结束";
+    } else {
+      displayName = typeof nodeData.displayName === 'string' 
+        ? nodeData.displayName 
+        : (typeof nodeData.label === 'string' ? nodeData.label : taskName);
+    }
+    
+    // 确保所有可能被 ReactFlow 访问的属性都是字符串
+    const normalizedLabel = typeof nodeData.label === 'string' ? nodeData.label : String(displayName);
+    const normalizedTaskName = String(taskName);
+    const normalizedDisplayName = String(displayName);
+    
+    return {
+      ...node,
+      // ReactFlow 可能直接访问节点的 label 属性
+      label: normalizedLabel,
+      // 移除 nodeName 属性，避免被浏览器插件误认为是 DOM 节点
+      data: {
+        ...nodeData,
+        taskName: normalizedTaskName, // 重命名为 taskName
+        nodeName: undefined, // 显式移除 nodeName
+        displayName: normalizedDisplayName,
+        label: normalizedLabel,
+      },
+    };
+  });
+};
+
+// 处理节点布局关系的函数（移出组件以在初始化时使用）
+const processNodesLayout = (nodes: Node[]): Node[] => {
+  // 1. 先进行基本的规范化
+  const normalized = normalizeNodesData(nodes);
+  
+  // 2. 建立父子关系
+  return normalized.map((node) => {
+    // 循环节点本身不需要特殊处理，但要确保尺寸正确
+    if (node.type === "loop") {
+      const loopWidth = node.data?.loopWidth || node.data?.loop_width || 600;
+      const loopHeight = node.data?.loopHeight || node.data?.loop_height || 400;
+      return {
+        ...node,
+        width: loopWidth,
+        height: loopHeight,
+        style: {
+          ...(node.style || {}),
+          pointerEvents: "auto",
+          zIndex: (node.style as any)?.zIndex ?? 1,
+        },
+      };
+    }
+    
+    const loopId = node.data?.loopId || node.data?.loop_id;
+    if (!loopId) {
+      // 如果节点之前有 parentId 但现在没有 loopId，说明需要解除关系
+      if (node.parentId) {
+           return {
+              ...node,
+              parentId: undefined,
+              extent: undefined,
+              data: {
+                  ...node.data,
+                  isLoopChild: undefined
+              }
+           }
+      }
+      return node;
+    }
+    
+    // 查找循环节点
+    const loopNode = normalized.find(n => n.id === loopId && n.type === "loop");
+    if (!loopNode) {
+      // 有 loopId 但找不到对应的循环节点，可能是数据不一致，清除 loopId
+      return {
+        ...node,
+        parentId: undefined,
+        extent: undefined,
+        data: {
+          ...node.data,
+          loopId: undefined,
+          loop_id: undefined,
+          isLoopChild: undefined
+        }
+      };
+    }
+    
+    // 计算相对位置和 extent
+    const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
+    const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
+    
+    // 确定当前位置是否已经是相对位置
+    // 如果有 parentId 且等于 loopId，认为是相对位置
+    // 否则认为是绝对位置，需要转换
+    let position = node.position;
+    
+    if (node.parentId !== loopNode.id) {
+       // 转换为相对位置
+       const relativeX = node.position.x - loopNode.position.x - LOOP_PADDING.left;
+       const relativeY = node.position.y - loopNode.position.y - LOOP_PADDING.top;
+       position = {
+           x: LOOP_PADDING.left + Math.max(0, relativeX),
+           y: LOOP_PADDING.top + Math.max(0, relativeY)
+       };
+    }
+
+    return {
+      ...node,
+      parentId: loopNode.id,
+      position,
+      extent: "parent", 
+      draggable: true,
+      style: {
+        ...node.style,
+        zIndex: 15,
+        pointerEvents: "auto",
+      },
+      data: {
+        ...node.data,
+        isLoopChild: true,
+      }
+    };
+  });
+};
+
 function WorkflowEditorInner({
   workflowId,
   workflowName,
@@ -72,358 +234,169 @@ function WorkflowEditorInner({
   onSave,
   onBack,
 }: WorkflowEditorProps) {
-  // 兼容处理：为旧节点数据添加 taskName (原nodeName) 和 displayName
-  const normalizeNodes = useCallback((nodes: Node[]): Node[] => {
-    return nodes.map((node) => {
-      const nodeData = node.data || {};
-      
-      // 为所有节点确保 taskName 和 displayName 都是字符串
-      let taskName: string;
-      let displayName: string;
-      
-      // 优先使用 taskName，其次是 nodeName (旧数据兼容)
-      if (nodeData.taskName) {
-        taskName = typeof nodeData.taskName === 'string' ? nodeData.taskName : String(nodeData.taskName);
-      } else if (nodeData.nodeName) {
-        taskName = typeof nodeData.nodeName === 'string' ? nodeData.nodeName : String(nodeData.nodeName);
-      } else {
-        // 为旧数据生成 taskName
-        if (node.type === "start") {
-          taskName = "start";
-        } else if (node.type === "end") {
-          taskName = "end";
-        } else {
-          // 统计同类型节点数量
-          const sameTypeNodes = nodes.filter(n => n.type === node.type);
-          const typeLabels: Record<string, string> = {
-            llm: "LLM",
-            tool: "工具",
-            condition: "条件",
-            loop: "loop",
-          };
-          const baseName = typeLabels[node.type || ""] || node.type || "节点";
-          const index = sameTypeNodes.findIndex(n => n.id === node.id);
-          taskName = index === 0 ? baseName : `${baseName}${index}`;
-        }
-      }
-      
-      // 确保 displayName 是字符串
-      if (node.type === "start") {
-        displayName = "开始";
-      } else if (node.type === "end") {
-        displayName = "结束";
-      } else {
-        displayName = typeof nodeData.displayName === 'string' 
-          ? nodeData.displayName 
-          : (typeof nodeData.label === 'string' ? nodeData.label : taskName);
-      }
-      
-      // 确保所有可能被 ReactFlow 访问的属性都是字符串
-      const normalizedLabel = typeof nodeData.label === 'string' ? nodeData.label : String(displayName);
-      const normalizedTaskName = String(taskName);
-      const normalizedDisplayName = String(displayName);
-      
-      return {
-        ...node,
-        // ReactFlow 可能直接访问节点的 label 属性
-        label: normalizedLabel,
-        // 移除 nodeName 属性，避免被浏览器插件误认为是 DOM 节点
-        data: {
-          ...nodeData,
-          taskName: normalizedTaskName, // 重命名为 taskName
-          nodeName: undefined, // 显式移除 nodeName
-          displayName: normalizedDisplayName,
-          label: normalizedLabel,
-        },
-      };
-    });
-  }, []);
-  // 规范化初始节点数据
-  const normalizedInitialNodes = useMemo(() => normalizeNodes(initialNodes), [initialNodes, normalizeNodes]);
+  // 使用 useMemo 初始化节点状态，避免 useEffect 中的二次渲染导致的闪烁
+  const initialProcessedNodes = useMemo(() => processNodesLayout(initialNodes), [initialNodes]);
   
-  const [nodes, setNodes, onNodesChangeRaw] = useNodesState(normalizedInitialNodes);
+  const [nodes, setNodes, onNodesChangeRaw] = useNodesState(initialProcessedNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   
+  // 保持 normalizeNodes 引用以兼容旧代码（虽然现在主要使用 normalizeNodesData）
+  const normalizeNodes = useCallback((nodes: Node[]) => normalizeNodesData(nodes), []);
+
   // 包装 setNodes，确保所有节点更新都经过规范化
   const setNodesNormalized = useCallback(
     (updater: Node[] | ((nodes: Node[]) => Node[])) => {
       setNodes((nds) => {
         const newNodes = typeof updater === 'function' ? updater(nds) : updater;
-        return normalizeNodes(newNodes);
+        return normalizeNodesData(newNodes);
       });
     },
-    [setNodes, normalizeNodes]
+    [setNodes]
   );
   
-  // 检测节点是否在循环节点内容区域内（考虑 LOOP_PADDING）
-  // 参考 szlabAgent：使用内容区域而不是整个循环体区域
-  const isNodeInLoopContainer = useCallback((node: Node, loopNode: Node): boolean => {
-    const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
-    const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
-    
-    // 节点中心点
-    const nodeWidth = node.width || 160; // 默认节点宽度
-    const nodeHeight = node.height || 60; // 默认节点高度
-    const nodeCenterX = node.position.x + nodeWidth / 2;
-    const nodeCenterY = node.position.y + nodeHeight / 2;
-    
-    // 循环体内容区域边界（考虑 LOOP_PADDING）
-    // 参考 szlabAgent：内容区域从 LOOP_PADDING.left 和 LOOP_PADDING.top 开始
-    const contentLeft = loopNode.position.x + LOOP_PADDING.left;
-    const contentTop = loopNode.position.y + LOOP_PADDING.top;
-    const contentRight = loopNode.position.x + loopWidth - LOOP_PADDING.right;
-    const contentBottom = loopNode.position.y + loopHeight - LOOP_PADDING.bottom;
-    
-    // 检查节点中心是否在内容区域内
-    return (
-      nodeCenterX >= contentLeft &&
-      nodeCenterX <= contentRight &&
-      nodeCenterY >= contentTop &&
-      nodeCenterY <= contentBottom
-    );
-  }, []);
+  // 这里的 processNodes 仅仅是为了兼容可能的内部调用，实际逻辑已提取到 processNodesLayout
+  const processNodes = useCallback((nodes: Node[]) => processNodesLayout(nodes), []);
 
-  // 包装 onNodesChange，确保节点更新后规范化，并处理循环体拖入
+  // 修改 onNodesChange 逻辑
   const onNodesChange = useCallback(
     (changes: any) => {
-      // 注意：使用 parentId 后，ReactFlow 会自动处理子节点的拖动
-      // 子节点可以独立拖动，但受 extent 限制在循环体内
-      // 不需要阻止循环体内节点的拖动
-      
       onNodesChangeRaw(changes);
-      // 使用 requestAnimationFrame 在下一个渲染周期规范化节点和处理循环体
-      requestAnimationFrame(() => {
-        setNodes((nds) => {
-          const normalized = normalizeNodes(nds);
+    },
+    [onNodesChangeRaw]
+  );
+
+  // 处理拖拽结束，检测是否进入/离开循环
+  const onNodeDragStop = useCallback((_: React.MouseEvent, node: Node) => {
+      // 获取最新的节点列表（包括位置更新后的）
+      // 注意：这里需要通过回调获取最新 state，或者依赖 nodes
+      // 但 onNodeDragStop 的 node 参数是拖拽后的最新状态
+      
+      setNodes((nds) => {
+          const currentNode = nds.find(n => n.id === node.id);
+          if (!currentNode) return nds;
           
-          // 检查是否有节点需要规范化
-          const needsUpdate = nds.some((node, idx) => {
-            const normNode = normalized[idx];
-            if (!normNode) return true;
-            const taskName = node.data?.taskName;
-            return typeof taskName !== 'string' || taskName !== normNode.data?.taskName;
-          });
+          // 如果节点是 loop，更新其尺寸数据（如果被resize）
+          if (currentNode.type === "loop") return nds;
           
-          // 处理节点拖入循环体和循环节点拖拽
-          const updatedNodes = normalized.map((node) => {
-            // 如果是循环节点被拖拽，不需要特殊处理（ReactFlow会自动更新position）
-            // 循环体内节点的位置会在useMemo中自动更新
-            if (node.type === "loop") {
-              return node;
-            }
-            
-            // 跳过开始/结束节点
-            if (node.type === "start" || node.type === "end") {
-              return node;
-            }
-            
-            // 如果节点已经有 parentId，说明它在循环体内
-            // 此时 node.position 是相对于父节点的位置
-            // 我们需要计算绝对位置来检查是否还在循环体内
-            const currentLoopId = node.data?.loopId || node.data?.loop_id;
-            const currentParentId = node.parentId;
-            
-            // 查找所有循环节点
-            const loopNodes = normalized.filter(n => n.type === "loop");
-            
-            // 检查节点是否在任何循环节点内
-            let newLoopId: string | undefined = undefined;
-            let relativeX: number | undefined = undefined;
-            let relativeY: number | undefined = undefined;
-            
-            for (const loopNode of loopNodes) {
-              // 计算节点的绝对位置
-              let absoluteX = node.position.x;
-              let absoluteY = node.position.y;
-              
-              // 如果节点有 parentId，position 是相对位置，需要转换为绝对位置
-              if (currentParentId === loopNode.id) {
-                absoluteX = loopNode.position.x + node.position.x;
-                absoluteY = loopNode.position.y + node.position.y;
-              }
-              
-              // 使用绝对位置检查节点是否在循环体内
-              const nodeWidth = node.width || 160;
-              const nodeHeight = node.height || 60;
-              const nodeCenterX = absoluteX + nodeWidth / 2;
-              const nodeCenterY = absoluteY + nodeHeight / 2;
-              
-              const contentLeft = loopNode.position.x + LOOP_PADDING.left;
-              const contentTop = loopNode.position.y + LOOP_PADDING.top;
-              const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
-              const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
-              const contentRight = loopNode.position.x + loopWidth - LOOP_PADDING.right;
-              const contentBottom = loopNode.position.y + loopHeight - LOOP_PADDING.bottom;
+          // 查找所有循环节点
+          const loopNodes = nds.filter(n => n.type === "loop");
+          const nodeBounds = {
+              x: node.position.x,
+              y: node.position.y,
+              width: node.width || 160,
+              height: node.height || 60
+          };
+          
+          // 如果节点已经有 parentId，position 是相对的，需要转绝对来检测是否拖出
+          let absoluteX = node.position.x;
+          let absoluteY = node.position.y;
+          const currentParent = nds.find(n => n.id === node.parentId);
+          
+          if (currentParent) {
+              absoluteX += currentParent.position.x;
+              absoluteY += currentParent.position.y;
+          }
+          
+          const centerX = absoluteX + nodeBounds.width / 2;
+          const centerY = absoluteY + nodeBounds.height / 2;
+
+          // 检测是否在某个 loop 内
+          let targetLoop: Node | undefined;
+          for (const loop of loopNodes) {
+              const loopW = loop.data?.loopWidth || loop.width || 600;
+              const loopH = loop.data?.loopHeight || loop.height || 400;
               
               if (
-                nodeCenterX >= contentLeft &&
-                nodeCenterX <= contentRight &&
-                nodeCenterY >= contentTop &&
-                nodeCenterY <= contentBottom
+                  centerX >= loop.position.x + LOOP_PADDING.left &&
+                  centerX <= loop.position.x + loopW - LOOP_PADDING.right &&
+                  centerY >= loop.position.y + LOOP_PADDING.top &&
+                  centerY <= loop.position.y + loopH - LOOP_PADDING.bottom
               ) {
-                newLoopId = loopNode.id;
-                // 计算相对坐标（相对于循环体容器内部）
-                // 如果节点已经有 parentId，使用当前的相对位置
-                if (currentParentId === loopNode.id) {
-                  relativeX = node.position.x - LOOP_PADDING.left;
-                  relativeY = node.position.y - LOOP_PADDING.top;
-                } else {
-                  // 否则从绝对位置计算相对位置
-                  relativeX = absoluteX - loopNode.position.x - LOOP_PADDING.left;
-                  relativeY = absoluteY - loopNode.position.y - LOOP_PADDING.top;
-                }
-                // 确保相对位置不为负数
-                relativeX = Math.max(0, relativeX);
-                relativeY = Math.max(0, relativeY);
-                break;
+                  targetLoop = loop;
+                  break;
               }
-            }
-            
-            // 如果节点不在任何循环内，清除 loopId 和 parentId
-            if (!newLoopId && currentLoopId) {
-              // 节点被拖出循环体
-              // 需要将相对位置转换为绝对位置（因为移除了 parentId）
-              const loopNode = normalized.find(n => n.id === currentLoopId && n.type === "loop");
-              let absolutePosition = node.position;
-              
-              if (loopNode && node.parentId === currentLoopId) {
-                // 如果之前有 parentId，position 是相对于父节点的，需要转换为绝对位置
-                const relativeX = node.data?.relativeX ?? node.data?.relative_x ?? 0;
-                const relativeY = node.data?.relativeY ?? node.data?.relative_y ?? 0;
-                absolutePosition = {
-                  x: loopNode.position.x + LOOP_PADDING.left + relativeX,
-                  y: loopNode.position.y + LOOP_PADDING.top + relativeY,
-                };
-              }
-              
-              return {
-                ...node,
-                parentId: undefined, // 清除 parentId
-                position: absolutePosition,
-                extent: undefined, // 清除 extent 限制
-                data: {
-                  ...node.data,
-                  loopId: undefined,
-                  loop_id: undefined,
-                  relativeX: undefined,
-                  relativeY: undefined,
-                  relative_x: undefined,
-                  relative_y: undefined,
-                },
-              };
-            } else if (newLoopId && newLoopId !== currentLoopId) {
-              // 节点被拖入循环体或移动到另一个循环体
-              // 需要设置 parentId 和 extent，并转换位置
-              const loopNode = normalized.find(n => n.id === newLoopId && n.type === "loop");
-              if (loopNode) {
-                const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
-                const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
-                
-                // 确保相对位置在有效范围内
-                const maxRelativeX = loopWidth - LOOP_PADDING.left - LOOP_PADDING.right;
-                const maxRelativeY = loopHeight - LOOP_PADDING.top - LOOP_PADDING.bottom;
-                const clampedRelativeX = Math.max(0, Math.min(relativeX!, maxRelativeX));
-                const clampedRelativeY = Math.max(0, Math.min(relativeY!, maxRelativeY));
-                
-                return {
-                  ...node,
-                  parentId: newLoopId, // 设置 parentId 建立父子关系
-                  position: {
-                    x: LOOP_PADDING.left + clampedRelativeX,
-                    y: LOOP_PADDING.top + clampedRelativeY,
-                  },
-                  extent: [
-                    [LOOP_PADDING.left, LOOP_PADDING.top],
-                    [loopWidth - LOOP_PADDING.right, loopHeight - LOOP_PADDING.bottom],
-                  ],
-                  style: {
-                    ...node.style,
-                    zIndex: 15,
-                    pointerEvents: "auto",
-                  },
-                  data: {
-                    ...node.data,
-                    loopId: newLoopId,
-                    loop_id: newLoopId,
-                    relativeX: clampedRelativeX,
-                    relativeY: clampedRelativeY,
-                    relative_x: clampedRelativeX,
-                    relative_y: clampedRelativeY,
-                  },
-                };
-              }
-            } else if (newLoopId && newLoopId === currentLoopId) {
-              // 节点在循环体内移动，更新相对坐标
-              // 参考 szlabAgent：使用 parentId 后，node.position 是相对于父节点的位置
-              // 需要从相对于父节点的位置转换为相对于循环体容器的位置
-              const calculatedRelativeX = node.position.x - LOOP_PADDING.left;
-              const calculatedRelativeY = node.position.y - LOOP_PADDING.top;
-              
-              // 确保相对位置在有效范围内
-              const loopNode = normalized.find(n => n.id === newLoopId && n.type === "loop");
-              if (loopNode) {
-                const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
-                const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
-                const maxRelativeX = loopWidth - LOOP_PADDING.left - LOOP_PADDING.right;
-                const maxRelativeY = loopHeight - LOOP_PADDING.top - LOOP_PADDING.bottom;
-                
-                const clampedRelativeX = Math.max(0, Math.min(calculatedRelativeX, maxRelativeX));
-                const clampedRelativeY = Math.max(0, Math.min(calculatedRelativeY, maxRelativeY));
-                
-                const currentRelativeX = node.data?.relativeX ?? node.data?.relative_x;
-                const currentRelativeY = node.data?.relativeY ?? node.data?.relative_y;
-                
-                // 只有当相对位置发生变化时才更新
-                if (currentRelativeX !== clampedRelativeX || currentRelativeY !== clampedRelativeY) {
-                  return {
-                    ...node,
-                    // 确保 position 正确（相对于父节点）
-                    position: {
-                      x: LOOP_PADDING.left + clampedRelativeX,
-                      y: LOOP_PADDING.top + clampedRelativeY,
-                    },
-                    data: {
-                      ...node.data,
-                      relativeX: clampedRelativeX,
-                      relativeY: clampedRelativeY,
-                      relative_x: clampedRelativeX,
-                      relative_y: clampedRelativeY,
-                    },
-                  };
-                }
-              }
-            }
-            
-            return node;
-          });
+          }
           
-          return needsUpdate || updatedNodes.some((n, idx) => n !== normalized[idx]) ? updatedNodes : normalized;
-        });
+          // 状态更新
+          if (targetLoop) {
+              // 进入或仍在 Loop 中
+              if (currentNode.parentId !== targetLoop.id) {
+                  // 进入新 Loop
+                  const relativeX = absoluteX - targetLoop.position.x;
+                  const relativeY = absoluteY - targetLoop.position.y;
+                  
+                  return nds.map(n => n.id === node.id ? {
+                      ...n,
+                      parentId: targetLoop!.id,
+                      position: { x: relativeX, y: relativeY },
+                      extent: "parent",
+                      data: { ...n.data, loopId: targetLoop!.id, loop_id: targetLoop!.id }
+                  } : n);
+              }
+              // 仍在同一个 Loop 中，ReactFlow 已更新位置，不需要额外处理
+              // 但可以强制更新 data.relativeX 等如果需要
+              return nds; 
+          } else {
+              // 不在任何 Loop 中
+              if (currentNode.parentId) {
+                  // 刚刚拖出 Loop
+                  return nds.map(n => n.id === node.id ? {
+                      ...n,
+                      parentId: undefined,
+                      extent: undefined,
+                      position: { x: absoluteX, y: absoluteY }, // 恢复绝对坐标
+                      data: { 
+                          ...n.data, 
+                          loopId: undefined, 
+                          loop_id: undefined, 
+                          isLoopChild: undefined 
+                       }
+                  } : n);
+              }
+          }
+          
+          return nds;
       });
-    },
-    [onNodesChangeRaw, setNodes, normalizeNodes, isNodeInLoopContainer]
-  );
+  }, [setNodes]);
+
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [nodeTypeToAdd, setNodeTypeToAdd] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null); // 当前运行的 ID
+  const [isReady, setIsReady] = useState(false); // 画布是否准备就绪
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isUpdatingRef = useRef(false); // 防止无限递归的标志
   const router = useRouter();
-  const { screenToFlowPosition, addNodes } = useReactFlow();
+  const { screenToFlowPosition, addNodes, fitView } = useReactFlow();
   
-  // 状态恢复：从 URL 参数中恢复运行状态
+  // 初始化画布视图：等待布局稳定后显示
   useEffect(() => {
-    const restoreRunStatus = async () => {
-      // 检查 URL 参数中是否有 runId
+    // 延迟一帧执行 fitView，确保 ReactFlow 内部节点已挂载
+    const timer = requestAnimationFrame(() => {
+      // 关闭动画，避免缩放过程带来的“先模糊后清晰”的视觉闪烁
+      fitView({ padding: 0.2, duration: 0 });
+      // 稍微延迟显示，让浏览器有时间渲染第一帧
+      setTimeout(() => {
+        setIsReady(true);
+      }, 50);
+    });
+    
+    return () => cancelAnimationFrame(timer);
+  }, [fitView]);
+
+  // 状态恢复：从 URL 参数或最新运行记录中恢复运行状态
+  useEffect(() => {
+    const initializeNodeStatuses = async () => {
+      // 1. 尝试从 URL 参数获取 runId
       const urlParams = new URLSearchParams(window.location.search);
       const runId = urlParams.get('runId');
       
-      if (runId) {
+      const restoreRunStatus = async (runIdToRestore: string) => {
         try {
-          setCurrentRunId(runId);
-          const status = await getRunStatus(workflowId, runId);
+          setCurrentRunId(runIdToRestore);
+          const status = await getRunStatus(workflowId, runIdToRestore);
           
           // 恢复节点状态
           setNodesNormalized((nds) =>
@@ -455,11 +428,35 @@ function WorkflowEditorInner({
           }
         } catch (error) {
           console.error("Failed to restore run status:", error);
+          // 如果恢复失败，重置为初始状态
+          resetAllNodeStatuses();
         }
+      };
+      
+      if (runId) {
+        // 使用 URL 中的 runId
+        await restoreRunStatus(runId);
+        return;
+      }
+      
+      // 2. 获取最新运行记录
+      try {
+        const runs = await getWorkflowRuns(workflowId, { limit: 1 });
+        if (runs.runs && runs.runs.length > 0) {
+          const latestRun = runs.runs[0];
+          await restoreRunStatus(latestRun.id);
+        } else {
+          // 3. 没有运行记录，恢复初始状态
+          resetAllNodeStatuses();
+        }
+      } catch (error) {
+        console.error("Failed to initialize node statuses:", error);
+        // 如果获取运行记录失败，重置为初始状态
+        resetAllNodeStatuses();
       }
     };
     
-    restoreRunStatus();
+    initializeNodeStatuses();
   }, [workflowId, setNodesNormalized]);
 
   // 自动保存（防抖）- 增加延迟时间以减少保存频率
@@ -657,14 +654,14 @@ function WorkflowEditorInner({
     });
   }, [setNodesNormalized]);
 
-  // 重置所有节点状态
+  // 重置所有节点状态为初始 ready 状态
   const resetAllNodeStatuses = useCallback(() => {
     setNodesNormalized((nds) =>
       nds.map((node) => ({
         ...node,
         data: {
           ...node.data,
-          executionStatus: "pending" as const,
+          executionStatus: "ready" as const, // 初始状态为 ready
           executionResult: undefined, // 清空执行结果
         },
       }))
@@ -1050,21 +1047,58 @@ function WorkflowEditorInner({
           y: event.clientY,
         });
         
+      // 检查新节点是否在某个循环节点内
+      let parentId: string | undefined;
+      let finalPosition = position;
+      let extent: 'parent' | undefined;
+      let loopId: string | undefined;
+
+      const loopNodes = nodes.filter(n => n.type === "loop");
+      for (const loopNode of loopNodes) {
+        const loopWidth = loopNode.data?.loopWidth || loopNode.width || 600;
+        const loopHeight = loopNode.data?.loopHeight || loopNode.height || 400;
+        
+        if (
+            position.x >= loopNode.position.x + LOOP_PADDING.left &&
+            position.x <= loopNode.position.x + loopWidth - LOOP_PADDING.right &&
+            position.y >= loopNode.position.y + LOOP_PADDING.top &&
+            position.y <= loopNode.position.y + loopHeight - LOOP_PADDING.bottom
+        ) {
+            parentId = loopNode.id;
+            loopId = loopNode.id;
+            extent = 'parent';
+            
+            // 计算相对位置
+            finalPosition = {
+                x: Math.max(0, position.x - loopNode.position.x - LOOP_PADDING.left),
+                y: Math.max(0, position.y - loopNode.position.y - LOOP_PADDING.top)
+            };
+            break;
+        }
+      }
+
       const nodeName = generateNodeName(nodeTypeToAdd, nodes);
       const newNode: Node = {
         id: nanoid(),
         type: nodeTypeToAdd,
-        position,
+        position: finalPosition,
+        parentId,
+        extent,
         data: { 
           taskName: nodeName,
           displayName: nodeName === "start" ? "开始" : nodeName === "end" ? "结束" : nodeName,
           label: nodeName === "start" ? "开始" : nodeName === "end" ? "结束" : nodeName, // 兼容旧数据
           ...(nodeTypeToAdd === "loop" ? { loopCount: 3, loop_count: 3 } : {}),
+          loopId,
+          loop_id: loopId,
+          isLoopChild: !!loopId,
         },
+        style: loopId ? { zIndex: 15, pointerEvents: "auto" } : undefined,
       };
         
-        addNodes(normalizeNodes([newNode])[0]);
-        setNodeTypeToAdd(null);
+      addNodes(normalizeNodes([newNode])[0]);
+      setNodeTypeToAdd(null);
+
       }
     },
     [nodeTypeToAdd, screenToFlowPosition, addNodes]
@@ -1104,20 +1138,57 @@ function WorkflowEditorInner({
         y: event.clientY,
       });
 
+      // 检查新节点是否在某个循环节点内
+      let parentId: string | undefined;
+      let finalPosition = position;
+      let extent: 'parent' | undefined;
+      let loopId: string | undefined;
+
+      const loopNodes = nodes.filter(n => n.type === "loop");
+      for (const loopNode of loopNodes) {
+        const loopWidth = loopNode.data?.loopWidth || loopNode.width || 600;
+        const loopHeight = loopNode.data?.loopHeight || loopNode.height || 400;
+        
+        if (
+            position.x >= loopNode.position.x + LOOP_PADDING.left &&
+            position.x <= loopNode.position.x + loopWidth - LOOP_PADDING.right &&
+            position.y >= loopNode.position.y + LOOP_PADDING.top &&
+            position.y <= loopNode.position.y + loopHeight - LOOP_PADDING.bottom
+        ) {
+            parentId = loopNode.id;
+            loopId = loopNode.id;
+            extent = 'parent';
+            
+            // 计算相对位置
+            finalPosition = {
+                x: Math.max(0, position.x - loopNode.position.x - LOOP_PADDING.left),
+                y: Math.max(0, position.y - loopNode.position.y - LOOP_PADDING.top)
+            };
+            break;
+        }
+      }
+
       const nodeName = generateNodeName(type, nodes);
       const newNode: Node = {
         id: nanoid(),
         type,
-        position,
+        position: finalPosition,
+        parentId,
+        extent,
         data: { 
           taskName: nodeName,
           displayName: nodeName === "start" ? "开始" : nodeName === "end" ? "结束" : nodeName,
           label: nodeName === "start" ? "开始" : nodeName === "end" ? "结束" : nodeName, // 兼容旧数据
           ...(type === "loop" ? { loopCount: 3, loop_count: 3 } : {}),
+          loopId,
+          loop_id: loopId,
+          isLoopChild: !!loopId,
         },
+        style: loopId ? { zIndex: 15, pointerEvents: "auto" } : undefined,
       };
 
       addNodes(normalizeNodes([newNode])[0]);
+
     },
     [screenToFlowPosition, addNodes, nodes, normalizeNodes]
   );
@@ -1164,39 +1235,6 @@ function WorkflowEditorInner({
     }
   }, [saveStatus]);
 
-  // 处理循环体内节点的位置：将相对坐标转换为绝对坐标
-  const processedNodes = useMemo(() => {
-    return nodes.map((node) => {
-      const loopId = node.data?.loopId || node.data?.loop_id;
-      if (!loopId) {
-        return node; // 不在循环体内的节点，保持原位置
-      }
-      
-      // 查找循环节点
-      const loopNode = nodes.find(n => n.id === loopId && n.type === "loop");
-      if (!loopNode) {
-        return node; // 找不到循环节点，保持原位置
-      }
-      
-      // 获取相对坐标
-      const relativeX = node.data?.relativeX || node.data?.relative_x || 0;
-      const relativeY = node.data?.relativeY || node.data?.relative_y || 0;
-      const headerHeight = 40; // 循环节点头部高度
-      
-      // 计算绝对位置（相对于循环节点，考虑头部）
-      const absoluteX = loopNode.position.x + relativeX;
-      const absoluteY = loopNode.position.y + headerHeight + relativeY;
-      
-      return {
-        ...node,
-        position: {
-          x: absoluteX,
-          y: absoluteY,
-        },
-      };
-    });
-  }, [nodes]);
-
   return (
     <div className="flex h-full w-full flex-col">
       {/* 顶部工具栏 */}
@@ -1235,162 +1273,12 @@ function WorkflowEditorInner({
         <NodePalette onNodeTypeSelect={setNodeTypeToAdd} />
 
         {/* 画布 */}
-        <div className="relative flex-1 bg-app">
+        <div 
+          className="relative flex-1 bg-app transition-opacity duration-300 ease-in-out"
+          style={{ opacity: isReady ? 1 : 0 }}
+        >
           <ReactFlow
-            nodes={useMemo(() => {
-              // 确保所有节点在渲染前都经过规范化
-              const normalized = normalizeNodes(nodes);
-              
-              // 处理循环体内节点的位置：将相对坐标转换为绝对坐标
-              const processedNodes = normalized.map((node) => {
-                const nodeData = node.data || {};
-                const loopId = nodeData.loopId || nodeData.loop_id;
-                
-                // 处理节点数据规范化
-                const taskName = typeof nodeData.taskName === 'string' 
-                  ? nodeData.taskName 
-                  : String(nodeData.taskName || node.id);
-                const displayName = typeof nodeData.displayName === 'string'
-                  ? nodeData.displayName
-                  : String(nodeData.displayName || nodeData.label || taskName);
-                const nodeLabel = typeof node.label === 'string' 
-                  ? node.label 
-                  : (typeof nodeData.label === 'string' 
-                      ? nodeData.label 
-                      : displayName);
-                
-                // 如果节点在循环体内，使用 ReactFlow 的 parentId 和 extent 来实现父子关系
-                // 参考 szlabAgent 的实现：使用 parentId 让 ReactFlow 自动处理父子节点的拖动
-                if (loopId) {
-                  const loopNode = normalized.find(n => n.id === loopId && n.type === "loop");
-                  if (loopNode) {
-                    // 参考 szlabAgent 的 LOOP_PADDING 常量
-                    const LOOP_PADDING = {
-                      top: 65, // 头部高度(40) + 内边距(25)
-                      right: 16,
-                      bottom: 20,
-                      left: 16,
-                    };
-                    
-                    // 获取循环节点的实际尺寸（从节点数据或默认值）
-                    const loopWidth = loopNode.data?.loopWidth || loopNode.data?.loop_width || loopNode.width || 600;
-                    const loopHeight = loopNode.data?.loopHeight || loopNode.data?.loop_height || loopNode.height || 400;
-                    
-                    // 获取或计算相对位置
-                    const relativeX = nodeData.relativeX ?? nodeData.relative_x;
-                    const relativeY = nodeData.relativeY ?? nodeData.relative_y;
-                    
-                    let position = node.position;
-                    if (relativeX !== undefined && relativeY !== undefined) {
-                      // 使用保存的相对位置（相对于循环体容器内部）
-                      // 参考 szlabAgent：子节点的 position 是相对于父节点的，从 LOOP_PADDING.left 和 LOOP_PADDING.top 开始
-                      position = {
-                        x: LOOP_PADDING.left + relativeX,
-                        y: LOOP_PADDING.top + relativeY,
-                      };
-                    } else {
-                      // 首次计算相对位置
-                      // 从绝对位置转换为相对于循环体容器的位置
-                      let calculatedRelativeX = node.position.x - loopNode.position.x - LOOP_PADDING.left;
-                      let calculatedRelativeY = node.position.y - loopNode.position.y - LOOP_PADDING.top;
-                      
-                      // 确保相对位置在有效范围内
-                      calculatedRelativeX = Math.max(0, calculatedRelativeX);
-                      calculatedRelativeY = Math.max(0, calculatedRelativeY);
-                      
-                      // 保存相对位置到节点数据
-                      nodeData.relativeX = calculatedRelativeX;
-                      nodeData.relativeY = calculatedRelativeY;
-                      
-                      // 设置相对于父节点的位置
-                      position = {
-                        x: LOOP_PADDING.left + calculatedRelativeX,
-                        y: LOOP_PADDING.top + calculatedRelativeY,
-                      };
-                    }
-                    
-                    // 设置 parentId，让 ReactFlow 自动处理父子关系
-                    // 这样当循环节点被拖拽时，子节点会自动跟随移动
-                    // 子节点可以独立拖动，但受 extent 限制在循环体内
-                    return {
-                      ...node,
-                      parentId: loopNode.id,
-                      position,
-                      draggable: true, // 确保子节点可以拖动
-                      // 设置 extent，限制子节点只能在循环体容器内移动
-                      // extent 是相对于父节点的边界，格式：[[minX, minY], [maxX, maxY]]
-                      extent: [
-                        [LOOP_PADDING.left, LOOP_PADDING.top],
-                        [loopWidth - LOOP_PADDING.right, loopHeight - LOOP_PADDING.bottom],
-                      ],
-                      style: {
-                        ...node.style,
-                        zIndex: 15, // 确保循环体内的节点在 Loop 节点上方，可以接收事件
-                        pointerEvents: "auto", // 确保可以接收鼠标事件
-                      },
-                      // ReactFlow 可能直接访问节点的 label 属性
-                      label: nodeLabel,
-                      // 移除 nodeName 属性，避免被浏览器插件误认为是 DOM 节点
-                      nodeName: undefined, 
-                      data: {
-                        ...nodeData,
-                        taskName: taskName,
-                        displayName: displayName,
-                        label: nodeLabel,
-                        relativeX: nodeData.relativeX ?? nodeData.relative_x,
-                        relativeY: nodeData.relativeY ?? nodeData.relative_y,
-                        // 确保不包含 nodeName 属性
-                        nodeName: undefined,
-                      },
-                    };
-                  }
-                }
-                
-                // 如果是循环节点，确保 width 和 height 属性被正确设置
-                // 这样 ReactFlow 才能正确计算 Handle 的位置
-                if (node.type === "loop") {
-                  const loopWidth = nodeData.loopWidth || nodeData.loop_width || 600;
-                  const loopHeight = nodeData.loopHeight || nodeData.loop_height || 400;
-                  return {
-                    ...node,
-                    width: loopWidth,
-                    height: loopHeight,
-                    position: node.position,
-                    // ReactFlow 可能直接访问节点的 label 属性
-                    label: nodeLabel,
-                    // 移除 nodeName 属性，避免被浏览器插件误认为是 DOM 节点
-                    nodeName: undefined, 
-                    data: {
-                      ...nodeData,
-                      taskName: taskName,
-                      displayName: displayName,
-                      label: nodeLabel,
-                      // 确保不包含 nodeName 属性
-                      nodeName: undefined,
-                    },
-                  };
-                }
-                
-                return {
-                  ...node,
-                  position: node.position,
-                  // ReactFlow 可能直接访问节点的 label 属性
-                  label: nodeLabel,
-                  // 移除 nodeName 属性，避免被浏览器插件误认为是 DOM 节点
-                  nodeName: undefined, 
-                  data: {
-                    ...nodeData,
-                    taskName: taskName,
-                    displayName: displayName,
-                    label: nodeLabel,
-                    // 确保不包含 nodeName 属性
-                    nodeName: undefined,
-                  },
-                };
-              });
-              
-              return processedNodes;
-            }, [nodes, normalizeNodes])}
+            nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
@@ -1401,15 +1289,12 @@ function WorkflowEditorInner({
             onPaneClick={onPaneClick}
             onDrop={onDrop}
             onDragOver={onDragOver}
-            onNodeDrag={(event, node) => {
-              // 当循环节点被拖拽时，循环体内节点的位置会在useMemo中自动更新
-              // 因为nodes数组会变化，useMemo会重新计算循环体内节点的绝对位置
-            }}
+            onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             deleteKeyCode={[46, 8]} // 启用 Delete 键(46) 和 Backspace 键(8) 删除节点和边
-            fitView
             attributionPosition="bottom-left"
           >
+
             <Controls />
             <MiniMap />
             <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
@@ -1442,7 +1327,6 @@ function WorkflowEditorInner({
     </div>
   );
 }
-
 export function WorkflowEditor(props: WorkflowEditorProps) {
   return (
     <ReactFlowProvider>
@@ -1450,4 +1334,5 @@ export function WorkflowEditor(props: WorkflowEditorProps) {
     </ReactFlowProvider>
   );
 }
+
 

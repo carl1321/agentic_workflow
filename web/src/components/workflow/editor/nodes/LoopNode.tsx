@@ -49,7 +49,8 @@ export function LoopNode({ id, data, selected, width, height }: NodeProps) {
   
   const statusColors = {
     pending: "border-orange-500",
-    ready: "border-blue-500 animate-pulse",
+    // ready：默认初始态，不闪烁
+    ready: "border-blue-500",
     running: "border-yellow-500",
     success: "border-green-500",
     error: "border-red-500",
@@ -63,7 +64,7 @@ export function LoopNode({ id, data, selected, width, height }: NodeProps) {
 
   const statusIcons = {
     pending: null,
-    ready: <Loader2 className="h-2.5 w-2.5 text-blue-500" />,
+    ready: null,
     running: <Loader2 className="h-2.5 w-2.5 animate-spin text-yellow-500" />,
     success: <CheckCircle2 className="h-2.5 w-2.5 text-green-500" />,
     error: <XCircle className="h-2.5 w-2.5 text-red-500" />,
@@ -85,18 +86,17 @@ export function LoopNode({ id, data, selected, width, height }: NodeProps) {
         minHeight: `${minHeight}px`,
         background: "transparent", // 容器背景完全透明，不遮挡子节点
         zIndex: 1, // 循环节点在底层
-        pointerEvents: "none", // 背景不可交互，让子节点可以交互
+        cursor: "move", // 显示拖动光标
       }}
     >
-      {/* 循环节点头部 */}
+      {/* 循环节点头部 - 使用 pointer-events-none 让事件冒泡到根元素 */}
       <div 
-        className="absolute top-0 left-0 right-0 h-10 border-b border-border/50 bg-card/80 backdrop-blur-sm rounded-t-lg flex items-center gap-1.5 px-2 z-10"
-        style={{ pointerEvents: "auto" }} // 头部可交互
+        className="absolute top-0 left-0 right-0 h-10 border-b border-border/50 bg-card/80 backdrop-blur-sm rounded-t-lg flex items-center gap-1.5 px-2 z-10 pointer-events-none"
       >
-        <div className="flex h-5 w-5 items-center justify-center rounded bg-orange-100 dark:bg-orange-900/30">
+        <div className="flex h-5 w-5 items-center justify-center rounded bg-orange-100 dark:bg-orange-900/30 pointer-events-auto">
           <RotateCcw className="h-2.5 w-2.5 text-orange-600 dark:text-orange-400" />
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pointer-events-auto">
           <div className="flex items-center gap-1">
             <div className="font-semibold text-xs truncate text-foreground">
               {data.displayName || data.label || "loop"}
@@ -116,7 +116,7 @@ export function LoopNode({ id, data, selected, width, height }: NodeProps) {
           width: "100%",
           height: `${loopHeight - 40}px`, // 减去头部高度
           background: "transparent", // 内容区域完全透明
-          pointerEvents: "none", // 内容区域不可交互，让循环体内的节点可以交互
+          pointerEvents: "none", // 内容区域不接收事件，让拖动句柄和子节点处理
         }}
       >
         {/* 这里可以显示循环体内的节点提示 */}

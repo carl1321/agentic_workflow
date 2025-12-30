@@ -161,6 +161,50 @@ export async function saveDraft(
 }
 
 /**
+ * 获取工作流的运行列表
+ */
+export async function getWorkflowRuns(
+  workflowId: string,
+  params?: {
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<{
+  runs: Array<{
+    id: string;
+    workflow_id: string;
+    status: string;
+    created_at: string;
+    started_at?: string;
+    finished_at?: string;
+    created_by?: string;
+    created_by_name?: string;
+  }>;
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const queryParams = new URLSearchParams();
+  if (params?.status) {
+    queryParams.append("status", params.status);
+  }
+  if (params?.limit) {
+    queryParams.append("limit", params.limit.toString());
+  }
+  if (params?.offset) {
+    queryParams.append("offset", params.offset.toString());
+  }
+  
+  const queryString = queryParams.toString();
+  const path = queryString
+    ? `workflows/${workflowId}/runs?${queryString}`
+    : `workflows/${workflowId}/runs`;
+  
+  return apiRequest(path);
+}
+
+/**
  * 获取运行状态摘要（用于状态恢复）
  */
 export async function getRunStatus(
