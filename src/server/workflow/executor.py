@@ -126,6 +126,15 @@ class WorkflowExecutor:
         finally:
             conn.close()
         
+        # 立即唤醒worker检查新任务
+        try:
+            from src.server.workflow.worker import get_workflow_worker
+            worker = get_workflow_worker()
+            worker.wake()
+            logger.debug(f"[EXECUTOR] Woke up worker after creating run {run_id}")
+        except Exception as e:
+            logger.warning(f"[EXECUTOR] Failed to wake worker: {e}")
+        
         return run_id
     
     async def execute_run(self, run_id: UUID):
@@ -322,8 +331,24 @@ class WorkflowExecutor:
                         # 检查是否是工作流结束事件
                         if event_type == 'workflow_end':
                             task_completed = True
+                            # 立即发送 run_end 事件，确保前端能及时收到
+                            run_end_event = {
+                                "type": "run_end",
+                                "success": True,
+                                "status": "success",
+                            }
+                            yield f"data: {json.dumps(run_end_event)}\n\n"
+                            logger.info(f"Sent run_end event for run {run_id} after workflow_end log")
                         elif event_type == 'workflow_error':
                             task_completed = True
+                            # 立即发送 run_end 事件
+                            run_end_event = {
+                                "type": "run_end",
+                                "success": False,
+                                "status": "failed",
+                            }
+                            yield f"data: {json.dumps(run_end_event)}\n\n"
+                            logger.info(f"Sent run_end event for run {run_id} after workflow_error log")
                         
                         event = {
                             "type": "log",

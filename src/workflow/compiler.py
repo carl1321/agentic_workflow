@@ -67,15 +67,64 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
         # 如果包含 'type': 'array' 和 'items'，提取 items 作为实际数据
         if parsed_output.get('type') == 'array' and 'items' in parsed_output:
             items = parsed_output.get('items')
-            # 如果 items 是数组，直接使用
+            # 如果 items 是数组
             if isinstance(items, list):
-                parsed_output = items
+                # 检查 items 中的元素是否是JSON Schema对象（包含 type 和 properties）
+                # 如果是，需要从 properties.xxx.value 中提取实际数据
+                if items and isinstance(items[0], dict) and 'properties' in items[0] and 'type' in items[0]:
+                    # 这是嵌套的JSON Schema格式，需要提取实际数据
+                    extracted_items = []
+                    for schema_item in items:
+                        if isinstance(schema_item, dict) and 'properties' in schema_item:
+                            data_item = {}
+                            properties = schema_item.get('properties', {})
+                            for field_name, field_schema in properties.items():
+                                if isinstance(field_schema, dict) and 'value' in field_schema:
+                                    # 从 properties.xxx.value 中提取值
+                                    data_item[field_name] = field_schema['value']
+                                elif isinstance(field_schema, dict):
+                                    # 如果没有 value，尝试直接使用 field_schema 作为值（兼容其他格式）
+                                    data_item[field_name] = field_schema
+                            extracted_items.append(data_item)
+                    parsed_output = extracted_items
+                else:
+                    # items 中的元素已经是数据对象，直接使用
+                    parsed_output = items
             # 如果 items 是对象（单个item），转换为数组
             elif isinstance(items, dict):
-                parsed_output = [items]
+                # 检查是否是JSON Schema对象
+                if 'properties' in items and 'type' in items:
+                    # 从 properties.xxx.value 中提取实际数据
+                    data_item = {}
+                    properties = items.get('properties', {})
+                    for field_name, field_schema in properties.items():
+                        if isinstance(field_schema, dict) and 'value' in field_schema:
+                            data_item[field_name] = field_schema['value']
+                        elif isinstance(field_schema, dict):
+                            data_item[field_name] = field_schema
+                    parsed_output = [data_item]
+                else:
+                    # 已经是数据对象，转换为数组
+                    parsed_output = [items]
         # 如果包含 'items' 字段（可能是数组格式的JSON Schema）
         elif 'items' in parsed_output and isinstance(parsed_output.get('items'), list):
-            parsed_output = parsed_output['items']
+            items = parsed_output.get('items')
+            # 同样检查是否是嵌套的JSON Schema格式
+            if items and isinstance(items[0], dict) and 'properties' in items[0] and 'type' in items[0]:
+                extracted_items = []
+                for schema_item in items:
+                    if isinstance(schema_item, dict) and 'properties' in schema_item:
+                        data_item = {}
+                        properties = schema_item.get('properties', {})
+                        for field_name, field_schema in properties.items():
+                            if isinstance(field_schema, dict) and 'value' in field_schema:
+                                data_item[field_name] = field_schema['value']
+                            elif isinstance(field_schema, dict):
+                                data_item[field_name] = field_schema
+                        extracted_items.append(data_item)
+                parsed_output = extracted_items
+            else:
+                parsed_output = items
     
     # 根据输出格式处理
     if output_format == "array":
@@ -873,18 +922,70 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             # 如果包含 'type': 'array' 和 'items'，提取 items 作为实际数据
                             if parsed_response.get('type') == 'array' and 'items' in parsed_response:
                                 items = parsed_response.get('items')
-                                # 如果 items 是数组，直接使用
+                                # 如果 items 是数组
                                 if isinstance(items, list):
-                                    parsed_response = items
-                                    logger.debug(f"LLM node {nid} extracted items from JSON Schema: {len(items)} items")
+                                    # 检查 items 中的元素是否是JSON Schema对象（包含 type 和 properties）
+                                    # 如果是，需要从 properties.xxx.value 中提取实际数据
+                                    if items and isinstance(items[0], dict) and 'properties' in items[0] and 'type' in items[0]:
+                                        # 这是嵌套的JSON Schema格式，需要提取实际数据
+                                        extracted_items = []
+                                        for schema_item in items:
+                                            if isinstance(schema_item, dict) and 'properties' in schema_item:
+                                                data_item = {}
+                                                properties = schema_item.get('properties', {})
+                                                for field_name, field_schema in properties.items():
+                                                    if isinstance(field_schema, dict) and 'value' in field_schema:
+                                                        # 从 properties.xxx.value 中提取值
+                                                        data_item[field_name] = field_schema['value']
+                                                    elif isinstance(field_schema, dict):
+                                                        # 如果没有 value，尝试直接使用 field_schema 作为值（兼容其他格式）
+                                                        data_item[field_name] = field_schema
+                                                extracted_items.append(data_item)
+                                        parsed_response = extracted_items
+                                        logger.debug(f"LLM node {nid} extracted data from nested JSON Schema: {len(extracted_items)} items")
+                                    else:
+                                        # items 中的元素已经是数据对象，直接使用
+                                        parsed_response = items
+                                        logger.debug(f"LLM node {nid} extracted items from JSON Schema: {len(items)} items")
                                 # 如果 items 是对象（单个item），转换为数组
                                 elif isinstance(items, dict):
-                                    parsed_response = [items]
-                                    logger.debug(f"LLM node {nid} converted single item to array from JSON Schema")
+                                    # 检查是否是JSON Schema对象
+                                    if 'properties' in items and 'type' in items:
+                                        # 从 properties.xxx.value 中提取实际数据
+                                        data_item = {}
+                                        properties = items.get('properties', {})
+                                        for field_name, field_schema in properties.items():
+                                            if isinstance(field_schema, dict) and 'value' in field_schema:
+                                                data_item[field_name] = field_schema['value']
+                                            elif isinstance(field_schema, dict):
+                                                data_item[field_name] = field_schema
+                                        parsed_response = [data_item]
+                                        logger.debug(f"LLM node {nid} extracted data from single nested JSON Schema item")
+                                    else:
+                                        # 已经是数据对象，转换为数组
+                                        parsed_response = [items]
+                                        logger.debug(f"LLM node {nid} converted single item to array from JSON Schema")
                             # 如果包含 'items' 字段（可能是数组格式的JSON Schema）
                             elif 'items' in parsed_response and isinstance(parsed_response.get('items'), list):
-                                parsed_response = parsed_response['items']
-                                logger.debug(f"LLM node {nid} extracted items array from JSON Schema: {len(parsed_response)} items")
+                                items = parsed_response.get('items')
+                                # 同样检查是否是嵌套的JSON Schema格式
+                                if items and isinstance(items[0], dict) and 'properties' in items[0] and 'type' in items[0]:
+                                    extracted_items = []
+                                    for schema_item in items:
+                                        if isinstance(schema_item, dict) and 'properties' in schema_item:
+                                            data_item = {}
+                                            properties = schema_item.get('properties', {})
+                                            for field_name, field_schema in properties.items():
+                                                if isinstance(field_schema, dict) and 'value' in field_schema:
+                                                    data_item[field_name] = field_schema['value']
+                                                elif isinstance(field_schema, dict):
+                                                    data_item[field_name] = field_schema
+                                            extracted_items.append(data_item)
+                                    parsed_response = extracted_items
+                                    logger.debug(f"LLM node {nid} extracted data from nested JSON Schema items array: {len(extracted_items)} items")
+                                else:
+                                    parsed_response = items
+                                    logger.debug(f"LLM node {nid} extracted items array from JSON Schema: {len(parsed_response)} items")
                         
                         # 获取Token消耗等指标
                         metrics = {}
@@ -919,9 +1020,18 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         outputs = format_node_output(parsed_response, output_format, output_fields)
                         logger.debug(f"LLM node {nid} formatted outputs: {outputs}")
                         
+                        # 构建包含resolved_inputs的节点输出（用于循环体内部节点记录实际输入）
+                        node_output_with_inputs = {
+                            "output": outputs,
+                            "resolved_inputs": {
+                                "prompt": prompt,  # 解析后的prompt
+                                "system_prompt": system_prompt if system_prompt else None,  # 解析后的system_prompt
+                            }
+                        }
+                        
                         # 更新节点输出 - 创建新的字典避免修改原状态
                         new_node_outputs = dict(node_outputs)
-                        new_node_outputs[nid] = outputs
+                        new_node_outputs[nid] = node_output_with_inputs
                         
                         # 构建返回状态，确保 state_manager 被保留（不返回 workflow_inputs，避免并行执行时的冲突）
                         result_state: WorkflowState = {
@@ -1410,25 +1520,38 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         max_iterations = loop_count if loop_count else 100  # 默认最大100次
                         iteration = 0
                         previous_iteration_output = {}
+                        # 用于累积所有迭代的结果（避免每次迭代后更新state）
+                        accumulated_iteration_outputs: Dict[str, List[Dict[str, Any]]] = {}
                         
                         # 初始化待优化数据（从循环变量或初始输入获取）
                         # 如果循环变量中有初始数据，将其作为第一轮的待优化数据
                         initial_pending = loop_context[nid].get("filtered_data", {}).get("pending", [])
+                        logger.debug(f"Loop node {nid} initial filtered_data.pending: {len(initial_pending) if initial_pending else 0} items")
                         if not initial_pending:
                             # 尝试从上游节点获取初始数据
+                            logger.debug(f"Loop node {nid} trying to get initial data from {len(incoming_edges)} incoming edges")
                             for edge in incoming_edges:
                                 source_output = node_outputs.get(edge.source, {})
+                                logger.debug(f"Checking upstream node {edge.source}: has output={source_output and 'output' in source_output}, keys={list(source_output.keys()) if source_output else []}")
                                 if source_output and "output" in source_output:
                                     output_data = source_output.get("output")
+                                    logger.debug(f"Found output_data from node {edge.source}: type={type(output_data)}, is_list={isinstance(output_data, list)}, is_dict={isinstance(output_data, dict)}")
                                     if isinstance(output_data, list):
                                         initial_pending = output_data
+                                        logger.info(f"Loop node {nid} got {len(initial_pending)} initial pending items from upstream node {edge.source} (list)")
                                     elif isinstance(output_data, dict):
                                         initial_pending = [output_data]
+                                        logger.info(f"Loop node {nid} got 1 initial pending item from upstream node {edge.source} (dict)")
                                     break
                         if initial_pending:
                             loop_context[nid]["filtered_data"]["pending"] = initial_pending
                             loop_context[nid]["variables"][pending_items_var_name] = initial_pending
                             logger.info(f"Loop node {nid} initialized with {len(initial_pending)} pending items")
+                        else:
+                            # 如果没有初始数据，初始化空数组（将在第一次迭代后从循环体内节点获取）
+                            loop_context[nid]["filtered_data"]["pending"] = []
+                            loop_context[nid]["variables"][pending_items_var_name] = []
+                            logger.warning(f"Loop node {nid} initialized with no pending items (will try to get from loop body nodes in first iteration)")
                         
                         while iteration < max_iterations:
                             iteration += 1
@@ -1465,11 +1588,17 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                     merged_node_outputs = dict(node_outputs)  # 先复制外部节点输出
                                     merged_node_outputs.update(iteration_outputs)  # 再更新当前迭代的输出（会覆盖同名的外部输出）
                                     
+                                    # 确保loop_context包含最新的pending_items（用于循环体节点访问）
+                                    # loop_context已经在每次迭代后更新了pending_items，这里直接传递即可
                                     body_state: WorkflowState = {
                                         "workflow_inputs": state.get("workflow_inputs", {}),
                                         "node_outputs": merged_node_outputs,  # 合并后的节点输出
-                                        "loop_context": loop_context,  # 传递循环上下文
+                                        "loop_context": loop_context,  # 传递循环上下文（包含最新的pending_items）
                                     }
+                                    # 验证loop_context中的pending_items
+                                    if nid in loop_context and "variables" in loop_context[nid]:
+                                        pending_in_context = loop_context[nid]["variables"].get(pending_items_var_name, [])
+                                        logger.debug(f"Loop iteration {iteration}: passing loop_context to node {node_id}, pending_items in context: {len(pending_in_context)} items")
                                     if state_manager:
                                         body_state["state_manager"] = state_manager
                                     
@@ -1516,10 +1645,19 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         if node_id not in iteration_results:
                                             iteration_results[node_id] = []
                                         
+                                        # 从节点输出中提取 resolved_inputs（如果存在）
+                                        resolved_inputs = {}
+                                        if node_output and isinstance(node_output, dict):
+                                            if "resolved_inputs" in node_output:
+                                                resolved_inputs = node_output.get("resolved_inputs", {})
+                                            # 如果没有 resolved_inputs，尝试从节点输出中提取实际输入
+                                            # 某些节点可能将解析后的输入存储在 output 的某个字段中
+                                        
+                                        # 只记录当前迭代的实际输入输出，不包含 workflow_inputs 和 loop_context
                                         iteration_results[node_id].append({
                                             "iteration": iteration,
-                                            "output": node_output,
-                                            "inputs": node_inputs,
+                                            "output": node_output.get("output", node_output) if isinstance(node_output, dict) else node_output,  # 只记录实际输出
+                                            "resolved_inputs": resolved_inputs,  # 只记录解析后的输入
                                             "metrics": node_metrics,
                                             "startTime": start_time,
                                             "endTime": end_time,
@@ -1537,10 +1675,11 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         error_msg = f"Critical error in loop body node {node_id}: {type(e).__name__}: {str(e)}"
                                         logger.error(error_msg, exc_info=True)
                                         
+                                        # 错误情况下，也不记录 workflow_inputs 和 loop_context
                                         iteration_results[node_id].append({
                                             "iteration": iteration,
                                             "output": {"error": error_msg},
-                                            "inputs": node_inputs,
+                                            "resolved_inputs": {},  # 错误情况下没有解析后的输入
                                             "metrics": {},
                                             "startTime": start_time,
                                             "endTime": end_time,
@@ -1622,217 +1761,66 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             # 更新循环上下文中的节点输出（用于下一次迭代）
                             previous_iteration_output = iteration_outputs
                             
-                            # 将本次迭代的结果存储到循环体内节点的输出中
-                            # 更新全局node_outputs，为循环体内的节点添加iteration_outputs
+                            # 将本次迭代的结果累积到accumulated_iteration_outputs中（不更新state）
+                            # 这样可以避免每次迭代后都更新state，只在循环结束后一次性更新
                             for body_node_id, results in iteration_results.items():
-                                if body_node_id not in node_outputs:
-                                    node_outputs[body_node_id] = {}
+                                if body_node_id not in accumulated_iteration_outputs:
+                                    accumulated_iteration_outputs[body_node_id] = []
                                 
-                                # 确保有iteration_outputs数组
-                                if "iteration_outputs" not in node_outputs[body_node_id]:
-                                    node_outputs[body_node_id]["iteration_outputs"] = []
+                                # 直接append本次迭代的结果（不更新state）
+                                accumulated_iteration_outputs[body_node_id].extend(results)
                                 
-                                # 追加本次迭代的结果
-                                node_outputs[body_node_id]["iteration_outputs"].extend(results)
-                                
-                                # 更新最后一次迭代的输出（向后兼容）
-                                if results:
-                                    last_result = results[-1]
-                                    node_outputs[body_node_id]["output"] = last_result.get("output", {})
+                                logger.debug(f"Accumulated iteration results for node {body_node_id}: {len(accumulated_iteration_outputs[body_node_id])} total results")
                             
-                            # 检查退出条件
-                            should_break = False
-                            if break_conditions:
-                                # 评估退出条件
-                                condition_results = []
-                                # 使用当前迭代的输出，而不是全局的node_outputs
-                                # iteration_outputs 包含循环体内节点的输出
-                                
-                                def get_nested_value(data: Dict[str, Any], path: str) -> Any:
-                                    """
-                                    从嵌套字典中获取值，支持路径如 "LLM6.output.score"
-                                    路径格式：节点名.字段名.嵌套字段名...
-                                    """
-                                    if not path:
-                                        return None
-                                    
-                                    parts = path.split('.')
-                                    if len(parts) < 2:
-                                        return None
-                                    
-                                    # 第一部分是节点名（taskName或nodeName）
-                                    node_name = parts[0]
-                                    field_path = '.'.join(parts[1:])  # 剩余部分是字段路径
-                                    
-                                    # 查找节点输出
-                                    # 首先尝试通过节点名（taskName）查找
-                                    node_output = None
-                                    for node_id, output in iteration_outputs.items():
-                                        # 获取节点的taskName或nodeName
-                                        node_data = None
-                                        for n in loop_body_nodes:
-                                            if n.id == node_id:
-                                                node_data = n.data
-                                                break
+                            # 每次迭代完成后，立即保存当前迭代的结果到数据库（让前端能够实时看到迭代结果）
+                            if state_manager:
+                                # 保存循环体内部节点的结果
+                                for body_node_id, results in iteration_results.items():
+                                    if body_node_id != nid:  # 排除循环节点本身
+                                        # 构建包含当前所有迭代结果的节点输出
+                                        current_iteration_outputs = accumulated_iteration_outputs.get(body_node_id, [])
+                                        body_node_output = {
+                                            "iteration_outputs": current_iteration_outputs,
+                                            # 更新最后一次迭代的输出（向后兼容）
+                                            "output": results[-1].get("output", {}) if results else {}
+                                        }
                                         
-                                        if node_data:
-                                            task_name = getattr(node_data, 'taskName', None) or getattr(node_data, 'nodeName', None) or getattr(node_data, 'node_name', None)
-                                            if task_name == node_name:
-                                                node_output = output
-                                                break
-                                    
-                                    # 如果没找到，尝试使用节点ID
-                                    if node_output is None:
-                                        node_output = iteration_outputs.get(node_name)
-                                    
-                                    if node_output is None or not isinstance(node_output, dict):
-                                        return None
-                                    
-                                    # 解析字段路径
-                                    field_parts = field_path.split('.')
-                                    if len(field_parts) < 1:
-                                        return None
-                                    
-                                    # 第一个字段通常是 "output"
-                                    first_field = field_parts[0]
-                                    current = node_output.get(first_field)
-                                    
-                                    if current is None:
-                                        return None
-                                    
-                                    # 如果 current 是数组，且还有后续字段路径，需要从数组中提取字段值
-                                    if isinstance(current, list) and len(field_parts) > 1:
-                                        # 数组格式：从每个元素中提取指定字段
-                                        nested_field = '.'.join(field_parts[1:])  # 剩余字段路径
-                                        result = []
-                                        for item in current:
-                                            if isinstance(item, dict):
-                                                # 递归获取嵌套字段值
-                                                item_value = item
-                                                for field in nested_field.split('.'):
-                                                    if isinstance(item_value, dict):
-                                                        item_value = item_value.get(field)
-                                                    else:
-                                                        item_value = None
-                                                        break
-                                                result.append(item_value)
-                                            else:
-                                                result.append(None)
-                                        return result if result else None
-                                    elif isinstance(current, list):
-                                        # 如果只是 "节点名.output"，返回整个数组
-                                        return current
-                                    elif len(field_parts) > 1:
-                                        # 非数组格式：递归获取嵌套字段值
-                                        for field in field_parts[1:]:
-                                            if isinstance(current, dict):
-                                                current = current.get(field)
-                                            else:
-                                                return None
-                                        return current
-                                    else:
-                                        # 只有一个字段，直接返回
-                                        return current
+                                        # 保存到数据库（每次迭代后都保存，让前端能够实时看到）
+                                        # 使用update_node_output只更新输出，保持running状态
+                                        state_manager.update_node_output(
+                                            body_node_id,
+                                            body_node_output,  # 包含所有已累积的迭代结果
+                                            loop_id=nid,
+                                            iteration=iteration
+                                        )
+                                        logger.info(f"Updated iteration {iteration} results for loop body node {body_node_id} to database ({len(current_iteration_outputs)} total iterations)")
                                 
-                                for condition in break_conditions:
-                                    # BreakCondition 是 Pydantic 模型，使用属性访问
-                                    if hasattr(condition, 'output_variable'):
-                                        output_variable = condition.output_variable
-                                    elif hasattr(condition, 'outputVariable'):
-                                        output_variable = condition.outputVariable
-                                    elif isinstance(condition, dict):
-                                        output_variable = condition.get("outputVariable") or condition.get("output_variable", "")
-                                    else:
-                                        output_variable = ""
-                                    
-                                    if hasattr(condition, 'operator'):
-                                        operator = condition.operator
-                                    elif isinstance(condition, dict):
-                                        operator = condition.get("operator", ">=")
-                                    else:
-                                        operator = ">="
-                                    
-                                    if hasattr(condition, 'value'):
-                                        compare_value = condition.value
-                                    elif isinstance(condition, dict):
-                                        compare_value = condition.get("value")
-                                    else:
-                                        compare_value = None
-                                    
-                                    # 从节点输出中获取变量值（支持嵌套路径）
-                                    variable_value = get_nested_value(iteration_outputs, output_variable)
-                                    
-                                    # 比较操作
-                                    condition_met = False
-                                    if variable_value is not None:
-                                        # 检查是否是数组格式（output 是数组）
-                                        # 如果路径是 "节点名.output.字段名"，且 output 是数组，需要检查所有元素
-                                        if isinstance(variable_value, list):
-                                            # 数组格式：检查数组中所有元素的某个字段是否都满足条件
-                                            # 例如：LLM2.output.score，如果 output 是数组，需要检查所有元素的 score 字段
-                                            all_met = True
-                                            for item in variable_value:
-                                                item_met = False
-                                                try:
-                                                    # 尝试数值比较
-                                                    if operator == ">=":
-                                                        item_met = float(item) >= float(compare_value)
-                                                    elif operator == "<=":
-                                                        item_met = float(item) <= float(compare_value)
-                                                    elif operator == ">":
-                                                        item_met = float(item) > float(compare_value)
-                                                    elif operator == "<":
-                                                        item_met = float(item) < float(compare_value)
-                                                    elif operator == "==":
-                                                        item_met = str(item) == str(compare_value)
-                                                    elif operator == "!=":
-                                                        item_met = str(item) != str(compare_value)
-                                                except (ValueError, TypeError):
-                                                    # 如果无法转换为数值，使用字符串比较
-                                                    if operator == "==":
-                                                        item_met = str(item) == str(compare_value)
-                                                    elif operator == "!=":
-                                                        item_met = str(item) != str(compare_value)
-                                                
-                                                if not item_met:
-                                                    all_met = False
-                                                    break
-                                            
-                                            condition_met = all_met
-                                        else:
-                                            # 非数组格式：直接比较
-                                            try:
-                                                # 尝试数值比较
-                                                if operator == ">=":
-                                                    condition_met = float(variable_value) >= float(compare_value)
-                                                elif operator == "<=":
-                                                    condition_met = float(variable_value) <= float(compare_value)
-                                                elif operator == ">":
-                                                    condition_met = float(variable_value) > float(compare_value)
-                                                elif operator == "<":
-                                                    condition_met = float(variable_value) < float(compare_value)
-                                                elif operator == "==":
-                                                    condition_met = str(variable_value) == str(compare_value)
-                                                elif operator == "!=":
-                                                    condition_met = str(variable_value) != str(compare_value)
-                                            except (ValueError, TypeError):
-                                                # 如果无法转换为数值，使用字符串比较
-                                                if operator == "==":
-                                                    condition_met = str(variable_value) == str(compare_value)
-                                                elif operator == "!=":
-                                                    condition_met = str(variable_value) != str(compare_value)
-                                    
-                                    condition_results.append(condition_met)
+                                # 保存循环节点本身的结果（包含当前的passed_items和pending_items）
+                                current_filtered_data = loop_context[nid].get("filtered_data", {})
+                                current_passed = current_filtered_data.get("passed", [])
+                                current_pending = current_filtered_data.get("pending", [])
                                 
-                                # 根据逻辑运算符判断
-                                if logical_operator == "and":
-                                    should_break = all(condition_results) if condition_results else False
-                                else:  # "or"
-                                    should_break = any(condition_results) if condition_results else False
+                                loop_node_output = {
+                                    "output": current_passed,  # 只显示通过筛选的结果
+                                    "iterations": iteration,
+                                    "passed_items": current_passed,
+                                    "pending_items": current_pending,
+                                }
+                                
+                                # 使用update_node_output只更新输出，保持running状态
+                                state_manager.update_node_output(
+                                    nid,
+                                    loop_node_output,
+                                    loop_id=nid,
+                                    iteration=iteration
+                                )
+                                logger.info(f"Updated iteration {iteration} results for loop node {nid}: {len(current_passed)} passed, {len(current_pending)} pending")
                             
-                            # 在退出条件评估后，进行数据筛选
+                            # 每次迭代后都执行数据筛选（不管是否满足退出条件）
+                            # 退出条件应该是：pending_items是否为空（所有条目都满足条件）
+                            should_break = False
                             # 从退出条件中提取筛选配置（第一个退出条件作为筛选条件）
-                            if break_conditions and not should_break:
+                            if break_conditions:
                                 first_condition = break_conditions[0]
                                 # BreakCondition 是 Pydantic 模型，使用属性访问
                                 if hasattr(first_condition, 'output_variable'):
@@ -1863,66 +1851,236 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 loop_context[nid]["filter_config"]["filter_operator"] = filter_operator
                                 loop_context[nid]["filter_config"]["filter_value"] = filter_value
                                 
-                                # 查找数据来源节点（循环体内的最后一个节点，或通过配置指定）
-                                source_node_id = None
-                                source_data = None
+                                # 获取当前迭代的待筛选数据（从 pending_items 变量获取）
+                                # 注意：筛选应该基于当前迭代的 pending_items，而不是所有数据
+                                current_pending = loop_context[nid]["variables"].get(pending_items_var_name, [])
+                                logger.info(f"Loop iteration {iteration}: current_pending from variables: {len(current_pending) if current_pending else 0} items, IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in current_pending]}")
                                 
-                                # 优先查找有output字段的节点
-                                for body_node in loop_body_nodes:
-                                    node_output = iteration_outputs.get(body_node.id, {})
-                                    if node_output and "output" in node_output:
-                                        source_data = node_output.get("output")
-                                        source_node_id = body_node.id
-                                        break
+                                # 如果第一次迭代且current_pending为空，尝试从filtered_data中获取
+                                if not current_pending and iteration == 1:
+                                    current_pending = loop_context[nid].get("filtered_data", {}).get("pending", [])
+                                    logger.debug(f"Loop iteration {iteration}: current_pending from filtered_data: {len(current_pending) if current_pending else 0} items")
+                                    if current_pending:
+                                        loop_context[nid]["variables"][pending_items_var_name] = current_pending
+                                        logger.info(f"Loop iteration {iteration}: restored {len(current_pending)} pending items from filtered_data")
                                 
-                                # 如果找到了数据，进行筛选
-                                if source_data is not None:
-                                    # 解析字段路径，例如 "LLM2.output.score"
-                                    # 如果路径包含节点名，需要提取字段部分
-                                    actual_field_path = filter_field_path
-                                    if '.' in filter_field_path:
-                                        parts = filter_field_path.split('.')
-                                        # 如果第一部分是节点名，跳过它
-                                        if len(parts) >= 2:
-                                            # 检查第一部分是否是节点名
-                                            first_part = parts[0]
-                                            is_node_name = False
-                                            for body_node in loop_body_nodes:
-                                                node_data = body_node.data
-                                                task_name = getattr(node_data, 'taskName', None) or getattr(node_data, 'nodeName', None) or getattr(node_data, 'node_name', None)
-                                                if task_name == first_part:
-                                                    is_node_name = True
-                                                    break
-                                            
-                                            if is_node_name:
-                                                # 跳过节点名，使用剩余部分作为字段路径
-                                                actual_field_path = '.'.join(parts[1:])
+                                # 如果第一次迭代且current_pending仍为空，尝试从循环体内第一个节点的输出获取初始数据
+                                if not current_pending and iteration == 1:
+                                    logger.info(f"Loop iteration {iteration}: current_pending is empty, trying to get initial data from loop body nodes")
+                                    # 查找循环体内的第一个节点（通常是入口节点）
+                                    for body_node in loop_body_nodes:
+                                        node_output = iteration_outputs.get(body_node.id, {})
+                                        logger.debug(f"Checking loop body node {body_node.id} for initial data: has output={node_output and 'output' in node_output}, keys={list(node_output.keys()) if node_output else []}")
+                                        if node_output and "output" in node_output:
+                                            output_data = node_output.get("output")
+                                            # 如果output是嵌套的（如 {"output": [...]}），需要提取内部数据
+                                            if isinstance(output_data, dict) and "output" in output_data:
+                                                output_data = output_data.get("output")
+                                            logger.debug(f"Found output_data from loop body node {body_node.id}: type={type(output_data)}, is_list={isinstance(output_data, list)}")
+                                            if isinstance(output_data, list) and len(output_data) > 0:
+                                                current_pending = output_data
+                                                loop_context[nid]["filtered_data"]["pending"] = current_pending
+                                                loop_context[nid]["variables"][pending_items_var_name] = current_pending
+                                                logger.info(f"Loop iteration {iteration}: got {len(current_pending)} initial pending items from loop body node {body_node.id}")
+                                                break
+                                            elif isinstance(output_data, dict):
+                                                current_pending = [output_data]
+                                                loop_context[nid]["filtered_data"]["pending"] = current_pending
+                                                loop_context[nid]["variables"][pending_items_var_name] = current_pending
+                                                logger.info(f"Loop iteration {iteration}: got 1 initial pending item from loop body node {body_node.id}")
+                                                break
+                                
+                                if not current_pending:
+                                    logger.warning(f"Loop iteration {iteration}: no pending items to filter (current_pending is empty)")
+                                    # 如果没有待筛选数据，可以提前退出
+                                    should_break = True
+                                else:
+                                    # 查找数据来源节点（循环体内的最后一个节点，按拓扑排序）
+                                    source_node_id = None
+                                    source_data = None
                                     
-                                    try:
-                                        # 执行筛选
-                                        passed_items, pending_items = filter_data_by_condition(
-                                            source_data,
-                                            actual_field_path,
-                                            filter_operator,
-                                            filter_value
-                                        )
+                                    # 找到所有没有下游的节点（exit nodes）
+                                    exit_nodes = []
+                                    for body_node in loop_body_nodes:
+                                        has_downstream = False
+                                        for edge in loop_body_edges:
+                                            if edge.source == body_node.id:
+                                                has_downstream = True
+                                                break
+                                        if not has_downstream:
+                                            exit_nodes.append(body_node.id)
+                                    
+                                    logger.debug(f"Loop iteration {iteration}: exit nodes: {exit_nodes}")
+                                    
+                                    # 从exit nodes中查找有output的节点
+                                    for exit_node_id in exit_nodes:
+                                        node_output = iteration_outputs.get(exit_node_id, {})
+                                        logger.debug(f"Loop iteration {iteration}: checking exit node {exit_node_id}, node_output keys: {list(node_output.keys()) if isinstance(node_output, dict) else 'not a dict'}")
+                                        if node_output and "output" in node_output:
+                                            source_data = node_output.get("output")
+                                            source_node_id = exit_node_id
+                                            logger.info(f"Found source_data from exit node {exit_node_id}: {len(source_data) if isinstance(source_data, list) else 1} items")
+                                            logger.debug(f"Loop iteration {iteration}: source_data type: {type(source_data)}, is_list: {isinstance(source_data, list)}")
+                                            if isinstance(source_data, list):
+                                                logger.debug(f"Loop iteration {iteration}: source_data items: {[item.get('id', 'N/A') if isinstance(item, dict) else str(item)[:50] for item in source_data[:5]]}")
+                                            elif isinstance(source_data, dict):
+                                                logger.debug(f"Loop iteration {iteration}: source_data dict keys: {list(source_data.keys())}")
+                                                # 如果source_data是dict且包含output字段，可能需要进一步提取
+                                                if "output" in source_data:
+                                                    logger.warning(f"Loop iteration {iteration}: source_data is a dict with 'output' key, extracting nested output")
+                                                    source_data = source_data.get("output")
+                                                    logger.info(f"Loop iteration {iteration}: extracted nested source_data: {len(source_data) if isinstance(source_data, list) else 1} items")
+                                            break
+                                    
+                                    # 如果exit nodes中没有找到，尝试从node_outputs中获取
+                                    if source_data is None:
+                                        for exit_node_id in exit_nodes:
+                                            node_output = node_outputs.get(exit_node_id, {})
+                                            if node_output and "output" in node_output:
+                                                source_data = node_output.get("output")
+                                                source_node_id = exit_node_id
+                                                logger.info(f"Found source_data from node_outputs for exit node {exit_node_id}: {len(source_data) if isinstance(source_data, list) else 1} items")
+                                                break
+                                    
+                                    # 如果还是没找到，回退到原来的逻辑（遍历所有节点）
+                                    if source_data is None:
+                                        logger.warning(f"Loop iteration {iteration}: no source_data found in exit nodes, trying all nodes")
+                                        for body_node in loop_body_nodes:
+                                            node_output = iteration_outputs.get(body_node.id, {})
+                                            if node_output and "output" in node_output:
+                                                source_data = node_output.get("output")
+                                                source_node_id = body_node.id
+                                                logger.info(f"Found source_data from node {body_node.id}: {len(source_data) if isinstance(source_data, list) else 1} items")
+                                                break
+                                    
+                                    # 如果找到了数据，进行筛选
+                                    # 筛选应该基于当前迭代的 pending_items，确保满足条件的条目立即从 pending_items 移到 passed_items
+                                    if source_data is not None:
+                                        logger.info(f"Loop iteration {iteration}: filtering {len(current_pending)} pending items against {len(source_data) if isinstance(source_data, list) else 1} source items")
+                                        # 解析字段路径，例如 "LLM2.output.score"
+                                        # 如果路径包含节点名，需要提取字段部分
+                                        actual_field_path = filter_field_path
+                                        if '.' in filter_field_path:
+                                            parts = filter_field_path.split('.')
+                                            # 如果第一部分是节点名，跳过它
+                                            if len(parts) >= 2:
+                                                # 检查第一部分是否是节点名
+                                                first_part = parts[0]
+                                                is_node_name = False
+                                                for body_node in loop_body_nodes:
+                                                    node_data = body_node.data
+                                                    task_name = getattr(node_data, 'taskName', None) or getattr(node_data, 'nodeName', None) or getattr(node_data, 'node_name', None)
+                                                    if task_name == first_part:
+                                                        is_node_name = True
+                                                        break
+                                                
+                                                if is_node_name:
+                                                    # 跳过节点名，使用剩余部分作为字段路径
+                                                    actual_field_path = '.'.join(parts[1:])
                                         
-                                        # 更新筛选后的数据
-                                        existing_passed = loop_context[nid]["filtered_data"]["passed"]
-                                        loop_context[nid]["filtered_data"]["passed"] = existing_passed + passed_items
-                                        loop_context[nid]["filtered_data"]["pending"] = pending_items
+                                        # 重要：如果 source_data 中的 item 已经是扁平结构（从 node_output.get("output") 获取的数组元素）
+                                        # 那么字段路径不应该包含 "output." 前缀，因为 item 本身已经是数组元素，没有嵌套的 output 字段
+                                        # 例如：如果 actual_field_path 是 "output.score"，应该改为 "score"
+                                        if actual_field_path.startswith("output."):
+                                            actual_field_path = actual_field_path[len("output."):]
+                                            logger.debug(f"Loop iteration {iteration}: adjusted field_path from '{filter_field_path}' to '{actual_field_path}' (removed 'output.' prefix for flattened data)")
                                         
-                                        # 将 pending_items 更新到循环变量，供下一轮使用
-                                        loop_context[nid]["variables"][pending_items_var_name] = pending_items
-                                        
-                                        logger.info(f"Loop iteration {iteration}: {len(passed_items)} items passed, {len(pending_items)} items pending")
-                                        
-                                        # 如果没有待优化数据，可以提前退出
-                                        if not pending_items:
-                                            logger.info(f"Loop node {nid} all items passed at iteration {iteration}")
-                                            should_break = True
-                                    except Exception as e:
-                                        logger.warning(f"Error filtering data in loop iteration {iteration}: {e}", exc_info=True)
+                                        try:
+                                            # 执行筛选
+                                            # 注意：筛选应该基于当前迭代的 pending_items，确保满足条件的条目立即从 pending_items 移到 passed_items
+                                            # source_data 是当前迭代的输出数据，但我们需要筛选的是 current_pending 中的条目
+                                            # 所以需要根据 source_data 中的条目，从 current_pending 中筛选
+                                            
+                                            # 如果 source_data 是数组，需要匹配 current_pending 中的条目
+                                            # 筛选逻辑：遍历 current_pending，检查每个条目在 source_data 中对应的数据是否满足条件
+                                            passed_items = []
+                                            pending_items = []
+                                            
+                                            if isinstance(source_data, list):
+                                                # source_data 是数组，需要与 current_pending 匹配
+                                                # 重要：passed_items 应该使用当前迭代 source_data 中的最新数据，而不是 current_pending 中的旧数据
+                                                # 假设 source_data 和 current_pending 的顺序一致，或者通过 id 匹配
+                                                for pending_item in current_pending:
+                                                    # 在 source_data 中查找对应的条目
+                                                    # 优先通过 id 匹配，如果没有 id 则按索引匹配
+                                                    matched_data = None
+                                                    pending_id = pending_item.get("id") if isinstance(pending_item, dict) else None
+                                                    
+                                                    if pending_id:
+                                                        # 通过 id 匹配
+                                                        for data_item in source_data:
+                                                            if isinstance(data_item, dict) and data_item.get("id") == pending_id:
+                                                                matched_data = data_item
+                                                                break
+                                                    else:
+                                                        # 按索引匹配（假设顺序一致）
+                                                        pending_index = current_pending.index(pending_item) if pending_item in current_pending else -1
+                                                        if 0 <= pending_index < len(source_data):
+                                                            matched_data = source_data[pending_index]
+                                                    
+                                                    if matched_data:
+                                                        # 检查匹配的数据是否满足条件
+                                                        field_value = get_nested_field_value(matched_data, actual_field_path)
+                                                        condition_result = evaluate_condition(field_value, filter_operator, filter_value)
+                                                        logger.info(f"Loop iteration {iteration}: matching pending_item id={pending_id or 'N/A'} with source_data, field_path={actual_field_path}, field_value={field_value}, condition={filter_operator} {filter_value}, result={condition_result}")
+                                                        logger.debug(f"Loop iteration {iteration}: matched_data keys: {list(matched_data.keys()) if isinstance(matched_data, dict) else 'not a dict'}")
+                                                        if condition_result:
+                                                            # 重要：使用当前迭代 source_data 中的最新数据，而不是 current_pending 中的旧数据
+                                                            passed_items.append(matched_data)
+                                                            logger.info(f"Loop iteration {iteration}: item id={pending_id or 'N/A'} passed condition (field_value={field_value} {filter_operator} {filter_value}), moved to passed_items with current iteration data")
+                                                        else:
+                                                            # 对于不满足条件的，也使用当前迭代的最新数据
+                                                            pending_items.append(matched_data)
+                                                            logger.info(f"Loop iteration {iteration}: item id={pending_id or 'N/A'} did not pass condition (field_value={field_value} {filter_operator} {filter_value}), kept in pending_items with current iteration data")
+                                                    else:
+                                                        # 如果没有匹配的数据，保留在 pending_items 中（使用旧数据）
+                                                        logger.warning(f"Loop iteration {iteration}: Could not match pending_item id={pending_id or 'N/A'} with source_data (source_data has {len(source_data)} items), keeping in pending_items")
+                                                        logger.debug(f"Loop iteration {iteration}: pending_item: {pending_item}")
+                                                        logger.debug(f"Loop iteration {iteration}: source_data items: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in source_data[:5]]}")
+                                                        pending_items.append(pending_item)
+                                            else:
+                                                # source_data 不是数组，直接筛选 current_pending
+                                                # 这种情况较少见，但为了兼容性保留
+                                                for pending_item in current_pending:
+                                                    field_value = get_nested_field_value(pending_item, actual_field_path)
+                                                    if evaluate_condition(field_value, filter_operator, filter_value):
+                                                        passed_items.append(pending_item)
+                                                    else:
+                                                        pending_items.append(pending_item)
+                                            
+                                            # 更新筛选后的数据
+                                            existing_passed = loop_context[nid]["filtered_data"].get("passed", [])
+                                            loop_context[nid]["filtered_data"]["passed"] = existing_passed + passed_items
+                                            loop_context[nid]["filtered_data"]["pending"] = pending_items
+                                            
+                                            # 将 pending_items 更新到循环变量，供下一轮使用
+                                            loop_context[nid]["variables"][pending_items_var_name] = pending_items
+                                            
+                                            logger.info(f"Loop iteration {iteration}: filtered {len(current_pending)} items -> {len(passed_items)} passed (total passed: {len(existing_passed + passed_items)}), {len(pending_items)} pending")
+                                            logger.info(f"Loop iteration {iteration}: passed_items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in passed_items]}")
+                                            logger.info(f"Loop iteration {iteration}: pending_items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in pending_items]}")
+                                            
+                                            # 验证更新是否成功
+                                            updated_pending = loop_context[nid]["variables"].get(pending_items_var_name, [])
+                                            logger.info(f"Loop iteration {iteration}: verified pending_items in variables: {len(updated_pending)} items, IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in updated_pending]}")
+                                            
+                                            # 记录筛选详情
+                                            if passed_items:
+                                                logger.info(f"Loop iteration {iteration}: passed items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in passed_items]}")
+                                            if pending_items:
+                                                logger.info(f"Loop iteration {iteration}: pending items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in pending_items]}")
+                                            
+                                            # 如果没有待优化数据，可以提前退出
+                                            if not pending_items:
+                                                logger.info(f"Loop node {nid} all items passed at iteration {iteration}")
+                                                should_break = True
+                                        except Exception as e:
+                                            logger.error(f"Error filtering data in loop iteration {iteration}: {e}", exc_info=True)
+                                            logger.error(f"Filter context: current_pending={len(current_pending) if current_pending else 0} items, source_data={len(source_data) if isinstance(source_data, list) else 'not a list'}, filter_field={actual_field_path}, operator={filter_operator}, value={filter_value}")
+                                            # 如果筛选出错，保留所有条目在pending_items中
+                                            pending_items = current_pending.copy() if current_pending else []
+                                            loop_context[nid]["filtered_data"]["pending"] = pending_items
+                                            loop_context[nid]["variables"][pending_items_var_name] = pending_items
                             
                             if should_break:
                                 logger.info(f"Loop node {nid} break condition met at iteration {iteration}")
@@ -1935,6 +2093,11 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         # 收集循环体的最终输出：只包含通过筛选的结果（passed_items）
                         filtered_data = loop_context[nid].get("filtered_data", {})
                         passed_items = filtered_data.get("passed", [])
+                        pending_items = filtered_data.get("pending", [])
+                        
+                        logger.info(f"Loop node {nid} final filtered data: {len(passed_items)} passed, {len(pending_items)} pending")
+                        if not passed_items and not pending_items:
+                            logger.warning(f"Loop node {nid} filtered_data is empty, filtered_data keys: {list(filtered_data.keys())}")
                         
                         # 循环体节点的输出只包含最终通过筛选的结果
                         outputs = {
@@ -1944,8 +2107,19 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             "pending_items": filtered_data.get("pending", []),  # 保留用于调试
                         }
                         
-                        # 更新节点输出
+                        # 更新节点输出（确保包含循环体内节点的 iteration_outputs）
                         new_node_outputs = dict(state.get("node_outputs", {}))
+                        # 将累积的迭代结果合并进来（一次性更新，避免每次迭代后都更新state）
+                        for body_node_id in body_node_ids:
+                            if body_node_id in accumulated_iteration_outputs:
+                                # 构建节点输出，包含所有迭代的结果
+                                iteration_outputs_list = accumulated_iteration_outputs[body_node_id]
+                                new_node_outputs[body_node_id] = {
+                                    "iteration_outputs": iteration_outputs_list,
+                                    # 更新最后一次迭代的输出（向后兼容）
+                                    "output": iteration_outputs_list[-1].get("output", {}) if iteration_outputs_list else {}
+                                }
+                                logger.debug(f"Preserved iteration_outputs for loop body node {body_node_id}: {len(iteration_outputs_list)} iterations")
                         new_node_outputs[nid] = outputs
                         
                         # 构建返回状态，包含 loop_context（不返回 workflow_inputs，避免并行执行时的冲突）
@@ -1962,6 +2136,21 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         if state_manager:
                             result_state["state_manager"] = state_manager
                             state_manager.mark_node_success(nid, outputs, loop_id=nid, iteration=iteration)
+                            
+                            # 为循环体内的节点也调用 mark_node_success，确保最终状态被保存到数据库
+                            # 注意：每次迭代已经保存过了，这里主要是确保最终状态正确
+                            for body_node_id in body_node_ids:
+                                if body_node_id != nid:  # 排除循环节点本身
+                                    body_node_output = new_node_outputs.get(body_node_id, {})
+                                    if body_node_output:
+                                        # 确保 iteration_outputs 被包含在输出中
+                                        state_manager.mark_node_success(
+                                            body_node_id, 
+                                            body_node_output,  # 包含所有迭代的 iteration_outputs
+                                            loop_id=nid, 
+                                            iteration=iteration
+                                        )
+                                        logger.debug(f"Final save for loop body node {body_node_id} to database")
                         
                         logger.info(f"Loop node {nid} completed successfully after {iteration} iterations, returning state with keys: {list(result_state.keys())}")
                         return result_state

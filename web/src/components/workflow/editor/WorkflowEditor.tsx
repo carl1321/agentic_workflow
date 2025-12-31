@@ -422,9 +422,11 @@ function WorkflowEditorInner({
             })
           );
           
-          // 如果运行还在进行中，标记为运行中
-          if (status.run_status === 'running') {
+          // 根据运行状态设置相应的标志（queued和running都视为运行中）
+          if (status.run_status === 'running' || status.run_status === 'queued') {
             setIsRunning(true);
+          } else {
+            setIsRunning(false);
           }
         } catch (error) {
           console.error("Failed to restore run status:", error);
@@ -439,11 +441,12 @@ function WorkflowEditorInner({
         return;
       }
       
-      // 2. 获取最新运行记录
+      // 2. 获取最新运行记录（不限制状态，包括queued、running、success、failed、canceled）
       try {
         const runs = await getWorkflowRuns(workflowId, { limit: 1 });
         if (runs.runs && runs.runs.length > 0) {
           const latestRun = runs.runs[0];
+          // 无论状态如何，都恢复运行记录
           await restoreRunStatus(latestRun.id);
         } else {
           // 3. 没有运行记录，恢复初始状态
@@ -751,9 +754,14 @@ function WorkflowEditorInner({
             console.log("收到日志事件:", { logEvent, nodeId, payload: event.payload, time: event.time });
             
             // 工作流级别的事件（workflow_start, workflow_end）没有 node_id，这是正常的
-            if (logEvent === "workflow_start" || logEvent === "workflow_end") {
-              // 这些是工作流级别的事件，不需要更新节点状态
-              continue; // 使用 continue 而不是 return，避免提前结束循环
+            if (logEvent === "workflow_start") {
+              // 工作流开始事件，不需要更新节点状态
+              continue;
+            } else if (logEvent === "workflow_end" || logEvent === "workflow_error") {
+              // 工作流结束事件，设置运行状态为false（但等待run_end事件来最终停止）
+              // 注意：这里不设置setIsRunning(false)，因为run_end事件会处理
+              console.log(`工作流执行${logEvent === "workflow_end" ? "完成" : "失败"}`);
+              continue;
             }
             
             if (nodeId) {
@@ -837,6 +845,7 @@ function WorkflowEditorInner({
             }
           } else if (event.type === "run_end") {
             // 工作流执行完成
+            setIsRunning(false); // 立即停止运行状态
             if (event.success) {
               toast.success("工作流执行完成");
               // 保存 runId 以便后续查看详情

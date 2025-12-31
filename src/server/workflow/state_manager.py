@@ -311,6 +311,49 @@ class DatabaseStateManager(NodeExecutionStateManager):
         
         return is_new
     
+    def update_node_output(
+        self,
+        node_id: str,
+        outputs: Any = None,
+        loop_id: Optional[str] = None,
+        iteration: Optional[int] = None,
+    ) -> bool:
+        """
+        更新节点输出，但不改变状态（保持running）
+        
+        Args:
+            node_id: 节点ID
+            outputs: 节点输出
+            loop_id: 循环ID（如果是循环体内的节点）
+            iteration: 迭代次数（如果是循环体内的节点）
+            
+        Returns:
+            是否更新成功
+        """
+        # 更新内存状态（只更新输出，不改变状态）
+        if outputs is not None:
+            self._node_outputs[node_id] = outputs
+        
+        # 更新数据库（只更新输出，不更新status）
+        if node_id in self._node_task_ids:
+            conn = self._get_conn()
+            try:
+                task_id = self._node_task_ids[node_id]
+                update_node_task(
+                    conn,
+                    task_id,
+                    output=outputs,  # 只更新输出，不更新status
+                )
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Error updating node output for {node_id}: {e}", exc_info=True)
+                if conn != self._db_conn:
+                    conn.rollback()
+            finally:
+                self._close_conn_if_needed(conn)
+        
+        return True
+    
     def mark_node_error(
         self,
         node_id: str,

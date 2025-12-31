@@ -51,6 +51,7 @@ class WorkflowWorker:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._current_run_id: Optional[UUID] = None
         self._executor = None  # 将在后续阶段设置
+        self._wake_event: Optional[asyncio.Event] = None  # 用于立即唤醒worker
     
     def set_executor(self, executor):
         """设置执行器（延迟注入）"""
@@ -63,9 +64,15 @@ class WorkflowWorker:
             return
         
         self._running = True
+        self._wake_event = asyncio.Event()
         self._task = asyncio.create_task(self._worker_loop())
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         logger.info("Workflow worker started")
+    
+    def wake(self):
+        """立即唤醒worker检查新任务（非阻塞）"""
+        if self._wake_event:
+            self._wake_event.set()
     
     async def stop(self):
         """停止 worker"""
@@ -107,8 +114,18 @@ class WorkflowWorker:
                 # 获取并执行任务
                 await self._try_execute_run()
                 
-                # 等待轮询间隔
-                await asyncio.sleep(self.poll_interval)
+                # 等待轮询间隔或立即唤醒事件
+                if self._wake_event:
+                    try:
+                        # 使用wait_for实现超时，如果被唤醒则立即继续
+                        await asyncio.wait_for(self._wake_event.wait(), timeout=self.poll_interval)
+                        self._wake_event.clear()  # 清除事件标志
+                        logger.debug("[WORKER] Woken up to check for new tasks")
+                    except asyncio.TimeoutError:
+                        # 超时是正常的，继续下一次循环
+                        pass
+                else:
+                    await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
                 break
             except Exception as e:

@@ -71,6 +71,46 @@ function formatJSONForDisplay(obj: any): string {
   }
 }
 
+// 渲染对象字段，直接展开显示内部字段（不显示 input/output 字段名）
+function renderObjectFields(obj: any, label: string) {
+  if (!obj || typeof obj !== 'object') {
+    return null;
+  }
+  
+  // 如果是数组，直接显示
+  if (Array.isArray(obj)) {
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">{label}</Label>
+        <div className="bg-muted rounded-md p-2 overflow-auto max-h-[200px]">
+          <pre className="text-xs font-mono whitespace-pre-wrap">{formatJSONForDisplay(obj)}</pre>
+        </div>
+      </div>
+    );
+  }
+  
+  // 如果是对象，展开显示每个字段
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div className="bg-muted rounded-md p-2 space-y-2">
+        {Object.entries(obj).map(([key, value]) => (
+          <div key={key} className="border-b border-border/50 pb-2 last:border-0 last:pb-0">
+            <div className="text-xs font-semibold text-foreground mb-1">{key}</div>
+            <div className="text-xs text-muted-foreground">
+              {typeof value === 'object' && value !== null ? (
+                <pre className="whitespace-pre-wrap">{formatJSONForDisplay(value)}</pre>
+              ) : (
+                String(value)
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RunResultTab({ nodeData }: { nodeData: any }) {
   const result = nodeData.executionResult;
   const status = nodeData.executionStatus || "pending";
@@ -91,11 +131,12 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
     ? ((new Date(result.endTime).getTime() - new Date(result.startTime).getTime()) / 1000).toFixed(2) + "s"
     : null;
 
-  // 循环体节点：只显示最终通过筛选的结果
+  // 循环体节点：显示 iterations, passed_items, pending_items
   if (isLoopNode) {
     const outputs = result?.outputs || {};
-    const passedItems = outputs.passed_items || outputs.output || [];
     const iterations = outputs.iterations || 0;
+    const passedItems = outputs.passed_items || [];
+    const pendingItems = outputs.pending_items || [];
     
     return (
       <div className="space-y-4">
@@ -109,19 +150,12 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
               {status === "cancelled" && <Badge variant="outline">已取消</Badge>}
               {status === "pending" && <Badge variant="outline">未运行</Badge>}
           </div>
-          <div className="flex items-center gap-3">
-            {iterations > 0 && (
-              <div className="flex items-center text-xs text-muted-foreground">
-                <span>迭代次数: {iterations}</span>
-              </div>
-            )}
-            {duration && (
-              <div className="flex items-center text-xs text-muted-foreground">
-                <Clock className="w-3 h-3 mr-1" />
-                {duration}
-              </div>
-            )}
-          </div>
+          {duration && (
+            <div className="flex items-center text-xs text-muted-foreground">
+              <Clock className="w-3 h-3 mr-1" />
+              {duration}
+            </div>
+          )}
         </div>
 
         {result?.error && (
@@ -131,10 +165,27 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
           </div>
         )}
 
+        {/* 迭代次数 */}
         <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">最终结果（通过筛选的数据）</Label>
-          <div className="bg-muted rounded-md p-2 overflow-auto max-h-[400px]">
+          <Label className="text-xs text-muted-foreground">迭代次数</Label>
+          <div className="bg-muted rounded-md p-2">
+            <p className="text-sm font-medium">{iterations}</p>
+          </div>
+        </div>
+
+        {/* 通过筛选的数据 */}
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">通过筛选的数据 (passed_items)</Label>
+          <div className="bg-muted rounded-md p-2 overflow-auto max-h-[300px]">
             <pre className="text-xs font-mono whitespace-pre-wrap">{formatJSONForDisplay(passedItems)}</pre>
+          </div>
+        </div>
+
+        {/* 不满足条件的条目 */}
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">不满足条件的条目 (pending_items)</Label>
+          <div className="bg-muted rounded-md p-2 overflow-auto max-h-[300px]">
+            <pre className="text-xs font-mono whitespace-pre-wrap">{formatJSONForDisplay(pendingItems)}</pre>
           </div>
         </div>
       </div>
@@ -206,22 +257,17 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
                   </AccordionTrigger>
                   <AccordionContent>
                     <div className="space-y-3 pt-2">
-                      {lastItem.inputs && (
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">输入参数</Label>
-                          <div className="bg-muted rounded-md p-2 overflow-auto max-h-[150px]">
-                            <pre className="text-xs font-mono whitespace-pre-wrap">{formatJSONForDisplay(lastItem.inputs)}</pre>
-                          </div>
-                        </div>
+                      {/* 输入：优先使用 resolved_inputs，如果没有则使用 inputs */}
+                      {(lastItem.resolved_inputs || lastItem.inputs) && (
+                        renderObjectFields(
+                          lastItem.resolved_inputs || lastItem.inputs,
+                          "输入"
+                        )
                       )}
                       
+                      {/* 输出：直接显示内部字段 */}
                       {lastItem.output && (
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">输出结果</Label>
-                          <div className="bg-muted rounded-md p-2 overflow-auto max-h-[200px]">
-                            <pre className="text-xs font-mono whitespace-pre-wrap">{formatJSONForDisplay(lastItem.output)}</pre>
-                          </div>
-                        </div>
+                        renderObjectFields(lastItem.output, "输出")
                       )}
                       
                       {lastItem.metrics && Object.keys(lastItem.metrics).length > 0 && (
