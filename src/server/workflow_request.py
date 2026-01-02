@@ -74,6 +74,8 @@ class WorkflowNodeData(BaseModel):
     loop_height: Optional[int] = Field(None, alias="loopHeight")  # Loop 节点高度
     relative_x: Optional[float] = Field(None, alias="relativeX")  # 节点相对于循环体的 X 位置
     relative_y: Optional[float] = Field(None, alias="relativeY")  # 节点相对于循环体的 Y 位置
+    # 超时配置
+    timeout_seconds: Optional[int] = Field(None, alias="timeoutSeconds")  # 节点超时时间（秒）
 
 
 class WorkflowNode(BaseModel):

@@ -17,8 +17,12 @@ from psycopg.rows import dict_row
 from src.config.loader import get_str_env
 from src.server.workflow.db import (
     acquire_run,
+    detect_timeout_node_tasks,
     get_db_connection,
+    get_retry_delay,
+    mark_workflow_failed_due_to_node_timeout,
     reset_stale_runs,
+    reset_timeout_node_task,
     update_run_heartbeat,
     update_run_status,
 )
@@ -104,9 +108,49 @@ class WorkflowWorker:
                 # 重置僵尸任务
                 conn = get_db_connection()
                 try:
+                    # 1. 检测并重置超时的节点任务（排除循环体节点本身）
+                    timeout_tasks = detect_timeout_node_tasks(conn, max_retries=4)
+                    for task in timeout_tasks:
+                        attempt = task['attempt']
+                        retry_delay = get_retry_delay(attempt)  # 新的延迟规则
+                        current_iteration = task.get('iteration')  # 循环体内部节点的迭代次数
+                        
+                        # 检查是否达到最大重试次数
+                        if attempt >= 4:
+                            # 标记工作流为失败
+                            mark_workflow_failed_due_to_node_timeout(
+                                conn,
+                                task['run_id'],
+                                task['node_id'],
+                                attempt,
+                                task.get('timeout_seconds', 300)
+                            )
+                            logger.error(
+                                f"[WORKER] Node {task['node_id']} reached max retries ({attempt}), "
+                                f"marking workflow {task['run_id']} as failed"
+                            )
+                        else:
+                            # 重置任务为pending，准备重试
+                            reset_timeout_node_task(
+                                conn, 
+                                task['task_id'], 
+                                retry_delay,
+                                current_iteration=current_iteration
+                            )
+                            
+                            node_type = "循环体内部节点" if task.get('loop_node_id') else "普通节点"
+                            logger.info(
+                                f"[WORKER] Reset timeout {node_type} task {task['task_id']}, "
+                                f"node_id={task['node_id']}, "
+                                f"iteration={current_iteration}, "
+                                f"attempt {attempt}, "
+                                f"retry_delay {retry_delay}s"
+                            )
+                    
+                    # 2. 重置僵尸工作流（现有逻辑）
                     reset_count = reset_stale_runs(conn, self.stale_timeout_minutes)
                     if reset_count > 0:
-                        logger.info(f"Reset {reset_count} stale runs")
+                        logger.info(f"[WORKER] Reset {reset_count} stale runs")
                     conn.commit()
                 finally:
                     conn.close()

@@ -114,8 +114,8 @@ export default function AdminLayout({
               当前账号未配置菜单，请检查后台角色与菜单权限。
             </div>
           )}
-          {menus.map((menu) => (
-            <MenuItem key={menu.id} menu={menu} level={0} activePath={pathname} />
+          {menus.map((menu, index) => (
+            <MenuItem key={`${menu.id}-${index}-${menu.path || ''}`} menu={menu} level={0} activePath={pathname} />
           ))}
         </nav>
       </aside>
@@ -199,9 +199,9 @@ function MenuItem({
         <div>{content}</div>
       )}
       {hasChildren &&
-        menu.children!.map((child) => (
+        menu.children!.map((child, index) => (
           <MenuItem
-            key={child.id}
+            key={`${child.id}-${level + 1}-${index}-${child.path || ''}`}
             menu={child}
             level={level + 1}
             activePath={activePath}

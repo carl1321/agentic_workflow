@@ -165,6 +165,31 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
           </div>
         )}
 
+        {/* 显示重试信息 */}
+        {result?.attempt && result.attempt > 1 && (
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
+            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">重试信息</p>
+            <p className="mt-1 text-xs text-yellow-600 dark:text-yellow-400">
+              当前重试次数: {result.attempt} / 4
+            </p>
+            {result.retry_delay_seconds && result.retry_delay_seconds > 0 && (
+              <p className="mt-1 text-xs text-yellow-600 dark:text-yellow-400">
+                下次重试延迟: {result.retry_delay_seconds}秒
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* 显示超时信息 */}
+        {result?.timeout_seconds && (
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md p-3">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">超时配置</p>
+            <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
+              超时时间: {result.timeout_seconds}秒
+            </p>
+          </div>
+        )}
+
         {/* 迭代次数 */}
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">迭代次数</Label>
@@ -650,6 +675,28 @@ function LLMNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: Nod
       </div>
       
       <div>
+        <Label htmlFor="timeoutSeconds">超时时间（秒）</Label>
+        <Input
+          id="timeoutSeconds"
+          type="number"
+          min="1"
+          step="1"
+          value={nodeData.timeoutSeconds || nodeData.timeout_seconds || 300}
+          onChange={(e) => {
+            const timeout = parseInt(e.target.value);
+            if (!isNaN(timeout) && timeout > 0) {
+              onUpdate(node.id, { ...nodeData, timeoutSeconds: timeout });
+            }
+          }}
+          placeholder="默认：300（5分钟）"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          节点执行超时时间。对于循环体内的节点，每次迭代都会独立检测超时。
+          循环体节点本身不参与超时检测，其他节点最多重试4次。
+        </p>
+      </div>
+      
+      <div>
         <div className="flex items-center justify-between mb-2">
           <Label htmlFor="prompt">提示词</Label>
           <VariableInsertButton
@@ -778,6 +825,28 @@ function ToolNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
           placeholder="输入工具名称"
         />
       </div>
+      
+      <div>
+        <Label htmlFor="timeoutSeconds">超时时间（秒）</Label>
+        <Input
+          id="timeoutSeconds"
+          type="number"
+          min="1"
+          step="1"
+          value={nodeData.timeoutSeconds || nodeData.timeout_seconds || 120}
+          onChange={(e) => {
+            const timeout = parseInt(e.target.value);
+            if (!isNaN(timeout) && timeout > 0) {
+              onUpdate(node.id, { ...nodeData, timeoutSeconds: timeout });
+            }
+          }}
+          placeholder="默认：120（2分钟）"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          节点执行超时时间。对于循环体内的节点，每次迭代都会独立检测超时。
+          循环体节点本身不参与超时检测，其他节点最多重试4次。
+        </p>
+      </div>
       <div>
         <div className="flex items-center justify-between mb-2">
           <Label htmlFor="toolParams">工具参数</Label>
@@ -882,6 +951,28 @@ function ConditionNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate 
         />
         <p className="mt-1 text-xs text-muted-foreground">
           提示：使用 {'{'}{'{'}节点名.字段名{'}'}{'}'} 引用上游节点的输出字段
+        </p>
+      </div>
+      
+      <div>
+        <Label htmlFor="timeoutSeconds">超时时间（秒）</Label>
+        <Input
+          id="timeoutSeconds"
+          type="number"
+          min="1"
+          step="1"
+          value={nodeData.timeoutSeconds || nodeData.timeout_seconds || 30}
+          onChange={(e) => {
+            const timeout = parseInt(e.target.value);
+            if (!isNaN(timeout) && timeout > 0) {
+              onUpdate(node.id, { ...nodeData, timeoutSeconds: timeout });
+            }
+          }}
+          placeholder="默认：30秒"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          节点执行超时时间。对于循环体内的节点，每次迭代都会独立检测超时。
+          循环体节点本身不参与超时检测，其他节点最多重试4次。
         </p>
       </div>
       

@@ -2305,6 +2305,95 @@ async def execute_node(request: NodeExecuteRequest):
 
 # ============= 工作流管理端点 =============
 
+def check_workflow_permission(
+    workflow: dict,
+    current_user: Optional[CurrentUser],
+    require_auth: bool = True,
+) -> bool:
+    """
+    检查用户是否有权限访问工作流
+    
+    Args:
+        workflow: 工作流字典
+        current_user: 当前用户
+        require_auth: 是否要求必须登录（默认True）
+        
+    Returns:
+        是否有权限访问
+        
+    Raises:
+        HTTPException: 如果没有权限或未登录
+    """
+    if not current_user:
+        if require_auth:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return False
+    
+    # 超级管理员可以访问所有工作流
+    if current_user.is_superuser:
+        return True
+    
+    permission_level = current_user.data_permission_level
+    
+    # 确保 UUID 比较的正确性：统一转换为 UUID 对象进行比较
+    from uuid import UUID as UUIDType
+    
+    # 获取工作流的 created_by（用户ID），这是用户级别隔离的关键字段
+    workflow_created_by = workflow.get("created_by")
+    if workflow_created_by:
+        if isinstance(workflow_created_by, str):
+            workflow_created_by = UUIDType(workflow_created_by)
+        elif not isinstance(workflow_created_by, UUIDType):
+            workflow_created_by = UUIDType(str(workflow_created_by))
+    
+    if permission_level == "self":
+        # 只能访问自己创建的工作流（用户级别隔离：基于 created_by 字段）
+        has_permission = (workflow_created_by == current_user.id if workflow_created_by else False)
+    elif permission_level == "department":
+        # 可以访问同部门的工作流或自己创建的
+        if current_user.department_id:
+            workflow_dept_id = workflow.get("department_id")
+            if workflow_dept_id:
+                if isinstance(workflow_dept_id, str):
+                    workflow_dept_id = UUIDType(workflow_dept_id)
+                elif not isinstance(workflow_dept_id, UUIDType):
+                    workflow_dept_id = UUIDType(str(workflow_dept_id))
+            has_permission = (
+                (workflow_dept_id == current_user.department_id if workflow_dept_id else False) or
+                (workflow_created_by == current_user.id if workflow_created_by else False)
+            )
+        else:
+            # 如果没有部门，只能看到自己创建的（用户级别隔离）
+            has_permission = (workflow_created_by == current_user.id if workflow_created_by else False)
+    elif permission_level == "organization":
+        # 可以访问同组织的工作流或自己创建的
+        if current_user.organization_id:
+            workflow_org_id = workflow.get("organization_id")
+            if workflow_org_id:
+                if isinstance(workflow_org_id, str):
+                    workflow_org_id = UUIDType(workflow_org_id)
+                elif not isinstance(workflow_org_id, UUIDType):
+                    workflow_org_id = UUIDType(str(workflow_org_id))
+            has_permission = (
+                (workflow_org_id == current_user.organization_id if workflow_org_id else False) or
+                (workflow_created_by == current_user.id if workflow_created_by else False)
+            )
+        else:
+            # 如果没有组织，只能看到自己创建的（用户级别隔离）
+            has_permission = (workflow_created_by == current_user.id if workflow_created_by else False)
+    else:  # permission_level == "all"
+        # 可以访问所有工作流
+        has_permission = True
+    
+    if not has_permission:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to access this workflow"
+        )
+    
+    return True
+
+
 @app.get("/api/workflows")
 async def list_workflows_from_db(
     status: Optional[str] = None,
@@ -2326,6 +2415,39 @@ async def list_workflows_from_db(
                 WHERE 1=1
             """
             params = []
+            
+            # 权限过滤：根据用户的 data_permission_level 进行过滤
+            if current_user:
+                # 超级管理员可以看到所有工作流
+                if not current_user.is_superuser:
+                    permission_level = current_user.data_permission_level
+                    
+                    if permission_level == "self":
+                        # 只能看到自己创建的工作流
+                        query += " AND w.created_by = %s"
+                        params.append(current_user.id)
+                    elif permission_level == "department":
+                        # 可以看到同部门的工作流
+                        if current_user.department_id:
+                            query += " AND (w.department_id = %s OR w.created_by = %s)"
+                            params.extend([current_user.department_id, current_user.id])
+                        else:
+                            # 如果没有部门，只能看到自己创建的
+                            query += " AND w.created_by = %s"
+                            params.append(current_user.id)
+                    elif permission_level == "organization":
+                        # 可以看到同组织的工作流
+                        if current_user.organization_id:
+                            query += " AND (w.organization_id = %s OR w.created_by = %s)"
+                            params.extend([current_user.organization_id, current_user.id])
+                        else:
+                            # 如果没有组织，只能看到自己创建的
+                            query += " AND w.created_by = %s"
+                            params.append(current_user.id)
+                    # permission_level == "all" 的情况不需要额外过滤，可以看到所有工作流
+            else:
+                # 未登录用户不能看到任何工作流
+                query += " AND 1=0"
             
             if status:
                 query += " AND w.status = %s"
@@ -2351,15 +2473,41 @@ async def list_workflows_from_db(
                             workflow_dict[key] = value
                     workflows.append(workflow_dict)
             
-            # 获取总数
+            # 获取总数（也需要应用相同的权限过滤）
             count_query = """
                 SELECT COUNT(*) as total
-                FROM workflows
+                FROM workflows w
                 WHERE 1=1
             """
             count_params = []
+            
+            # 应用相同的权限过滤
+            if current_user:
+                if not current_user.is_superuser:
+                    permission_level = current_user.data_permission_level
+                    
+                    if permission_level == "self":
+                        count_query += " AND w.created_by = %s"
+                        count_params.append(current_user.id)
+                    elif permission_level == "department":
+                        if current_user.department_id:
+                            count_query += " AND (w.department_id = %s OR w.created_by = %s)"
+                            count_params.extend([current_user.department_id, current_user.id])
+                        else:
+                            count_query += " AND w.created_by = %s"
+                            count_params.append(current_user.id)
+                    elif permission_level == "organization":
+                        if current_user.organization_id:
+                            count_query += " AND (w.organization_id = %s OR w.created_by = %s)"
+                            count_params.extend([current_user.organization_id, current_user.id])
+                        else:
+                            count_query += " AND w.created_by = %s"
+                            count_params.append(current_user.id)
+            else:
+                count_query += " AND 1=0"
+            
             if status:
-                count_query += " AND status = %s"
+                count_query += " AND w.status = %s"
                 count_params.append(status)
             
             with conn.cursor() as cursor:
@@ -2400,6 +2548,8 @@ async def create_workflow(
                 description=request.description,
                 created_by=UUID(str(current_user.id)),
                 status=request.status,
+                organization_id=current_user.organization_id,
+                department_id=current_user.department_id,
             )
             conn.commit()
             
@@ -2446,6 +2596,9 @@ async def get_workflow_by_id(
             if not workflow:
                 raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
             
+            # 权限检查
+            check_workflow_permission(workflow, current_user)
+            
             # Convert UUID and datetime to string
             workflow_dict = {}
             for key, value in workflow.items():
@@ -2477,8 +2630,21 @@ async def update_workflow_by_id(
         from src.server.workflow.db import get_db_connection, update_workflow, get_workflow
         from uuid import UUID
         
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
         conn = get_db_connection()
         try:
+            # 先获取工作流，检查权限
+            from src.server.workflow.db import get_workflow
+            workflow = get_workflow(conn, UUID(workflow_id))
+            
+            if not workflow:
+                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
+            # 权限检查
+            check_workflow_permission(workflow, current_user)
+            
             success = update_workflow(
                 conn,
                 UUID(workflow_id),
@@ -2486,9 +2652,6 @@ async def update_workflow_by_id(
                 description=request.description,
                 status=request.status,
             )
-            
-            if not success:
-                raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
             
             conn.commit()
             
@@ -2527,12 +2690,22 @@ async def delete_workflow_by_id(
         from src.server.workflow.db import get_db_connection, delete_workflow
         from uuid import UUID
         
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        
         conn = get_db_connection()
         try:
-            success = delete_workflow(conn, UUID(workflow_id))
+            # 先获取工作流，检查权限
+            from src.server.workflow.db import get_workflow
+            workflow = get_workflow(conn, UUID(workflow_id))
             
-            if not success:
+            if not workflow:
                 raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+            
+            # 权限检查
+            check_workflow_permission(workflow, current_user)
+            
+            success = delete_workflow(conn, UUID(workflow_id))
             
             conn.commit()
             return {"success": True, "message": f"Workflow {workflow_id} deleted"}
@@ -2553,7 +2726,7 @@ async def save_workflow_draft(
 ):
     """保存工作流草稿"""
     try:
-        from src.server.workflow.db import get_db_connection, save_draft, get_draft
+        from src.server.workflow.db import get_db_connection, save_draft, get_draft, get_workflow, create_workflow
         from uuid import UUID
         
         if not current_user:
@@ -2561,9 +2734,38 @@ async def save_workflow_draft(
         
         conn = get_db_connection()
         try:
+            workflow_uuid = UUID(workflow_id)
+            
+            # 检查工作流是否存在，如果不存在则先创建
+            workflow = get_workflow(conn, workflow_uuid)
+            if not workflow:
+                # 工作流不存在，先创建一个默认的工作流
+                # 从草稿的 graph 中提取工作流名称（如果有的话）
+                workflow_name = request.graph.get("name") or f"Workflow {workflow_id[:8]}"
+                workflow_description = request.graph.get("description")
+                
+                # 使用指定的 workflow_id 创建工作流
+                created_id = create_workflow(
+                    conn,
+                    name=workflow_name,
+                    description=workflow_description,
+                    created_by=UUID(str(current_user.id)),
+                    status='draft',
+                    organization_id=current_user.organization_id,
+                    department_id=current_user.department_id,
+                    workflow_id=workflow_uuid,  # 使用指定的 workflow_id
+                )
+                # 重新获取工作流以进行权限检查
+                workflow = get_workflow(conn, workflow_uuid)
+                if not workflow:
+                    raise HTTPException(status_code=500, detail="Failed to create workflow")
+            else:
+                # 工作流存在，检查权限
+                check_workflow_permission(workflow, current_user)
+            
             draft_id = save_draft(
                 conn,
-                UUID(workflow_id),
+                workflow_uuid,
                 graph=request.graph,
                 created_by=UUID(str(current_user.id)),
                 is_autosave=request.is_autosave,

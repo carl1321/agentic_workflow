@@ -172,6 +172,7 @@ class DatabaseStateManager(NodeExecutionStateManager):
         input_data: Optional[Dict[str, Any]] = None,
         parent_task_id: Optional[UUID] = None,
         branch_id: Optional[str] = None,
+        timeout_seconds: Optional[int] = None,
     ) -> bool:
         """
         标记节点为运行中（带数据库更新）
@@ -183,6 +184,7 @@ class DatabaseStateManager(NodeExecutionStateManager):
             input_data: 输入数据（可选）
             parent_task_id: 父任务ID（可选）
             branch_id: 分支ID（可选）
+            timeout_seconds: 超时时间（秒，可选）
             
         Returns:
             是否是新节点
@@ -215,6 +217,7 @@ class DatabaseStateManager(NodeExecutionStateManager):
                 task_id,
                 status='running',
                 started_at=datetime.now(),
+                timeout_seconds=timeout_seconds,
             )
             conn.commit()
             
@@ -391,15 +394,57 @@ class DatabaseStateManager(NodeExecutionStateManager):
                 )
                 conn.commit()
                 
-                # 记录日志
+                # 记录日志（包含超时和重试信息）
+                # 检查是否是超时错误
+                is_timeout = 'timeout' in error.lower()
+                log_event = 'node_timeout' if is_timeout else 'node_error'
                 append_log(
                     conn,
                     self.run_id,
                     'error',
-                    'node_error',
-                    payload={'node_id': node_id, 'error': error, 'loop_id': loop_id, 'iteration': iteration},
+                    log_event,
+                    payload={
+                        'node_id': node_id, 
+                        'error': error, 
+                        'loop_id': loop_id, 
+                        'iteration': iteration,
+                        'is_timeout': is_timeout
+                    },
                     node_id=node_id,
                 )
+                
+                # 节点失败时，立即标记整个工作流为失败，停止执行
+                from src.server.workflow.db import update_run_status
+                error_info = {
+                    'reason': 'node_failed',
+                    'node_id': node_id,
+                    'error': error,
+                    'loop_id': loop_id,
+                    'iteration': iteration,
+                    'message': f'Node {node_id} failed: {error}'
+                }
+                update_run_status(
+                    conn,
+                    self.run_id,
+                    status='failed',
+                    error=error_info,
+                    finished_at=datetime.now(),
+                )
+                
+                # 记录 workflow_error 日志
+                append_log(
+                    conn,
+                    self.run_id,
+                    'error',
+                    'workflow_error',
+                    payload={
+                        **error_info,
+                        'reason': 'node_failed',
+                        'workflow_stopped': True
+                    },
+                    node_id=node_id,
+                )
+                
                 conn.commit()
             except Exception as e:
                 logger.error(f"Error updating node task status in database: {e}", exc_info=True)

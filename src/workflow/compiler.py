@@ -7,6 +7,7 @@
 将工作流配置编译为LangGraph图结构
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional, TypedDict, Annotated
 from typing_extensions import NotRequired
@@ -17,6 +18,49 @@ from src.llms.llm import get_llm_by_model_name
 from src.llms.rate_limiter import acquire_llm_call_permission
 
 logger = logging.getLogger(__name__)
+
+
+def get_default_timeout(node_type: str) -> int:
+    """
+    获取节点的默认超时时间（秒）
+    
+    Args:
+        node_type: 节点类型（llm, tool, condition, loop, start, end等）
+        
+    Returns:
+        默认超时时间（秒）
+    """
+    # 从配置文件读取默认超时时间
+    try:
+        from src.config.loader import load_yaml_config
+        config = load_yaml_config("conf.yaml")
+        workflow_config = config.get("workflow", {})
+        node_timeouts = workflow_config.get("node_timeouts", {})
+        
+        # 根据节点类型返回对应的超时时间
+        if node_type == "llm":
+            return node_timeouts.get("llm", 300)  # 5分钟
+        elif node_type == "tool":
+            return node_timeouts.get("tool", 120)  # 2分钟
+        elif node_type == "condition":
+            return node_timeouts.get("condition", 30)  # 30秒
+        elif node_type == "loop":
+            return node_timeouts.get("loop", 600)  # 10分钟
+        else:
+            return node_timeouts.get("default", 180)  # 3分钟
+    except Exception as e:
+        logger.warning(f"Failed to load timeout config from conf.yaml: {e}, using defaults")
+        # 如果读取配置失败，使用硬编码的默认值
+        if node_type == "llm":
+            return 300  # 5分钟
+        elif node_type == "tool":
+            return 120  # 2分钟
+        elif node_type == "condition":
+            return 30  # 30秒
+        elif node_type == "loop":
+            return 600  # 10分钟
+        else:
+            return 180  # 3分钟
 
 
 def get_tool_by_name(tool_name: str):
@@ -793,13 +837,32 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 iteration = ctx_data.get("iteration", 0)
                                 break
                         
+                        # 获取超时配置
+                        timeout_seconds = getattr(ndata, 'timeout_seconds', None) or getattr(ndata, 'timeoutSeconds', None)
+                        if timeout_seconds is None:
+                            timeout_seconds = get_default_timeout("llm")
+                        
+                        # 检查是否需要延迟（重试延迟）
+                        if state_manager and nid in state_manager._node_task_ids:
+                            task_id = state_manager._node_task_ids[nid]
+                            from src.server.workflow.db import get_node_task
+                            conn = state_manager._get_conn()
+                            try:
+                                task = get_node_task(conn, task_id)
+                                if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
+                                    retry_delay = task['retry_delay_seconds']
+                                    logger.info(f"[LLM_NODE] Node {nid} waiting {retry_delay}s before retry")
+                                    await asyncio.sleep(retry_delay)
+                            finally:
+                                state_manager._close_conn_if_needed(conn)
+                        
                         if state_manager:
                             input_data = {
                                 "model": model_name,
                                 "prompt": raw_prompt,
                                 "system_prompt": raw_system_prompt
                             }
-                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration)
+                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration, timeout_seconds=timeout_seconds)
                         
                         # 构建节点标签映射（用于模板解析）
                         # 注意：n.data 是 WorkflowNodeData 对象，应该使用 node_name 属性
@@ -882,13 +945,23 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             messages.append(SystemMessage(content=final_system_prompt))
                         messages.append(HumanMessage(content=prompt))
                         
-                        # 调用LLM
-                        logger.info(f"Invoking LLM node {nid} (model: {model_name})")
+                        # 调用LLM（使用超时）
+                        logger.info(f"Invoking LLM node {nid} (model: {model_name}, timeout: {timeout_seconds}s)")
                         try:
                             # 限流检查：1秒内最多5次调用
                             await acquire_llm_call_permission()
-                            response = await llm.ainvoke(messages)
+                            # 使用 asyncio.wait_for 实现超时
+                            response = await asyncio.wait_for(
+                                llm.ainvoke(messages),
+                                timeout=timeout_seconds
+                            )
                             logger.info(f"LLM node {nid} invocation successful")
+                        except asyncio.TimeoutError:
+                            error_msg = f"LLM node {nid} execution timeout after {timeout_seconds}s"
+                            logger.error(f"[LLM_NODE] {error_msg}")
+                            if state_manager:
+                                state_manager.mark_node_error(nid, error_msg, loop_id=loop_id, iteration=iteration)
+                            raise
                         except BaseException as e:
                             logger.error(f"LLM node {nid} invocation failed with {type(e).__name__}: {e}", exc_info=True)
                             raise
@@ -1048,18 +1121,11 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                     except Exception as e:
                         logger.error(f"Error executing LLM node {nid}: {e}", exc_info=True)
                         if state_manager:
-                            # 构建错误状态，确保 state_manager 被保留
-                            # 关键修复：在 node_outputs 中包含错误信息，以便循环体执行器能感知到错误
-                            error_output = {"error": str(e)}
-                            new_node_outputs = dict(state.get("node_outputs", {}))
-                            new_node_outputs[nid] = error_output
-                            
-                            error_state: WorkflowState = {
-                                "node_outputs": new_node_outputs,
-                                "state_manager": state_manager,
-                            }
-                            state_manager.mark_node_error(nid, str(e))
-                            return error_state
+                            # 标记节点为错误（这会同时标记整个工作流为失败）
+                            state_manager.mark_node_error(nid, str(e), loop_id=loop_id, iteration=iteration)
+                            # 节点失败时，抛出异常停止整个工作流执行
+                            # 注意：循环体内的节点失败也会停止整个工作流
+                            raise RuntimeError(f"Workflow stopped due to node {nid} failure: {str(e)}")
                         raise
                 
                 return llm_node_func
@@ -1115,12 +1181,31 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 iteration = ctx_data.get("iteration", 0)
                                 break
                         
+                        # 获取超时配置
+                        timeout_seconds = getattr(ndata, 'timeout_seconds', None) or getattr(ndata, 'timeoutSeconds', None)
+                        if timeout_seconds is None:
+                            timeout_seconds = get_default_timeout("tool")
+                        
+                        # 检查是否需要延迟（重试延迟）
+                        if state_manager and nid in state_manager._node_task_ids:
+                            task_id = state_manager._node_task_ids[nid]
+                            from src.server.workflow.db import get_node_task
+                            conn = state_manager._get_conn()
+                            try:
+                                task = get_node_task(conn, task_id)
+                                if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
+                                    retry_delay = task['retry_delay_seconds']
+                                    logger.info(f"[TOOL_NODE] Node {nid} waiting {retry_delay}s before retry")
+                                    await asyncio.sleep(retry_delay)
+                            finally:
+                                state_manager._close_conn_if_needed(conn)
+                        
                         if state_manager:
                             input_data = {
                                 "tool_name": tool_name,
                                 "params": raw_tool_params
                             }
-                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration)
+                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration, timeout_seconds=timeout_seconds)
                         
                         # 构建节点标签映射（用于模板解析）
                         # 注意：n.data 是 WorkflowNodeData 对象，应该使用 node_name 属性
@@ -1171,27 +1256,49 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                     parsed_params[key] = value
                         tool_params = parsed_params
                         
-                        # 执行工具（工具可能是函数或可调用对象）
-                        if callable(tool_func):
-                            if hasattr(tool_func, 'ainvoke'):
-                                result = await tool_func.ainvoke(parsed_params)
-                            elif hasattr(tool_func, 'invoke'):
-                                result = tool_func.invoke(parsed_params)
-                            else:
-                                # 直接调用函数
-                                import inspect
-                                if inspect.iscoroutinefunction(tool_func):
-                                    result = await tool_func(**parsed_params)
+                        # 执行工具（工具可能是函数或可调用对象，使用超时）
+                        logger.info(f"Invoking tool node {nid} (tool: {tool_name}, timeout: {timeout_seconds}s)")
+                        try:
+                            if callable(tool_func):
+                                if hasattr(tool_func, 'ainvoke'):
+                                    result = await asyncio.wait_for(
+                                        tool_func.ainvoke(parsed_params),
+                                        timeout=timeout_seconds
+                                    )
+                                elif hasattr(tool_func, 'invoke'):
+                                    # 同步调用也需要包装在超时中
+                                    result = await asyncio.wait_for(
+                                        asyncio.to_thread(tool_func.invoke, parsed_params),
+                                        timeout=timeout_seconds
+                                    )
                                 else:
-                                    result = tool_func(**parsed_params)
-                            
-                            # 提取工具返回的内容
-                            if hasattr(result, 'content'):
-                                result = result.content
-                            elif isinstance(result, dict) and 'output' in result:
-                                result = result['output']
-                        else:
-                            raise ValueError(f"工具 {tool_name} 不是可调用对象")
+                                    # 直接调用函数
+                                    import inspect
+                                    if inspect.iscoroutinefunction(tool_func):
+                                        result = await asyncio.wait_for(
+                                            tool_func(**parsed_params),
+                                            timeout=timeout_seconds
+                                        )
+                                    else:
+                                        # 同步函数也需要包装在超时中
+                                        result = await asyncio.wait_for(
+                                            asyncio.to_thread(tool_func, **parsed_params),
+                                            timeout=timeout_seconds
+                                        )
+                                
+                                # 提取工具返回的内容
+                                if hasattr(result, 'content'):
+                                    result = result.content
+                                elif isinstance(result, dict) and 'output' in result:
+                                    result = result['output']
+                            else:
+                                raise ValueError(f"工具 {tool_name} 不是可调用对象")
+                        except asyncio.TimeoutError:
+                            error_msg = f"Tool node {nid} execution timeout after {timeout_seconds}s"
+                            logger.error(f"[TOOL_NODE] {error_msg}")
+                            if state_manager:
+                                state_manager.mark_node_error(nid, error_msg, loop_id=loop_id, iteration=iteration)
+                            raise
                         
                         # 获取节点的输出格式
                         output_format = "json"
@@ -1249,13 +1356,10 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                     except Exception as e:
                         logger.error(f"Error executing Tool node {nid}: {e}", exc_info=True)
                         if state_manager:
-                            # 构建错误状态，确保 state_manager 被保留（不返回 workflow_inputs，避免并行执行时的冲突）
-                            error_state: WorkflowState = {
-                                "node_outputs": state.get("node_outputs", {}),
-                                "state_manager": state_manager,
-                            }
-                            state_manager.mark_node_error(nid, str(e))
-                            return error_state
+                            # 标记节点为错误（这会同时标记整个工作流为失败）
+                            state_manager.mark_node_error(nid, str(e), loop_id=loop_id, iteration=iteration)
+                            # 节点失败时，抛出异常停止整个工作流执行
+                            raise RuntimeError(f"Workflow stopped due to node {nid} failure: {str(e)}")
                         raise
                 
                 return tool_node_func
@@ -1311,11 +1415,30 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 iteration = ctx_data.get("iteration", 0)
                                 break
                         
+                        # 获取超时配置
+                        timeout_seconds = getattr(ndata, 'timeout_seconds', None) or getattr(ndata, 'timeoutSeconds', None)
+                        if timeout_seconds is None:
+                            timeout_seconds = get_default_timeout("condition")
+                        
+                        # 检查是否需要延迟（重试延迟）
+                        if state_manager and nid in state_manager._node_task_ids:
+                            task_id = state_manager._node_task_ids[nid]
+                            from src.server.workflow.db import get_node_task
+                            conn = state_manager._get_conn()
+                            try:
+                                task = get_node_task(conn, task_id)
+                                if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
+                                    retry_delay = task['retry_delay_seconds']
+                                    logger.info(f"[CONDITION_NODE] Node {nid} waiting {retry_delay}s before retry")
+                                    await asyncio.sleep(retry_delay)
+                            finally:
+                                state_manager._close_conn_if_needed(conn)
+                        
                         if state_manager:
                             input_data = {
                                 "condition_expression": raw_condition_expression
                             }
-                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration)
+                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration, timeout_seconds=timeout_seconds)
                         
                         # 构建节点标签映射（用于模板解析）
                         # 注意：n.data 是 WorkflowNodeData 对象，应该使用 node_name 属性
@@ -1354,9 +1477,20 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         
                         # 评估条件表达式（简单实现，实际应该使用更安全的表达式解析器）
                         # 这里使用eval，但在生产环境中应该使用更安全的方法
+                        logger.info(f"Evaluating condition node {nid} (timeout: {timeout_seconds}s)")
                         try:
-                            result = eval(expression, {"__builtins__": {}}, node_outputs)
+                            # 使用 asyncio.wait_for 实现超时（将eval包装在线程中）
+                            result = await asyncio.wait_for(
+                                asyncio.to_thread(eval, condition_expression, {"__builtins__": {}}, node_outputs),
+                                timeout=timeout_seconds
+                            )
                             condition_result = bool(result)
+                        except asyncio.TimeoutError:
+                            error_msg = f"Condition node {nid} evaluation timeout after {timeout_seconds}s"
+                            logger.error(f"[CONDITION_NODE] {error_msg}")
+                            if state_manager:
+                                state_manager.mark_node_error(nid, error_msg, loop_id=loop_id, iteration=iteration)
+                            raise
                         except Exception as e:
                             logger.warning(f"Error evaluating condition expression: {e}")
                             condition_result = False
@@ -1398,13 +1532,10 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                     except Exception as e:
                         logger.error(f"Error executing Condition node {nid}: {e}", exc_info=True)
                         if state_manager:
-                            # 构建错误状态，确保 state_manager 被保留（不返回 workflow_inputs，避免并行执行时的冲突）
-                            error_state: WorkflowState = {
-                                "node_outputs": state.get("node_outputs", {}),
-                                "state_manager": state_manager,
-                            }
-                            state_manager.mark_node_error(nid, str(e))
-                            return error_state
+                            # 标记节点为错误（这会同时标记整个工作流为失败）
+                            state_manager.mark_node_error(nid, str(e), loop_id=loop_id, iteration=iteration)
+                            # 节点失败时，抛出异常停止整个工作流执行
+                            raise RuntimeError(f"Workflow stopped due to node {nid} failure: {str(e)}")
                         raise
                 
                 return condition_node_func
@@ -1619,12 +1750,52 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             "loop_context": loop_context,
                                         }
                                     
+                                    # 获取节点配置和超时时间
+                                    body_node_data = None
+                                    for n in nodes:
+                                        if n.id == node_id:
+                                            body_node_data = n.data
+                                            break
+                                    
+                                    timeout_seconds = None
+                                    if body_node_data:
+                                        timeout_seconds = getattr(body_node_data, 'timeout_seconds', None) or getattr(body_node_data, 'timeoutSeconds', None)
+                                    
+                                    # 根据节点类型获取默认超时时间
+                                    if timeout_seconds is None:
+                                        body_node_type = None
+                                        for n in nodes:
+                                            if n.id == node_id:
+                                                body_node_type = n.type
+                                                break
+                                        if body_node_type:
+                                            timeout_seconds = get_default_timeout(body_node_type)
+                                        else:
+                                            timeout_seconds = get_default_timeout("default")
+                                    
+                                    # 检查是否需要延迟（重试延迟）
+                                    if state_manager and node_id in state_manager._node_task_ids:
+                                        task_id = state_manager._node_task_ids[node_id]
+                                        from src.server.workflow.db import get_node_task
+                                        conn = state_manager._get_conn()
+                                        try:
+                                            task = get_node_task(conn, task_id)
+                                            if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
+                                                retry_delay = task['retry_delay_seconds']
+                                                logger.info(f"[LOOP_BODY_NODE] Node {node_id} iteration {iteration} waiting {retry_delay}s before retry")
+                                                await asyncio.sleep(retry_delay)
+                                        finally:
+                                            state_manager._close_conn_if_needed(conn)
+                                    
                                     try:
                                         # 增加微小延时，防止CPU空转，并让其他协程有机会运行
                                         await asyncio.sleep(0.01)
-                                        # 执行节点函数
-                                        logger.debug(f"Starting execution of loop body node {node_id}")
-                                        body_result = await body_node_func(body_state)
+                                        # 执行节点函数（使用超时）
+                                        logger.debug(f"Starting execution of loop body node {node_id} (timeout: {timeout_seconds}s)")
+                                        body_result = await asyncio.wait_for(
+                                            body_node_func(body_state),
+                                            timeout=timeout_seconds
+                                        )
                                         logger.debug(f"Finished execution of loop body node {node_id}")
                                         
                                         # 记录节点执行结束时间
@@ -1666,6 +1837,32 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         
                                         executed_nodes.add(node_id)
                                         logger.debug(f"Executed loop body node {node_id} in iteration {iteration}")
+                                    except asyncio.TimeoutError:
+                                        error_msg = f"Loop body node {node_id} execution timeout after {timeout_seconds}s in iteration {iteration}"
+                                        logger.error(f"[LOOP_BODY_NODE] {error_msg}")
+                                        end_time = time.time()
+                                        if node_id not in iteration_results:
+                                            iteration_results[node_id] = []
+                                        
+                                        iteration_results[node_id].append({
+                                            "iteration": iteration,
+                                            "output": {"error": error_msg},
+                                            "resolved_inputs": {},
+                                            "metrics": {},
+                                            "startTime": start_time,
+                                            "endTime": end_time,
+                                            "duration": end_time - start_time,
+                                        })
+                                        
+                                        # 标记循环体内的节点为错误（这会同时标记整个工作流为失败）
+                                        if state_manager:
+                                            state_manager.mark_node_error(node_id, error_msg, loop_id=nid, iteration=iteration)
+                                        
+                                        executed_nodes.add(node_id)  # 标记为已执行，避免死循环
+                                        logger.debug(f"Loop body node {node_id} timeout in iteration {iteration}")
+                                        
+                                        # 超时错误也应该停止整个工作流执行
+                                        raise RuntimeError(f"Workflow stopped due to loop body node {node_id} timeout in iteration {iteration}: {error_msg}")
                                     except BaseException as e:  # 捕获所有异常，包括 SystemExit, KeyboardInterrupt, CancelledError
                                         # 记录错误
                                         end_time = time.time()
@@ -1687,9 +1884,16 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             "error": error_msg,
                                         })
                                         
+                                        # 标记循环体内的节点为错误（这会同时标记整个工作流为失败）
+                                        if state_manager:
+                                            state_manager.mark_node_error(node_id, error_msg, loop_id=nid, iteration=iteration)
+                                        
                                         executed_nodes.add(node_id)  # 标记为已执行，避免死循环
                                         # 将错误输出添加到迭代输出中
                                         iteration_outputs[node_id] = {"error": error_msg}
+                                        
+                                        # 循环体内的节点失败时，抛出异常停止整个工作流执行
+                                        raise RuntimeError(f"Workflow stopped due to loop body node {node_id} failure in iteration {iteration}: {error_msg}")
                                 else:
                                     # 如果没有节点函数，从当前状态获取输出
                                     node_output = node_outputs.get(node_id, {})
@@ -1737,7 +1941,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 
                                 # 并行执行所有就绪的节点
                                 if ready_nodes:
-                                    import asyncio
                                     # 创建并行任务（只执行节点，不触发下游节点）
                                     tasks = [execute_single_node(node_id) for node_id in ready_nodes]
                                     await asyncio.gather(*tasks)
@@ -2158,12 +2361,10 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         logger.error(f"Critical error executing Loop node {nid}: {type(e).__name__}: {e}", exc_info=True)
                         if state_manager:
                             # 构建错误状态，确保 state_manager 被保留（不返回 workflow_inputs，避免并行执行时的冲突）
-                            error_state: WorkflowState = {
-                                "node_outputs": state.get("node_outputs", {}),
-                                "state_manager": state_manager,
-                            }
+                            # 标记循环节点为错误（这会同时标记整个工作流为失败）
                             state_manager.mark_node_error(nid, f"{type(e).__name__}: {str(e)}", loop_id=nid)
-                            return error_state
+                            # 循环节点失败时，抛出异常停止整个工作流执行
+                            raise RuntimeError(f"Workflow stopped due to loop node {nid} failure: {str(e)}")
                         raise
                 
                 return loop_node_func

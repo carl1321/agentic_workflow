@@ -227,6 +227,8 @@ def update_node_task(
     started_at: Optional[datetime] = None,
     finished_at: Optional[datetime] = None,
     metrics: Optional[Dict[str, Any]] = None,
+    timeout_seconds: Optional[int] = None,
+    retry_delay_seconds: Optional[int] = None,
 ) -> bool:
     """
     更新节点任务状态和输出
@@ -240,6 +242,8 @@ def update_node_task(
         started_at: 开始时间（可选）
         finished_at: 结束时间（可选）
         metrics: 指标数据（可选）
+        timeout_seconds: 超时时间（秒，可选）
+        retry_delay_seconds: 重试延迟时间（秒，可选）
         
     Returns:
         是否更新成功
@@ -270,6 +274,24 @@ def update_node_task(
     if metrics is not None:
         updates.append("metrics = %s")
         params.append(json.dumps(metrics))
+    
+    # 检查列是否存在，如果不存在则跳过更新
+    conn_check = conn
+    with conn_check.cursor() as check_cursor:
+        check_cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'node_tasks' AND column_name IN ('timeout_seconds', 'retry_delay_seconds')
+        """)
+        existing_columns = {row['column_name'] for row in check_cursor.fetchall()}
+    
+    if timeout_seconds is not None and 'timeout_seconds' in existing_columns:
+        updates.append("timeout_seconds = %s")
+        params.append(timeout_seconds)
+    
+    if retry_delay_seconds is not None and 'retry_delay_seconds' in existing_columns:
+        updates.append("retry_delay_seconds = %s")
+        params.append(retry_delay_seconds)
     
     if not updates:
         return False
@@ -324,6 +346,242 @@ def get_run_tasks(conn: psycopg.Connection, run_id: UUID) -> List[Dict[str, Any]
             ORDER BY run_seq ASC
         """, (run_id,))
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_retry_delay(attempt: int) -> int:
+    """
+    获取重试延迟时间（秒）
+    
+    Args:
+        attempt: 当前尝试次数（1-based，即第1次重试时attempt=1）
+        
+    Returns:
+        延迟时间（秒）
+    """
+    if attempt == 1:
+        return 0  # 立即重试
+    elif attempt == 2:
+        return 10  # 10秒
+    elif attempt == 3:
+        return 30  # 30秒
+    elif attempt == 4:
+        return 60  # 60秒
+    else:
+        return 60  # 默认60秒
+
+
+def detect_timeout_node_tasks(
+    conn: psycopg.Connection,
+    default_timeout_seconds: int = 300,
+    max_retries: int = 4
+) -> List[Dict[str, Any]]:
+    """
+    检测超时的节点任务（排除循环体节点本身）
+    
+    检测范围：
+    - 循环体内部节点（loop_node_id IS NOT NULL AND loop_node_id != node_id）
+    - 普通节点（loop_node_id IS NULL）
+    
+    排除：
+    - 循环体节点本身（loop_node_id IS NOT NULL AND loop_node_id == node_id）
+    
+    对于循环体内部节点：
+    - 检测条件：status='running' AND started_at < NOW() - INTERVAL 'timeout_seconds seconds'
+    - **关键**：需要同时匹配当前的 iteration，确保检测的是当前迭代的超时
+    - 由于每次迭代都会更新 started_at，所以 started_at 就是当前迭代的开始时间
+    - 这样可以正确检测当前迭代是否超时，而不是累计时间
+    
+    对于普通节点：
+    - 检测条件：status='running' AND started_at < NOW() - INTERVAL 'timeout_seconds seconds'
+    
+    Args:
+        conn: 数据库连接
+        default_timeout_seconds: 默认超时时间（秒）
+        max_retries: 最大重试次数（4次）
+        
+    Returns:
+        超时的节点任务列表，包含 task_id, node_id, iteration, loop_node_id, run_id 等信息
+    """
+    with conn.cursor() as cursor:
+        # 首先检查列是否存在
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'node_tasks' AND column_name = 'timeout_seconds'
+        """)
+        has_timeout_column = cursor.fetchone() is not None
+        
+        # 查询超时的节点任务
+        # 排除循环体节点本身：WHERE (loop_node_id IS NULL OR loop_node_id != node_id)
+        if has_timeout_column:
+            cursor.execute("""
+                SELECT 
+                    nt.id as task_id,
+                    nt.run_id,
+                    nt.node_id,
+                    nt.attempt,
+                    nt.iteration,
+                    nt.loop_node_id,
+                    nt.started_at,
+                    COALESCE(nt.timeout_seconds, %s) as timeout_seconds
+                FROM node_tasks nt
+                WHERE nt.status = 'running'
+                    AND nt.started_at IS NOT NULL
+                    AND nt.attempt < %s
+                    AND (nt.loop_node_id IS NULL OR nt.loop_node_id != nt.node_id)
+                    AND nt.started_at < NOW() - INTERVAL '1 second' * COALESCE(nt.timeout_seconds, %s)
+                ORDER BY nt.started_at ASC
+            """, (default_timeout_seconds, max_retries, default_timeout_seconds))
+        else:
+            # 如果列不存在，使用默认超时时间
+            cursor.execute("""
+                SELECT 
+                    nt.id as task_id,
+                    nt.run_id,
+                    nt.node_id,
+                    nt.attempt,
+                    nt.iteration,
+                    nt.loop_node_id,
+                    nt.started_at,
+                    %s as timeout_seconds
+                FROM node_tasks nt
+                WHERE nt.status = 'running'
+                    AND nt.started_at IS NOT NULL
+                    AND nt.attempt < %s
+                    AND (nt.loop_node_id IS NULL OR nt.loop_node_id != nt.node_id)
+                    AND nt.started_at < NOW() - INTERVAL '1 second' * %s
+                ORDER BY nt.started_at ASC
+            """, (default_timeout_seconds, max_retries, default_timeout_seconds))
+        
+        tasks = []
+        for row in cursor.fetchall():
+            task_dict = dict(row)
+            tasks.append(task_dict)
+        
+        return tasks
+
+
+def reset_timeout_node_task(
+    conn: psycopg.Connection,
+    task_id: UUID,
+    retry_delay_seconds: int,
+    current_iteration: Optional[int] = None
+) -> bool:
+    """
+    重置超时的节点任务为pending，准备重试
+    
+    对于循环体内部节点：
+    - 保持当前的 iteration 不变
+    - 重置 started_at = NULL（下次执行时会更新为新的开始时间）
+    - 增加 attempt 计数
+    
+    Args:
+        conn: 数据库连接
+        task_id: 任务ID
+        retry_delay_seconds: 重试延迟时间（秒）
+        current_iteration: 当前迭代次数（如果是循环体内部节点）
+        
+    Returns:
+        是否重置成功
+    """
+    with conn.cursor() as cursor:
+        # 检查 retry_delay_seconds 列是否存在
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'node_tasks' AND column_name = 'retry_delay_seconds'
+        """)
+        has_retry_delay_column = cursor.fetchone() is not None
+        
+        # 更新 attempt = attempt + 1
+        # 更新 status = 'pending'
+        # 更新 started_at = NULL（下次执行时会重新设置）
+        # 保持 iteration 不变（如果是循环体内部节点）
+        if has_retry_delay_column:
+            cursor.execute("""
+                UPDATE node_tasks
+                SET 
+                    attempt = attempt + 1,
+                    status = 'pending',
+                    started_at = NULL,
+                    retry_delay_seconds = %s
+                WHERE id = %s
+            """, (retry_delay_seconds, task_id))
+        else:
+            cursor.execute("""
+                UPDATE node_tasks
+                SET 
+                    attempt = attempt + 1,
+                    status = 'pending',
+                    started_at = NULL
+                WHERE id = %s
+            """, (task_id,))
+        
+        return cursor.rowcount > 0
+
+
+def mark_workflow_failed_due_to_node_timeout(
+    conn: psycopg.Connection,
+    run_id: UUID,
+    node_id: str,
+    attempt: int,
+    timeout_seconds: int
+) -> bool:
+    """
+    标记工作流为失败（由于节点超时达到最大重试次数）
+    
+    Args:
+        conn: 数据库连接
+        run_id: 运行ID
+        node_id: 超时的节点ID
+        attempt: 重试次数
+        timeout_seconds: 超时时间
+        
+    Returns:
+        是否标记成功
+    """
+    error_info = {
+        'reason': 'node_timeout',
+        'node_id': node_id,
+        'attempt': attempt,
+        'timeout_seconds': timeout_seconds,
+        'message': f'Node {node_id} exceeded max retries ({attempt}) after timeout of {timeout_seconds}s'
+    }
+    
+    with conn.cursor() as cursor:
+        # 1. 更新 workflow_runs.status = 'failed'
+        cursor.execute("""
+            UPDATE workflow_runs
+            SET 
+                status = 'failed',
+                finished_at = NOW(),
+                error = %s
+            WHERE id = %s
+        """, (json.dumps(error_info), run_id))
+        
+        # 2. 更新 node_tasks.status = 'failed'（所有该运行的任务）
+        cursor.execute("""
+            UPDATE node_tasks
+            SET status = 'failed'
+            WHERE run_id = %s AND status IN ('pending', 'running')
+        """, (run_id,))
+        
+        # 3. 记录 workflow_error 日志（包含超时和重试信息）
+        from src.server.workflow.db import append_log
+        append_log(
+            conn,
+            run_id,
+            'error',
+            'workflow_failed',
+            payload={
+                **error_info,
+                'reason': 'node_timeout',
+                'max_retries_reached': True
+            },
+            node_id=node_id
+        )
+        
+        return cursor.rowcount > 0
 
 
 def get_running_tasks(conn: psycopg.Connection, run_id: UUID) -> List[Dict[str, Any]]:
@@ -459,6 +717,7 @@ def create_workflow(
     organization_id: Optional[UUID] = None,
     department_id: Optional[UUID] = None,
     workspace_id: Optional[UUID] = None,
+    workflow_id: Optional[UUID] = None,
 ) -> UUID:
     """
     创建工作流
@@ -472,11 +731,13 @@ def create_workflow(
         organization_id: 组织ID（可选）
         department_id: 部门ID（可选）
         workspace_id: 工作空间ID（可选）
+        workflow_id: 工作流ID（可选，如果不提供则自动生成）
         
     Returns:
         工作流ID
     """
-    workflow_id = uuid4()
+    if workflow_id is None:
+        workflow_id = uuid4()
     
     with conn.cursor() as cursor:
         cursor.execute("""
