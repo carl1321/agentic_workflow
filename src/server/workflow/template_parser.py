@@ -99,11 +99,59 @@ def render_template(
             elif loop_field == "filtered_data.pending":
                 value = current_loop_context.get("filtered_data", {}).get("pending", [])
             elif loop_field.startswith("variables."):
-                var_name = loop_field.split(".", 1)[1]
+                # 解析变量路径，支持 variables.变量名 或 variables.变量名.字段名
+                var_path_parts = loop_field.split(".", 2)  # 最多分割为3部分
+                var_name = var_path_parts[1] if len(var_path_parts) > 1 else None
+                field_name = var_path_parts[2] if len(var_path_parts) > 2 else None
+                
                 variables = current_loop_context.get("variables", {})
-                value = variables.get(var_name)
+                value = variables.get(var_name) if var_name else None
+                
                 if value is None:
                     logger.debug(f"Loop variable '{var_name}' not found in variables: {list(variables.keys())}")
+                elif field_name:
+                    # 如果指定了字段名，尝试从变量值中提取字段
+                    # 处理数组：从第一个元素提取字段
+                    if isinstance(value, list) and len(value) > 0:
+                        first_item = value[0]
+                        # 如果第一个元素是数组（嵌套数组），继续取第一个元素
+                        while isinstance(first_item, list) and len(first_item) > 0:
+                            first_item = first_item[0]
+                        if isinstance(first_item, dict):
+                            value = first_item.get(field_name)
+                            if value is not None:
+                                logger.debug(f"Found field '{field_name}' in loop variable '{var_name}' array first item")
+                        elif hasattr(first_item, field_name):
+                            value = getattr(first_item, field_name, None)
+                    # 处理对象：直接从对象提取字段
+                    elif isinstance(value, dict):
+                        value = value.get(field_name)
+                        if value is not None:
+                            logger.debug(f"Found field '{field_name}' in loop variable '{var_name}' dict")
+                    # 处理JSON字符串：先解析再提取
+                    elif isinstance(value, str):
+                        try:
+                            import json
+                            parsed = json.loads(value)
+                            # 如果解析后是数组，从第一个元素提取字段
+                            if isinstance(parsed, list) and len(parsed) > 0:
+                                first_item = parsed[0]
+                                # 如果第一个元素是数组（嵌套数组），继续取第一个元素
+                                while isinstance(first_item, list) and len(first_item) > 0:
+                                    first_item = first_item[0]
+                                if isinstance(first_item, dict):
+                                    value = first_item.get(field_name)
+                                elif hasattr(first_item, field_name):
+                                    value = getattr(first_item, field_name, None)
+                            elif isinstance(parsed, dict):
+                                value = parsed.get(field_name)
+                        except (json.JSONDecodeError, ValueError):
+                            logger.debug(f"Loop variable '{var_name}' is a string but not valid JSON, cannot extract field '{field_name}'")
+                            value = None
+                    
+                    if value is None:
+                        logger.debug(f"Field '{field_name}' not found in loop variable '{var_name}'")
+                # 如果没有指定字段名，返回整个变量值（保持原有行为）
             else:
                 # 直接访问循环上下文字段
                 value = current_loop_context.get(loop_field)
@@ -160,14 +208,118 @@ def render_template(
             return match.group(0)
         
         # 获取字段值
+        value = None
         if isinstance(node_output, dict):
-            value = node_output.get(field_name)
+            # 统一从 output 字段中提取变量（除了格式字段）
+            # 格式字段（array、object、string、number、output）需要特殊处理
+            if field_name not in ["array", "object", "string", "number", "output"]:
+                # 检查是否是嵌套路径（如 output.content）
+                if field_name.startswith("output."):
+                    # 提取嵌套字段名（如 content）
+                    nested_field = field_name[len("output."):]
+                    raw_output = node_output.get("output")
+                    if raw_output is not None:
+                        # 如果 output 是字符串，尝试解析为 JSON
+                        if isinstance(raw_output, str):
+                            try:
+                                import json
+                                parsed = json.loads(raw_output)
+                                raw_output = parsed
+                                logger.debug(f"Parsed JSON string from output for node '{target_node_id}'")
+                            except (json.JSONDecodeError, ValueError):
+                                logger.debug(f"Output is a string but not valid JSON for node '{target_node_id}', treating as plain string")
+                        
+                        # 如果 output 是数组，尝试从第一个元素中获取字段
+                        if isinstance(raw_output, list):
+                            if len(raw_output) > 0:
+                                first_item = raw_output[0]
+                                # 如果第一个元素是数组（嵌套数组），继续取第一个元素
+                                while isinstance(first_item, list) and len(first_item) > 0:
+                                    first_item = first_item[0]
+                                if isinstance(first_item, dict):
+                                    value = first_item.get(nested_field)
+                                    if value is not None:
+                                        logger.debug(f"Found field '{nested_field}' in array output first item for node '{target_node_id}'")
+                                elif hasattr(first_item, nested_field):
+                                    value = getattr(first_item, nested_field, None)
+                            else:
+                                logger.warning(f"Output array is empty for node '{target_node_id}', cannot extract field '{nested_field}'")
+                        # 如果 output 是字典，尝试从字典中获取字段
+                        elif isinstance(raw_output, dict):
+                            value = raw_output.get(nested_field)
+                            if value is not None:
+                                logger.debug(f"Found field '{nested_field}' in output dict for node '{target_node_id}'")
+                        # 如果 output 是其他类型（如字符串但解析失败），记录警告
+                        elif isinstance(raw_output, str):
+                            logger.warning(f"Output is a plain string for node '{target_node_id}', cannot extract field '{nested_field}' from string")
+                else:
+                    # 普通字段，统一从 output 字段中提取（兼容旧格式）
+                    raw_output = node_output.get("output")
+                    if raw_output is not None:
+                        # 如果 output 是字符串，尝试解析为 JSON
+                        if isinstance(raw_output, str):
+                            try:
+                                import json
+                                parsed = json.loads(raw_output)
+                                raw_output = parsed
+                                logger.debug(f"Parsed JSON string from output for node '{target_node_id}'")
+                            except (json.JSONDecodeError, ValueError):
+                                logger.debug(f"Output is a string but not valid JSON for node '{target_node_id}', treating as plain string")
+                        
+                        # 如果 output 是数组，尝试从第一个元素中获取字段
+                        if isinstance(raw_output, list):
+                            if len(raw_output) > 0:
+                                first_item = raw_output[0]
+                                # 如果第一个元素是数组（嵌套数组），继续取第一个元素
+                                while isinstance(first_item, list) and len(first_item) > 0:
+                                    first_item = first_item[0]
+                                if isinstance(first_item, dict):
+                                    value = first_item.get(field_name)
+                                    if value is not None:
+                                        logger.debug(f"Found field '{field_name}' in array output first item for node '{target_node_id}'")
+                                elif hasattr(first_item, field_name):
+                                    value = getattr(first_item, field_name, None)
+                            else:
+                                logger.warning(f"Output array is empty for node '{target_node_id}', cannot extract field '{field_name}'")
+                        # 如果 output 是字典，尝试从字典中获取字段
+                        elif isinstance(raw_output, dict):
+                            value = raw_output.get(field_name)
+                            if value is not None:
+                                logger.debug(f"Found field '{field_name}' in output dict for node '{target_node_id}'")
+                        # 如果 output 是其他类型（如字符串但解析失败），记录警告
+                        elif isinstance(raw_output, str):
+                            logger.warning(f"Output is a plain string for node '{target_node_id}', cannot extract field '{field_name}' from string")
         else:
             # 如果输出不是字典，尝试直接访问属性
             value = getattr(node_output, field_name, None)
         
+        # 如果字段是 "output"，直接返回节点的 output 字段
+        if field_name == "output":
+            if isinstance(node_output, dict):
+                raw_output = node_output.get("output")
+                if raw_output is not None:
+                    # 如果 output 是字符串，尝试解析为 JSON
+                    if isinstance(raw_output, str):
+                        try:
+                            import json
+                            parsed = json.loads(raw_output)
+                            value = parsed
+                            logger.debug(f"Parsed JSON string from output field for node '{target_node_id}'")
+                        except (json.JSONDecodeError, ValueError):
+                            # 如果解析失败，直接使用字符串
+                            value = raw_output
+                            logger.debug(f"Output is a string but not valid JSON for node '{target_node_id}', using as-is")
+                    else:
+                        value = raw_output
+                else:
+                    logger.warning(f"Field 'output' is None for node '{target_node_id}'")
+                    value = None
+            else:
+                logger.warning(f"Node output is not a dict for node '{target_node_id}', cannot get 'output' field")
+                value = None
+        
         # 如果字段是格式字段（array、object、string、number），需要根据节点的输出格式进行转换
-        if field_name in ["array", "object", "string", "number"]:
+        elif field_name in ["array", "object", "string", "number"]:
             # 获取节点的原始输出（output 字段）
             raw_output = node_output.get("output") if isinstance(node_output, dict) else None
             if raw_output is None:

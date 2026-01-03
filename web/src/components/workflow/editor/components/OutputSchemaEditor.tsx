@@ -34,6 +34,13 @@ export function OutputSchemaEditor({
   const [localFields, setLocalFields] = useState<OutputField[]>(fields);
   const [errors, setErrors] = useState<Record<number, string>>({});
 
+  // 确保格式始终为 "array"
+  useEffect(() => {
+    if (format !== "array") {
+      onFormatChange("array");
+    }
+  }, [format, onFormatChange]);
+
   useEffect(() => {
     setLocalFields(fields);
   }, [fields]);
@@ -95,15 +102,6 @@ export function OutputSchemaEditor({
             <Info className="h-4 w-4 text-muted-foreground" />
           </div>
           <div className="flex items-center gap-2">
-            <Select value={format} onValueChange={(val) => onFormatChange(val as OutputFormatType)}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="json">输出格式JSON</SelectItem>
-                <SelectItem value="array">输出格式Array</SelectItem>
-              </SelectContent>
-            </Select>
             <Button
               variant="default"
               size="icon"
@@ -163,9 +161,7 @@ export function OutputSchemaEditor({
         </div>
 
         <p className="text-xs text-muted-foreground mt-2">
-          {format === "json"
-            ? "输出格式：JSON 对象 {}"
-            : "输出格式：JSON 对象数组 [{}]"}
+          输出格式：JSON 对象数组 [{}]
         </p>
       </div>
     </div>

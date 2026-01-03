@@ -30,23 +30,27 @@ interface NodeConfigPanelProps {
   onClose: () => void;
 }
 
-// 格式化 JSON 用于显示，将字符串值中的转义字符（如 \n）解析为实际字符
-// 这样在显示时，字符串中的 \n 会显示为实际的换行，而不是 \n 字符
+// 格式化 JSON 用于显示，去除字符串中的换行符，以标准 JSON 格式展开显示
 function formatJSONForDisplay(obj: any): string {
   if (obj === null || obj === undefined) {
     return "null";
   }
   
-  // 递归处理对象和数组，解析字符串中的转义字符
+  // 递归处理对象和数组，去除字符串中的换行符和转义字符
   const processValue = (value: any): any => {
     if (typeof value === "string") {
-      // 解析字符串中的转义字符为实际字符
+      // 去除字符串中的换行符（包括 \n 和实际的换行符），替换为空格
       return value
-        .replace(/\\n/g, "\n")
-        .replace(/\\t/g, "\t")
-        .replace(/\\r/g, "\r")
-        .replace(/\\"/g, '"')
-        .replace(/\\\\/g, "\\");
+        .replace(/\\n/g, " ")  // 将 \n 转义字符替换为空格
+        .replace(/\n/g, " ")    // 将实际换行符替换为空格
+        .replace(/\\t/g, " ")   // 将 \t 替换为空格
+        .replace(/\t/g, " ")     // 将实际制表符替换为空格
+        .replace(/\\r/g, " ")   // 将 \r 替换为空格
+        .replace(/\r/g, " ")     // 将实际回车符替换为空格
+        .replace(/\\"/g, '"')   // 保留转义的引号
+        .replace(/\\\\/g, "\\") // 保留转义的反斜杠
+        .replace(/\s+/g, " ")    // 将多个连续空格合并为单个空格
+        .trim();                // 去除首尾空格
     } else if (Array.isArray(value)) {
       return value.map(processValue);
     } else if (typeof value === "object" && value !== null) {
@@ -62,7 +66,7 @@ function formatJSONForDisplay(obj: any): string {
   };
   
   try {
-    // 先解析转义字符，然后格式化为标准 JSON
+    // 先处理字符串中的换行符，然后格式化为标准 JSON
     const processed = processValue(obj);
     return JSON.stringify(processed, null, 2);
   } catch (e) {
@@ -610,7 +614,7 @@ function LLMNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: Nod
   const [prompt, setPrompt] = useState(nodeData.llmPrompt || "");
   const [systemPrompt, setSystemPrompt] = useState(nodeData.llmSystemPrompt || "");
   const [outputFormat, setOutputFormat] = useState<OutputFormatType>(
-    (nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType
+    (nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType
   );
   const [outputFields, setOutputFields] = useState<OutputField[]>(
     nodeData.outputFields || nodeData.output_fields || []
@@ -635,7 +639,7 @@ function LLMNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: Nod
   }, [nodeData.llmSystemPrompt]);
 
   useEffect(() => {
-    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType);
+    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType);
     setOutputFields(nodeData.outputFields || nodeData.output_fields || []);
   }, [nodeData.outputFormat, nodeData.output_format, nodeData.outputFields, nodeData.output_fields]);
 
@@ -799,7 +803,7 @@ function ToolNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
     JSON.stringify(nodeData.toolParams || {}, null, 2)
   );
   const [outputFormat, setOutputFormat] = useState<OutputFormatType>(
-    (nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType
+    (nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType
   );
   const [outputFields, setOutputFields] = useState<OutputField[]>(
     nodeData.outputFields || nodeData.output_fields || []
@@ -807,7 +811,7 @@ function ToolNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
   const toolParamsRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType);
+    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType);
     setOutputFields(nodeData.outputFields || nodeData.output_fields || []);
   }, [nodeData.outputFormat, nodeData.output_format, nodeData.outputFields, nodeData.output_fields]);
 
@@ -909,7 +913,7 @@ function ToolNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
 function ConditionNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: NodeConfigProps) {
   const [expression, setExpression] = useState(nodeData.conditionExpression || "");
   const [outputFormat, setOutputFormat] = useState<OutputFormatType>(
-    (nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType
+    (nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType
   );
   const [outputFields, setOutputFields] = useState<OutputField[]>(
     nodeData.outputFields || nodeData.output_fields || []
@@ -917,7 +921,7 @@ function ConditionNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate 
   const expressionRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType);
+    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType);
     setOutputFields(nodeData.outputFields || nodeData.output_fields || []);
   }, [nodeData.outputFormat, nodeData.output_format, nodeData.outputFields, nodeData.output_fields]);
 
@@ -1005,7 +1009,7 @@ function LoopNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
     nodeData.logicalOperator || nodeData.logical_operator || "and"
   );
   const [outputFormat, setOutputFormat] = useState<OutputFormatType>(
-    (nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType
+    (nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType
   );
   const [outputFields, setOutputFields] = useState<OutputField[]>(
     nodeData.outputFields || nodeData.output_fields || []
@@ -1016,7 +1020,7 @@ function LoopNodeConfig({ node, nodeData, nodes = [], edges = [], onUpdate }: No
   const [showLoopBodySelector, setShowLoopBodySelector] = useState<number | null>(null); // 显示选择器的条件索引
 
   useEffect(() => {
-    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "json") as OutputFormatType);
+    setOutputFormat((nodeData.outputFormat || nodeData.output_format || "array") as OutputFormatType);
     setOutputFields(nodeData.outputFields || nodeData.output_fields || []);
   }, [nodeData.outputFormat, nodeData.output_format, nodeData.outputFields, nodeData.output_fields]);
 

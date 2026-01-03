@@ -307,6 +307,8 @@ def generate_output_schema_prompt(output_format: str, output_fields: Optional[Li
     
     return f"""
 
+输出格式严格遵循字段设置。
+
 请严格按照以下 JSON Schema 格式输出结果：
 ```json
 {schema_json}
@@ -699,22 +701,26 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                     if state_manager:
                         state_manager.mark_node_running(nid, input_data=workflow_inputs)
                     
-                    # 开始节点的输出：简化为 {"input": "..."} 格式
+                    # 开始节点的输出：统一为 {"output": "...", "input": "..."} 格式
                     # 优先从 workflow_inputs 中获取 "input" 字段，如果没有则使用整个 workflow_inputs
                     if "input" in workflow_inputs:
                         outputs = {
-                            "input": workflow_inputs["input"]
+                            "output": workflow_inputs["input"],
+                            "input": workflow_inputs["input"]  # 保留兼容性
                         }
                     else:
                         # 如果没有 "input" 字段，尝试从其他字段获取，或使用第一个值
                         if len(workflow_inputs) == 1:
+                            output_value = list(workflow_inputs.values())[0]
                             outputs = {
-                                "input": list(workflow_inputs.values())[0]
+                                "output": output_value,
+                                "input": output_value  # 保留兼容性
                             }
                         else:
-                            # 多个字段时，使用整个 workflow_inputs 作为 input
+                            # 多个字段时，使用整个 workflow_inputs 作为 output
                             outputs = {
-                                "input": workflow_inputs
+                                "output": workflow_inputs,
+                                "input": workflow_inputs  # 保留兼容性
                             }
                     
                     # 更新状态 - 创建新的状态字典，确保 state_manager 被保留
@@ -1094,8 +1100,9 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         logger.debug(f"LLM node {nid} formatted outputs: {outputs}")
                         
                         # 构建包含resolved_inputs的节点输出（用于循环体内部节点记录实际输入）
+                        # format_node_output 已经返回 { "output": <数据> }，直接合并即可
                         node_output_with_inputs = {
-                            "output": outputs,
+                            **outputs,  # 包含 "output" 字段
                             "resolved_inputs": {
                                 "prompt": prompt,  # 解析后的prompt
                                 "system_prompt": system_prompt if system_prompt else None,  # 解析后的system_prompt
@@ -2022,6 +2029,42 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             # 每次迭代后都执行数据筛选（不管是否满足退出条件）
                             # 退出条件应该是：pending_items是否为空（所有条目都满足条件）
                             should_break = False
+                            
+                            # 首先查找 exit_node 的完整 output，用于更新 pending_items
+                            exit_node_output = None
+                            exit_nodes = []
+                            for body_node in loop_body_nodes:
+                                has_downstream = False
+                                for edge in loop_body_edges:
+                                    if edge.source == body_node.id:
+                                        has_downstream = True
+                                        break
+                                if not has_downstream:
+                                    exit_nodes.append(body_node.id)
+                            
+                            # 从 exit nodes 中查找有 output 的节点
+                            for exit_node_id in exit_nodes:
+                                node_output = iteration_outputs.get(exit_node_id, {})
+                                if node_output and "output" in node_output:
+                                    exit_node_output = node_output.get("output")
+                                    # 如果 exit_node_output 是 dict 且包含 output 字段，进一步提取
+                                    if isinstance(exit_node_output, dict) and "output" in exit_node_output:
+                                        exit_node_output = exit_node_output.get("output")
+                                    break
+                            
+                            # 如果没找到，尝试从 node_outputs 中获取
+                            if exit_node_output is None:
+                                for exit_node_id in exit_nodes:
+                                    node_output = node_outputs.get(exit_node_id, {})
+                                    if node_output and "output" in node_output:
+                                        exit_node_output = node_output.get("output")
+                                        if isinstance(exit_node_output, dict) and "output" in exit_node_output:
+                                            exit_node_output = exit_node_output.get("output")
+                                        break
+                            
+                            # 注意：pending_items 将在筛选逻辑之后更新为筛选后的数据（只包含不满足条件的条目）
+                            # 这里先保存 exit_node_output 用于后续筛选
+                            
                             # 从退出条件中提取筛选配置（第一个退出条件作为筛选条件）
                             if break_conditions:
                                 first_condition = break_conditions[0]
@@ -2256,16 +2299,24 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             loop_context[nid]["filtered_data"]["passed"] = existing_passed + passed_items
                                             loop_context[nid]["filtered_data"]["pending"] = pending_items
                                             
-                                            # 将 pending_items 更新到循环变量，供下一轮使用
-                                            loop_context[nid]["variables"][pending_items_var_name] = pending_items
+                                            # 将筛选后的 pending_items（只包含不满足条件的条目）更新到循环变量
+                                            # 支持数组和 json 格式
+                                            if isinstance(pending_items, list):
+                                                loop_context[nid]["variables"][pending_items_var_name] = pending_items
+                                                logger.info(f"Loop iteration {iteration}: set pending_items from filtered data (array format): {len(pending_items)} items (only items that do not meet exit condition)")
+                                            elif isinstance(pending_items, dict):
+                                                loop_context[nid]["variables"][pending_items_var_name] = [pending_items]
+                                                logger.info(f"Loop iteration {iteration}: set pending_items from filtered data (json format, converted to array): 1 item (only items that do not meet exit condition)")
+                                            else:
+                                                loop_context[nid]["variables"][pending_items_var_name] = [pending_items] if pending_items else []
+                                                logger.info(f"Loop iteration {iteration}: set pending_items from filtered data (other type, converted to array): {1 if pending_items else 0} items (only items that do not meet exit condition)")
                                             
                                             logger.info(f"Loop iteration {iteration}: filtered {len(current_pending)} items -> {len(passed_items)} passed (total passed: {len(existing_passed + passed_items)}), {len(pending_items)} pending")
                                             logger.info(f"Loop iteration {iteration}: passed_items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in passed_items]}")
-                                            logger.info(f"Loop iteration {iteration}: pending_items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in pending_items]}")
                                             
-                                            # 验证更新是否成功
+                                            # 验证更新是否成功（pending_items 现在是筛选后的数据，只包含不满足条件的条目）
                                             updated_pending = loop_context[nid]["variables"].get(pending_items_var_name, [])
-                                            logger.info(f"Loop iteration {iteration}: verified pending_items in variables: {len(updated_pending)} items, IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in updated_pending]}")
+                                            logger.info(f"Loop iteration {iteration}: verified pending_items in variables: {len(updated_pending)} items (filtered, only items that do not meet exit condition), IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in updated_pending[:5]]}")
                                             
                                             # 记录筛选详情
                                             if passed_items:
@@ -2273,9 +2324,10 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             if pending_items:
                                                 logger.info(f"Loop iteration {iteration}: pending items IDs: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in pending_items]}")
                                             
-                                            # 如果没有待优化数据，可以提前退出
+                                            # 退出条件：检查筛选后的 pending_items 是否为空（所有条目都满足条件）
+                                            # pending_items 现在已经是筛选后的数据，只包含不满足条件的条目
                                             if not pending_items:
-                                                logger.info(f"Loop node {nid} all items passed at iteration {iteration}")
+                                                logger.info(f"Loop node {nid} all items passed at iteration {iteration} (no pending items after filtering)")
                                                 should_break = True
                                         except Exception as e:
                                             logger.error(f"Error filtering data in loop iteration {iteration}: {e}", exc_info=True)
@@ -2284,6 +2336,23 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             pending_items = current_pending.copy() if current_pending else []
                                             loop_context[nid]["filtered_data"]["pending"] = pending_items
                                             loop_context[nid]["variables"][pending_items_var_name] = pending_items
+                            else:
+                                # 没有筛选条件，使用 exit_node 的完整 output 作为 pending_items
+                                if exit_node_output is not None:
+                                    if isinstance(exit_node_output, list):
+                                        loop_context[nid]["variables"][pending_items_var_name] = exit_node_output
+                                        loop_context[nid]["filtered_data"]["pending"] = exit_node_output
+                                        logger.info(f"Loop iteration {iteration}: no filter condition, set pending_items from exit_node output (array format): {len(exit_node_output)} items")
+                                    elif isinstance(exit_node_output, dict):
+                                        loop_context[nid]["variables"][pending_items_var_name] = [exit_node_output]
+                                        loop_context[nid]["filtered_data"]["pending"] = [exit_node_output]
+                                        logger.info(f"Loop iteration {iteration}: no filter condition, set pending_items from exit_node output (json format, converted to array): 1 item")
+                                    else:
+                                        loop_context[nid]["variables"][pending_items_var_name] = [exit_node_output]
+                                        loop_context[nid]["filtered_data"]["pending"] = [exit_node_output]
+                                        logger.info(f"Loop iteration {iteration}: no filter condition, set pending_items from exit_node output (other type, converted to array): 1 item")
+                                else:
+                                    logger.warning(f"Loop iteration {iteration}: no filter condition and exit_node output is None, keeping existing pending_items")
                             
                             if should_break:
                                 logger.info(f"Loop node {nid} break condition met at iteration {iteration}")
