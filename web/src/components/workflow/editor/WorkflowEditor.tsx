@@ -418,6 +418,20 @@ function WorkflowEditorInner({
                   },
                 };
               }
+              // 如果节点没有状态记录，根据工作流状态处理
+              if (status.run_status === 'failed' || status.run_status === 'canceled' || status.run_status === 'success') {
+                // 工作流已完成（成功/失败/取消）时，未执行的节点应该重置为初始状态
+                // 这样可以避免显示上一次运行的结果
+                return {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    executionStatus: "ready" as const,
+                    executionResult: undefined,
+                  },
+                };
+              }
+              // 其他情况（如 running、queued），保持原状（可能正在执行中）
               return node;
             })
           );
