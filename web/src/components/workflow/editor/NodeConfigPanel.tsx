@@ -295,9 +295,36 @@ function RunResultTab({ nodeData }: { nodeData: any }) {
                       )}
                       
                       {/* 输出：直接显示内部字段 */}
-                      {lastItem.output && (
-                        renderObjectFields(lastItem.output, "输出")
-                      )}
+                      {lastItem.output && (() => {
+                        const output = lastItem.output;
+                        
+                        // 检查是否是评估节点的数组输出
+                        // 评估节点输出通常是数组，每个元素包含 score、opt_des 等字段
+                        const isEvaluationArray = Array.isArray(output) && 
+                          output.length > 0 && 
+                          output.every(item => 
+                            typeof item === 'object' && 
+                            item !== null && 
+                            ('score' in item || 'opt_des' in item || 'name' in item || 'smiles' in item)
+                          );
+                        
+                        if (isEvaluationArray) {
+                          // 数组格式：直接显示整个数组，不展开字段
+                          return (
+                            <div className="space-y-2">
+                              <Label className="text-xs text-muted-foreground">输出</Label>
+                              <div className="bg-muted rounded-md p-2 overflow-auto max-h-[300px]">
+                                <pre className="text-xs font-mono whitespace-pre-wrap">
+                                  {formatJSONForDisplay(output)}
+                                </pre>
+                              </div>
+                            </div>
+                          );
+                        }
+                        
+                        // 其他情况：使用原有的 renderObjectFields
+                        return renderObjectFields(output, "输出");
+                      })()}
                       
                       {lastItem.metrics && Object.keys(lastItem.metrics).length > 0 && (
                         <div className="grid grid-cols-2 gap-2">

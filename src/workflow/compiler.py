@@ -210,6 +210,12 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
                 if field_name:
                     if isinstance(parsed_output, dict):
                         field_value = parsed_output.get(field_name)
+                        # 如果字段值不存在，尝试从其他可能的键名获取（兼容性处理）
+                        if field_value is None:
+                            for key in parsed_output.keys():
+                                if key.lower() == field_name.lower():
+                                    field_value = parsed_output[key]
+                                    break
                     else:
                         field_value = None
                     formatted_item[field_name] = convert_field_value(field_value, field_type)
@@ -219,7 +225,38 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
             }
     else:
         # JSON 格式：{}
-        if isinstance(parsed_output, dict):
+        # 重要修正：如果解析出的是列表，即使配置为JSON格式，也按数组处理，避免只取第一个元素导致数据丢失
+        if isinstance(parsed_output, list):
+            # 处理数组中的每个元素
+            formatted_items = []
+            for item in parsed_output:
+                formatted_item = {}
+                for field in output_fields:
+                    field_name = field.get("name") if isinstance(field, dict) else None
+                    field_type = field.get("type") if isinstance(field, dict) else "String"
+                    if field_name:
+                        # 从 item 中提取字段值
+                        if isinstance(item, dict):
+                            field_value = item.get(field_name)
+                            # 如果字段值不存在，尝试从其他可能的键名获取（兼容性处理）
+                            if field_value is None:
+                                # 尝试小写、大写等变体
+                                for key in item.keys():
+                                    if key.lower() == field_name.lower():
+                                        field_value = item[key]
+                                        break
+                        else:
+                            field_value = None
+                        # 根据类型转换
+                        formatted_item[field_name] = convert_field_value(field_value, field_type)
+                formatted_items.append(formatted_item)
+            
+            # 返回数组
+            return {
+                "output": formatted_items
+            }
+        
+        elif isinstance(parsed_output, dict):
             # 如果是对象，提取定义的字段，构建格式化后的对象
             formatted_obj = {}
             for field in output_fields:
@@ -227,13 +264,19 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
                 field_type = field.get("type") if isinstance(field, dict) else "String"
                 if field_name:
                     field_value = parsed_output.get(field_name)
+                    # 如果字段值不存在，尝试从其他可能的键名获取（兼容性处理）
+                    if field_value is None:
+                        for key in parsed_output.keys():
+                            if key.lower() == field_name.lower():
+                                field_value = parsed_output[key]
+                                break
                     formatted_obj[field_name] = convert_field_value(field_value, field_type)
             # 将格式化后的对象存储到 output 字段（严格按照配置的格式）
             return {
                 "output": formatted_obj
             }
         else:
-            # 如果不是对象，尝试构建格式化后的对象
+            # 如果不是对象也不是数组，尝试构建格式化后的对象
             formatted_obj = {}
             for field in output_fields:
                 field_name = field.get("name") if isinstance(field, dict) else None
@@ -981,10 +1024,46 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         if json_match:
                             response_content = json_match.group(1).strip()
                         else:
-                            # 尝试直接提取JSON对象或数组
-                            json_match = re.search(r'(\[.*?\]|\{.*?\})', response_content, re.DOTALL)
-                            if json_match:
-                                response_content = json_match.group(1).strip()
+                            # 尝试提取所有JSON对象（支持多个JSON对象拼接的情况）
+                            # 先尝试提取数组
+                            array_match = re.search(r'\[.*?\]', response_content, re.DOTALL)
+                            if array_match:
+                                response_content = array_match.group(0).strip()
+                            else:
+                                # 尝试提取多个JSON对象（逐个提取）
+                                json_objects = []
+                                # 使用平衡括号匹配来提取每个JSON对象
+                                brace_count = 0
+                                start_idx = -1
+                                for i, char in enumerate(response_content):
+                                    if char == '{':
+                                        if brace_count == 0:
+                                            start_idx = i
+                                        brace_count += 1
+                                    elif char == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0 and start_idx >= 0:
+                                            json_str = response_content[start_idx:i+1]
+                                            try:
+                                                json_obj = json.loads(json_str)
+                                                json_objects.append(json_obj)
+                                            except json.JSONDecodeError:
+                                                pass
+                                            start_idx = -1
+                                
+                                if json_objects:
+                                    # 如果找到多个JSON对象，组合成数组
+                                    if len(json_objects) > 1:
+                                        response_content = json.dumps(json_objects)
+                                        logger.info(f"LLM node {nid} extracted {len(json_objects)} JSON objects, combined into array")
+                                    else:
+                                        # 单个对象，保持原样（后续会根据output_format处理）
+                                        response_content = json.dumps(json_objects[0])
+                                else:
+                                    # 回退到原来的逻辑：只提取第一个JSON对象
+                                    json_match = re.search(r'(\[.*?\]|\{.*?\})', response_content, re.DOTALL)
+                                    if json_match:
+                                        response_content = json_match.group(1).strip()
                         
                         # 尝试解析为JSON对象（如果还是字符串）
                         parsed_response = response_content
@@ -1094,6 +1173,37 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             output_fields = ndata.outputFields
                         elif isinstance(ndata, dict):
                             output_fields = ndata.get("output_fields") or ndata.get("outputFields")
+
+                        # ---- 关键兼容：当业务语义要求“数组输出”但 LLM 偶尔返回单个对象时，统一归一化为数组 ----
+                        # 典型场景：循环体里的“按 id 批量评估/打分”节点，system_prompt 通常给了数组输出示例，但 LLM 仍可能返回 { ... }。
+                        # 这里做一个很窄的启发式：仅当输出字段包含 id + smiles（分子条目）且系统/提示词强调数组时，才把 dict 包装成 [dict]。
+                        try:
+                            force_array = False
+                            field_names = []
+                            if isinstance(output_fields, list):
+                                for f in output_fields:
+                                    if isinstance(f, dict) and f.get("name"):
+                                        field_names.append(str(f.get("name")))
+
+                            has_molecule_keys = ("id" in field_names and "smiles" in field_names)
+                            system_hints_array = (
+                                (final_system_prompt and ("输出举例" in final_system_prompt) and ("[" in final_system_prompt))
+                                or (raw_system_prompt and ("输出举例" in raw_system_prompt) and ("[" in raw_system_prompt))
+                                or (prompt and ("只返回JSON数组" in prompt or "JSON数组" in prompt))
+                            )
+                            prompt_looks_array = isinstance(prompt, str) and prompt.lstrip().startswith("[")
+
+                            if has_molecule_keys and (system_hints_array or prompt_looks_array):
+                                force_array = True
+
+                            if force_array and isinstance(parsed_response, dict):
+                                parsed_response = [parsed_response]
+                                logger.debug(
+                                    f"LLM node {nid} normalized single-object response to array (force_array=True)"
+                                )
+                        except Exception as _norm_err:
+                            # 归一化失败不影响主流程
+                            logger.debug(f"LLM node {nid} array-normalization skipped: {_norm_err}")
                         
                         logger.debug(f"LLM node {nid} output_format: {output_format}, output_fields: {output_fields}, parsed_response type: {type(parsed_response)}")
                         outputs = format_node_output(parsed_response, output_format, output_fields)
@@ -2362,21 +2472,48 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             # 这里可以根据循环体内的节点输出更新循环变量
                             # 简化实现：保持循环变量不变
                         
-                        # 收集循环体的最终输出：只包含通过筛选的结果（passed_items）
+                        # 收集循环体的最终输出：passed_items和pending_items应该直接使用exit_node的输出格式
                         filtered_data = loop_context[nid].get("filtered_data", {})
                         passed_items = filtered_data.get("passed", [])
                         pending_items = filtered_data.get("pending", [])
                         
-                        logger.info(f"Loop node {nid} final filtered data: {len(passed_items)} passed, {len(pending_items)} pending")
+                        # 如果filtered_data为空，尝试从最后一次迭代的exit_node输出获取
                         if not passed_items and not pending_items:
-                            logger.warning(f"Loop node {nid} filtered_data is empty, filtered_data keys: {list(filtered_data.keys())}")
+                            logger.warning(f"Loop node {nid} filtered_data is empty, trying to get from exit_node output")
+                            # 查找exit_node的输出
+                            exit_nodes = []
+                            for body_node in loop_body_nodes:
+                                has_downstream = False
+                                for edge in loop_body_edges:
+                                    if edge.source == body_node.id:
+                                        has_downstream = True
+                                        break
+                                if not has_downstream:
+                                    exit_nodes.append(body_node.id)
+                            
+                            # 从最后一次迭代的exit_node输出获取
+                            for exit_node_id in exit_nodes:
+                                node_output = new_node_outputs.get(exit_node_id, {})
+                                if node_output and "output" in node_output:
+                                    exit_node_output = node_output.get("output")
+                                    # 如果exit_node_output是数组，直接使用
+                                    if isinstance(exit_node_output, list):
+                                        pending_items = exit_node_output
+                                        logger.info(f"Loop node {nid} got pending_items from exit_node {exit_node_id} output: {len(pending_items)} items")
+                                    elif isinstance(exit_node_output, dict):
+                                        pending_items = [exit_node_output]
+                                        logger.info(f"Loop node {nid} got pending_items from exit_node {exit_node_id} output (converted to array): 1 item")
+                                    break
                         
-                        # 循环体节点的输出只包含最终通过筛选的结果
+                        logger.info(f"Loop node {nid} final filtered data: {len(passed_items)} passed, {len(pending_items)} pending")
+                        
+                        # 循环体节点的输出：passed_items和pending_items直接使用exit_node的输出格式
+                        # 确保格式与exit_node的输出一致
                         outputs = {
-                            "output": passed_items,  # 只显示通过筛选的结果
+                            "output": passed_items if passed_items else [],  # 只显示通过筛选的结果
                             "iterations": iteration,
-                            "passed_items": passed_items,  # 保留用于兼容
-                            "pending_items": filtered_data.get("pending", []),  # 保留用于调试
+                            "passed_items": passed_items if passed_items else [],  # 直接使用exit_node的输出格式
+                            "pending_items": pending_items if pending_items else [],  # 直接使用exit_node的输出格式
                         }
                         
                         # 更新节点输出（确保包含循环体内节点的 iteration_outputs）

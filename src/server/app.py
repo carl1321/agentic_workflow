@@ -1802,7 +1802,10 @@ async def execute_tool(request: ToolExecuteRequest):
                     compressed_args[key] = value
             else:
                 compressed_args[key] = value
-        logger.info(f"Executing tool '{request.tool_name}' with mapped arguments: {compressed_args}")
+        logger.info(f"=== TOOL EXECUTION START ===")
+        logger.info(f"Tool name: '{request.tool_name}'")
+        logger.info(f"Mapped arguments: {compressed_args}")
+        logger.info(f"=== TOOL EXECUTION START ===")
         
         # Tools are LangChain tools, so we need to invoke them
         # Use ainvoke for async tools, invoke for sync tools
@@ -1819,7 +1822,9 @@ async def execute_tool(request: ToolExecuteRequest):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: tool.invoke(mapped_args))
         
+        logger.info(f"=== TOOL EXECUTION END ===")
         logger.info(f"Tool '{request.tool_name}' executed successfully")
+        logger.info(f"=== TOOL EXECUTION END ===")
         return ToolExecuteResponse(result=str(result))
         
     except HTTPException:
@@ -1830,6 +1835,599 @@ async def execute_tool(request: ToolExecuteRequest):
             result="",
             error=f"工具执行失败: {str(e)}"
         )
+
+
+@app.post("/api/sam-design/evaluate-molecule")
+async def evaluate_molecule(
+    request: dict,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    评估分子并生成评分和描述
+
+    Request body:
+    {
+        "model": str,  # 模型名称（可选，如果不提供则使用basic模型）
+        "smiles": str,
+        "objective": str,
+        "constraints": List[Dict],
+        "properties": Optional[Dict]  # {HOMO, LUMO, DM}
+    }
+    """
+    try:
+        from src.llms.llm import get_llm_by_type, get_llm_by_model_name
+        from langchain_core.messages import HumanMessage
+        
+        model_name = request.get("model")
+        smiles = request.get("smiles")
+        objective = request.get("objective", "")
+        constraints = request.get("constraints", [])
+        properties = request.get("properties", {})
+
+        if not smiles:
+            raise HTTPException(status_code=400, detail="SMILES is required")
+        
+        # 构建评估提示
+        constraints_text = "\n".join([
+            f"- {c.get('name', '')}: {c.get('value', '')}"
+            for c in constraints if c.get('enabled', True)
+        ])
+        
+        # 使用LLM同时预测性质和进行评估，合并为一次调用
+        logger.info(f"=== EVALUATE MOLECULE API ===")
+        logger.info(f"Using LLM to predict properties and evaluate molecule for SMILES: {smiles}")
+        logger.info(f"Model: {model_name or 'basic (default)'}")
+        if properties and any(properties.values()):
+            logger.info(f"Note: Properties were provided but will be ignored, using LLM prediction instead")
+        logger.info(f"=== EVALUATE MOLECULE API ===")
+        
+        # 合并性质预测和评估的prompt
+        prompt = f"""你是一个SAM（自组装单分子层）分子设计评估专家。请根据以下信息，同时预测分子性质并评估分子：
+
+**研究目标：**
+{objective}
+
+**约束条件：**
+{constraints_text or '无'}
+
+**分子SMILES：**
+{smiles}
+
+请完成以下任务：
+1. 首先预测分子的以下性质：
+   - HOMO（最高占据分子轨道能量，单位eV，数值范围通常在-15到-5之间）
+   - LUMO（最低未占据分子轨道能量，单位eV，数值范围通常在-5到5之间）
+   - DM（偶极矩，单位Debye，数值范围通常在0到10之间）
+
+2. 然后根据预测的性质、研究目标和约束条件，评估分子并给出评分。
+
+请使用JSON格式返回结果：
+{{
+  "properties": {{
+    "HOMO": <HOMO值，数字>,
+    "LUMO": <LUMO值，数字>,
+    "DM": <偶极矩值，数字>
+  }},
+  "score": {{
+    "total": <总评分，0-100的整数>,
+    "surfaceAnchoring": <表面锚定强度评分，0-100的整数>,
+    "energyLevel": <能级匹配评分，0-100的整数>,
+    "packingDensity": <膜致密度和稳定性评分，0-100的整数>
+  }},
+  "description": "<分子的总体描述，2-3句话>",
+  "explanation": "<系统解释，说明评分依据和分子特点，3-5句话>"
+}}
+
+请只返回JSON，不要包含其他文字。"""
+
+        # 调用LLM（使用指定的模型或默认basic模型）
+        if model_name:
+            try:
+                llm = get_llm_by_model_name(model_name)
+            except Exception as e:
+                logger.warning(f"Failed to get LLM by model name {model_name}, using basic: {e}")
+                llm = get_llm_by_type("basic")
+        else:
+            llm = get_llm_by_type("basic")
+        
+        logger.info("Invoking LLM for combined property prediction and evaluation...")
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        
+        # 解析响应
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        logger.info(f"LLM response length: {len(response_text)} characters")
+        logger.info("=" * 80)
+        logger.info("LLM RESPONSE (Combined):")
+        logger.info("-" * 80)
+        logger.info(response_text)
+        logger.info("=" * 80)
+        
+        # 尝试提取JSON（支持嵌套的大括号）
+        import re
+        # 更强大的JSON提取：匹配平衡的大括号
+        json_match = None
+        brace_count = 0
+        start_idx = -1
+        for i, char in enumerate(response_text):
+            if char == '{':
+                if brace_count == 0:
+                    start_idx = i
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and start_idx >= 0:
+                    json_match = response_text[start_idx:i+1]
+                    break
+        
+        if not json_match:
+            # 回退到简单匹配
+            simple_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
+            if simple_match:
+                json_match = simple_match.group()
+        
+        if json_match:
+            try:
+                result = json.loads(json_match)
+                
+                # 从合并的响应中提取properties和评估结果
+                properties_data = result.get("properties", {})
+                score_data = result.get("score", {})
+                
+                # 构建返回的properties
+                predicted_properties = None
+                if properties_data:
+                    predicted_properties = {
+                        "HOMO": properties_data.get("HOMO"),
+                        "LUMO": properties_data.get("LUMO"),
+                        "DM": properties_data.get("DM"),
+                    }
+                    logger.info(f"LLM predicted properties: {predicted_properties}")
+                
+                return {
+                    "success": True,
+                    "score": {
+                        "total": score_data.get("total", 0),
+                        "surfaceAnchoring": score_data.get("surfaceAnchoring"),
+                        "energyLevel": score_data.get("energyLevel"),
+                        "packingDensity": score_data.get("packingDensity"),
+                    },
+                    "description": result.get("description", ""),
+                    "explanation": result.get("explanation", ""),
+                    "properties": predicted_properties,  # 返回LLM预测的性质
+                }
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse combined JSON: {e}")
+                logger.warning(f"JSON match: {json_match[:200] if json_match else 'None'}...")
+        
+        # 如果JSON解析失败，返回默认值
+        logger.warning("Failed to parse LLM response, returning default values")
+        return {
+            "success": True,
+            "score": {
+                "total": 70,
+                "surfaceAnchoring": 70,
+                "energyLevel": 70,
+                "packingDensity": 70,
+            },
+            "description": "分子评估完成，但无法解析详细评分。",
+            "explanation": response_text[:500],
+            "properties": None,  # 解析失败时返回None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error evaluating molecule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to evaluate molecule: {str(e)}")
+
+
+@app.post("/api/sam-design/generate-molecules")
+async def generate_molecules(
+    request: dict,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    使用LLM模型生成SAM分子
+    
+    Request body:
+    {
+        "model": str,  # 模型名称
+        "objective": str,
+        "constraints": List[Dict]
+    }
+    
+    Returns:
+    {
+        "success": bool,
+        "result": str  # LLM生成的文本结果，包含SMILES
+    }
+    """
+    try:
+        from src.llms.llm import get_llm_by_model_name
+        from langchain_core.messages import HumanMessage
+        
+        model_name = request.get("model")
+        objective = request.get("objective", "")
+        constraints = request.get("constraints", [])
+        
+        if not model_name:
+            raise HTTPException(status_code=400, detail="Model name is required")
+        if not objective:
+            raise HTTPException(status_code=400, detail="Objective is required")
+        
+        # 构建约束描述（去掉"启用"字样）
+        constraints_text = "\n".join([
+            f"- {c.get('name', '')}: {c.get('value', '')}"
+            for c in constraints if c.get('enabled', True)
+        ])
+        
+        # 构建生成分子的prompt（明确强调要严格按照研究目标中的数量要求）
+        prompt = f"""你是一个SAM（自组装单分子层）分子设计专家。请根据以下研究目标和约束条件，生成SAM分子。
+
+**研究目标：**
+{objective}
+
+**约束条件：**
+{constraints_text or '无'}
+
+**重要提示：**
+- 请严格按照研究目标中指定的数量生成分子。如果研究目标要求生成1个分子，就只生成1个；如果要求生成多个，则按照要求的数量生成。
+- 如果研究目标中没有明确指定数量，请生成1个分子。
+
+每个分子应该：
+1. 满足研究目标的要求
+2. 符合给定的约束条件
+3. 具有良好的表面锚定能力、能级匹配和膜致密度
+
+请按照以下格式输出：
+1. SMILES: <SMILES字符串>
+
+如果研究目标要求生成多个分子，则按序号继续：
+2. SMILES: <SMILES字符串>
+3. SMILES: <SMILES字符串>
+...
+
+请只返回SMILES列表，每个SMILES一行，格式为 "序号. SMILES: <SMILES字符串>"。"""
+
+        # 调用选择的LLM模型
+        logger.info(f"Generating molecules with model: {model_name}")
+        logger.info("=" * 80)
+        logger.info("PROMPT (User Message):")
+        logger.info("-" * 80)
+        logger.info(prompt)
+        logger.info("=" * 80)
+        
+        try:
+            llm = get_llm_by_model_name(model_name)
+            logger.info(f"LLM instance created successfully for model: {model_name}")
+        except ValueError as e:
+            logger.error(f"Failed to get LLM by model name '{model_name}': {e}")
+            raise HTTPException(status_code=400, detail=f"Model '{model_name}' not found: {str(e)}")
+        except Exception as e:
+            logger.exception(f"Error creating LLM instance for model '{model_name}': {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create LLM instance: {str(e)}")
+        
+        # 调用LLM生成分子
+        logger.info(f"Invoking LLM with prompt length: {len(prompt)} characters")
+        try:
+            # 检查LLM是否有system_message属性或方法
+            messages = [HumanMessage(content=prompt)]
+            
+            # 如果有system message，也打印出来
+            if hasattr(llm, 'system_message') and llm.system_message:
+                logger.info("=" * 80)
+                logger.info("SYSTEM MESSAGE:")
+                logger.info("-" * 80)
+                logger.info(str(llm.system_message))
+                logger.info("=" * 80)
+            
+            response = await llm.ainvoke(messages)
+            logger.info(f"LLM invocation successful for model: {model_name}")
+        except Exception as e:
+            logger.exception(f"Error invoking LLM for model '{model_name}': {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to invoke LLM: {str(e)}")
+        
+        # 获取响应文本
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        logger.info("=" * 80)
+        logger.info("LLM RESPONSE:")
+        logger.info("-" * 80)
+        logger.info(response_text)
+        logger.info("=" * 80)
+        logger.info(f"Response length: {len(response_text)} characters")
+        
+        return {
+            "success": True,
+            "result": response_text,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error generating molecules: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate molecules: {str(e)}")
+
+
+@app.post("/api/sam-design/parse-objective")
+async def parse_objective(
+    request: dict,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    解析研究目标和约束为分子生成参数
+    
+    Request body:
+    {
+        "objective": str,
+        "constraints": List[Dict]
+    }
+    
+    Returns:
+    {
+        "scaffold_condition": str,
+        "anchoring_group": str,
+        "gen_size": int
+    }
+    """
+    try:
+        from src.llms.llm import get_llm_by_type
+        from langchain_core.messages import HumanMessage
+        
+        objective = request.get("objective", "")
+        constraints = request.get("constraints", [])
+        
+        if not objective:
+            raise HTTPException(status_code=400, detail="Objective is required")
+        
+        # 构建约束描述（去掉"启用"字样）
+        constraints_text = "\n".join([
+            f"- {c.get('name', '')}: {c.get('value', '')}"
+            for c in constraints if c.get('enabled', True)
+        ])
+        
+        prompt = f"""你是一个SAM分子设计专家。请根据以下研究目标和约束条件，生成分子生成所需的参数。
+
+**研究目标：**
+{objective}
+
+**约束条件：**
+{constraints_text or '无'}
+
+请提供以下参数（使用JSON格式）：
+{{
+  "scaffold_condition": "<骨架SMILES字符串，多个用逗号分隔，例如：c1ccccc1,c1ccc2c(c1)[nH]c1ccccc12>",
+  "anchoring_group": "<锚定基团SMILES字符串，例如：O=P(O)(O) 表示磷酸基团>",
+  "gen_size": <要生成的分子数量，整数，建议10-20>
+}}
+
+请只返回JSON，不要包含其他文字。如果无法确定具体参数，使用合理的默认值。"""
+
+        # 调用LLM
+        llm = get_llm_by_type("basic")
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        
+        # 解析响应
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # 尝试提取JSON（支持嵌套的大括号）
+        json_match = None
+        brace_count = 0
+        start_idx = -1
+        for i, char in enumerate(response_text):
+            if char == '{':
+                if brace_count == 0:
+                    start_idx = i
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and start_idx >= 0:
+                    json_match = response_text[start_idx:i+1]
+                    break
+        
+        if not json_match:
+            # 回退到简单匹配
+            simple_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response_text, re.DOTALL)
+            if simple_match:
+                json_match = simple_match.group()
+        
+        if json_match:
+            try:
+                result = json.loads(json_match)
+                return {
+                    "success": True,
+                    "scaffold_condition": result.get("scaffold_condition", "c1ccccc1,c1ccc2c(c1)[nH]c1ccccc12"),
+                    "anchoring_group": result.get("anchoring_group", "O=P(O)(O)"),
+                    "gen_size": result.get("gen_size", 10),
+                }
+            except json.JSONDecodeError:
+                pass
+        
+        # 如果JSON解析失败，返回默认值
+        logger.warning(f"Failed to parse objective, using defaults. Response: {response_text[:200]}")
+        return {
+            "success": True,
+            "scaffold_condition": "c1ccccc1,c1ccc2c(c1)[nH]c1ccccc12",
+            "anchoring_group": "O=P(O)(O)",
+            "gen_size": 10,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error parsing objective: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse objective: {str(e)}")
+
+
+@app.post("/api/sam-design/history")
+async def save_design_history(
+    request: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    保存SAM设计历史记录
+    
+    Request body:
+    {
+        "name": str,  # 历史记录名称（可选，如果不提供则自动生成）
+        "objective": Dict,
+        "constraints": List[Dict],
+        "executionResult": Dict,
+        "molecules": List[Dict]
+    }
+    """
+    try:
+        from src.server.sam_design.db import save_design_history
+        from uuid import UUID
+        
+        name = request.get("name")
+        if not name:
+            # 自动生成名称：基于objective的前30个字符 + 时间戳
+            objective_text = request.get("objective", {}).get("text", "")
+            if objective_text:
+                name = objective_text[:30] + (objective_text[30:] and "...")
+            else:
+                name = f"SAM设计-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        
+        objective = request.get("objective", {})
+        constraints = request.get("constraints", [])
+        execution_result = request.get("executionResult", {})
+        molecules = request.get("molecules", [])
+        
+        if not objective or not execution_result:
+            raise HTTPException(status_code=400, detail="Objective and executionResult are required")
+        
+        logger.info(f"Saving design history for user {current_user.id}, name: {name}, molecules count: {len(molecules)}")
+        
+        history_id = save_design_history(
+            user_id=current_user.id,
+            name=name,
+            objective=objective,
+            constraints=constraints,
+            execution_result=execution_result,
+            molecules=molecules,
+        )
+        
+        logger.info(f"Design history saved successfully with ID: {history_id}")
+        
+        return {
+            "success": True,
+            "id": str(history_id),
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error saving design history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save design history: {str(e)}")
+
+
+@app.get("/api/sam-design/history")
+async def get_design_history_list(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    获取当前用户的设计历史记录列表
+    """
+    try:
+        from src.server.sam_design.db import get_design_history_list
+        
+        history_list = get_design_history_list(
+            user_id=current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+        
+        # 转换UUID和datetime为字符串
+        result = []
+        for item in history_list:
+            result.append({
+                "id": str(item["id"]),
+                "name": item["name"],
+                "createdAt": item["created_at"].isoformat() if isinstance(item.get("created_at"), datetime) else item.get("created_at"),
+                "moleculeCount": item.get("molecule_count", 0),
+            })
+        
+        return {
+            "success": True,
+            "history": result,
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error getting design history list: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get design history list: {str(e)}")
+
+
+@app.get("/api/sam-design/history/{history_id}")
+async def get_design_history(
+    history_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    获取单个设计历史记录
+    """
+    try:
+        from src.server.sam_design.db import get_design_history
+        from uuid import UUID
+        
+        history = get_design_history(
+            history_id=UUID(history_id),
+            user_id=current_user.id,
+        )
+        
+        if not history:
+            raise HTTPException(status_code=404, detail="History record not found")
+        
+        return {
+            "success": True,
+            "history": {
+                "id": str(history["id"]),
+                "name": history["name"],
+                "createdAt": history["created_at"],
+                "objective": history["objective"],
+                "constraints": history["constraints"],
+                "executionResult": history["execution_result"],
+                "molecules": history["molecules"],
+            },
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting design history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get design history: {str(e)}")
+
+
+@app.delete("/api/sam-design/history/{history_id}")
+async def delete_design_history(
+    history_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    删除设计历史记录
+    """
+    try:
+        from src.server.sam_design.db import delete_design_history
+        from uuid import UUID
+        
+        deleted = delete_design_history(
+            history_id=UUID(history_id),
+            user_id=current_user.id,
+        )
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="History record not found")
+        
+        return {
+            "success": True,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting design history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete design history: {str(e)}")
 
 
 # Data Extraction Records API
@@ -3039,7 +3637,15 @@ async def get_workflow_run(
                 if not run:
                     raise HTTPException(status_code=404, detail="Run not found")
                 
-                return dict(run)
+                result = dict(run)
+                # 解析output字段（如果是JSON字符串）
+                if result.get("output") and isinstance(result["output"], str):
+                    try:
+                        result["output"] = json.loads(result["output"])
+                    except json.JSONDecodeError:
+                        pass
+                
+                return result
         finally:
             conn.close()
     except HTTPException:

@@ -47,7 +47,7 @@ export default function HomePage() {
   const t = useTranslations("chat.page");
   const router = useRouter();
   const pathname = usePathname();
-  const { token, user, logout } = useAuthStore();
+  const { token, user, logout, refreshUser } = useAuthStore();
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwd1, setPwd1] = useState("");
   const [pwd2, setPwd2] = useState("");
@@ -59,6 +59,15 @@ export default function HomePage() {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
   }, [token, router, pathname]);
+
+  // 如果用户已登录但没有菜单信息，尝试刷新用户信息
+  useEffect(() => {
+    if (token && user && (!user.menus || user.menus.length === 0)) {
+      refreshUser().catch((e) => {
+        console.error("刷新用户信息失败:", e);
+      });
+    }
+  }, [token, user, refreshUser]);
 
   if (!token) {
     return (

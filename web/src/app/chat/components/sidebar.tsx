@@ -1,14 +1,17 @@
 "use client";
 
-import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow } from "lucide-react";
+import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow, FlaskConical } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState, useImperativeHandle, forwardRef } from "react";
+import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 
 import { Logo } from "~/components/ui/logo";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import { fetchConversations, deleteConversation, type ConversationSummary } from "~/core/api/conversations";
 import { useAuthStore } from "~/core/store/auth-store";
+import type { MenuInfo } from "~/core/api/auth";
 
 interface ChatSession {
   id: string;
@@ -32,6 +35,14 @@ export interface SidebarRef {
   refresh: () => Promise<void>;
 }
 
+// 图标映射
+const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+  FlaskConical,
+  BookOpen,
+  Wrench,
+  Workflow,
+};
+
 export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   className,
   onNewChat,
@@ -41,11 +52,86 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   onOpenKnowledgeBase,
   onOpenWorkflow,
 }, ref) => {
-  const { token } = useAuthStore();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { token, user } = useAuthStore();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // 硬编码的菜单路径和代码（这些已经有专门的按钮，不需要从数据库加载）
+  const hardcodedMenuPaths = new Set([
+    "/chat",
+    "/chat?view=toolbox",
+    "/chat?view=knowledge",
+    "/chat?view=workflow",
+    "/workflows", // 工作流管理
+  ]);
+  
+  const hardcodedMenuCodes = new Set([
+    "toolbox",
+    "knowledge_base",
+    "workflow",
+    "workflow:list",
+    "chat",
+    "business",
+  ]);
+
+  // 获取用户菜单中非管理后台的菜单项
+  const userMenus = useMemo(() => {
+    if (!user?.menus) {
+      // 调试：检查用户菜单是否加载
+      if (process.env.NODE_ENV === "development") {
+        console.log("[Sidebar] 用户菜单未加载", { user: user?.id, hasMenus: !!user?.menus });
+      }
+      return [];
+    }
+    
+    // 过滤出非管理后台的菜单（不以 /admin 开头，且有路径）
+    // 同时排除硬编码的菜单路径
+    const flattenMenus = (menus: MenuInfo[]): MenuInfo[] => {
+      const result: MenuInfo[] = [];
+      for (const menu of menus) {
+        if (
+          menu.path && 
+          !menu.path.startsWith("/admin") && 
+          menu.is_visible !== false &&
+          !hardcodedMenuPaths.has(menu.path) &&
+          !hardcodedMenuCodes.has(menu.code)
+        ) {
+          result.push(menu);
+        }
+        if (menu.children) {
+          result.push(...flattenMenus(menu.children));
+        }
+      }
+      return result;
+    };
+    
+    // 去重：根据路径和代码去重，避免重复显示
+    const uniqueMenus = new Map<string, MenuInfo>();
+    flattenMenus(user.menus).forEach((menu) => {
+      // 使用路径作为key，如果没有路径则使用代码
+      const key = menu.path || menu.code;
+      if (key && !uniqueMenus.has(key)) {
+        uniqueMenus.set(key, menu);
+      }
+    });
+    
+    const finalMenus = Array.from(uniqueMenus.values()).sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    
+    // 调试：输出过滤后的菜单
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Sidebar] 过滤后的菜单", {
+        totalMenus: user.menus.length,
+        filteredMenus: finalMenus.length,
+        menus: finalMenus.map(m => ({ name: m.name, code: m.code, path: m.path }))
+      });
+    }
+    
+    return finalMenus;
+  }, [user?.menus]);
 
   const loadConversations = async () => {
     try {
@@ -202,6 +288,31 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
           <Workflow className="h-4 w-4 mr-2" />
           工作流
         </Button>
+        
+        {/* 动态菜单项 */}
+        {userMenus.length > 0 && (
+          <>
+            {userMenus.map((menu) => {
+              const IconComponent = menu.icon ? iconMap[menu.icon] : FlaskConical;
+              const isActive = pathname === menu.path;
+              
+              return (
+                <Link key={menu.id} href={menu.path || "#"}>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start",
+                      isActive && "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700"
+                    )}
+                  >
+                    {IconComponent ? <IconComponent className="h-4 w-4 mr-2" /> : <FlaskConical className="h-4 w-4 mr-2" />}
+                    {menu.name}
+                  </Button>
+                </Link>
+              );
+            })}
+          </>
+        )}
       </div>
 
       {/* Chat History */}

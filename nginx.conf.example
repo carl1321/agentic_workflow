@@ -1,0 +1,63 @@
+# Nginx 反向代理配置示例
+# 将前端请求 /api/ 代理到后端 localhost:8008
+# 
+# 使用方法：
+# 1. 将此文件复制到 Nginx 配置目录（如 /etc/nginx/sites-available/）
+# 2. 修改 server_name、root 路径等配置
+# 3. 创建软链接：sudo ln -s /etc/nginx/sites-available/agenticworkflow /etc/nginx/sites-enabled/
+# 4. 测试配置：sudo nginx -t
+# 5. 重启 Nginx：sudo systemctl restart nginx
+
+server {
+    listen 8889;
+    server_name 122.193.22.114;  # 修改为你的服务器IP或域名
+
+    # 前端静态文件目录（Next.js 构建后的输出目录）
+    # 通常是 web/.next/standalone 或 web/out（根据你的构建配置）
+    root /path/to/web/dist;  # 修改为你的前端构建目录
+    index index.html;
+
+    # 前端静态文件
+    location / {
+        try_files $uri $uri/ /index.html;
+        
+        # 静态资源缓存
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # 后端 API 代理
+    location /api/ {
+        proxy_pass http://localhost:8008/api/;
+        proxy_http_version 1.1;
+        
+        # WebSocket 支持（如果需要）
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        
+        # 请求头设置
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+        
+        # 超时设置（根据工作流执行时间调整）
+        proxy_connect_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+        
+        # 禁用缓冲（用于流式响应）
+        proxy_buffering off;
+    }
+
+    # 日志配置
+    access_log /var/log/nginx/agenticworkflow_access.log;
+    error_log /var/log/nginx/agenticworkflow_error.log;
+}
+
+
+
+

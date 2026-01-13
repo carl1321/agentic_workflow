@@ -116,11 +116,17 @@ def visualize_molecules(smiles_text: str) -> str:
         
         # Generate grid image using MolsToGridImage (like perovskite_agents)
         try:
-            # Default: 5 molecules per row
-            molsPerRow = 5
+            # Configure image size based on number of molecules
+            if len(mols) == 1:
+                molsPerRow = 1
+                subImgSize = (400, 400) # Ensure reasonable size for single molecule
+            else:
+                # Default: 5 molecules per row
+                molsPerRow = 5
+                subImgSize = (200, 200) # Smaller size for grid
             
             # Generate SVG grid image (faster, smaller, better quality)
-            grid_img = MolsToGridImage(mols, molsPerRow=molsPerRow, useSVG=True)
+            grid_img = MolsToGridImage(mols, molsPerRow=molsPerRow, subImgSize=subImgSize, useSVG=True)
             
             # Convert SVG to base64
             # SVG is already a string from MolsToGridImage when useSVG=True

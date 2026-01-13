@@ -226,6 +226,26 @@ export async function getRunStatus(
 }
 
 /**
+ * 获取工作流运行的完整结果
+ */
+export async function getWorkflowRun(
+  workflowId: string,
+  runId: string
+): Promise<{
+  id: string;
+  workflow_id: string;
+  status: string;
+  output?: Record<string, any>; // node_outputs
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  created_by?: string;
+  created_by_name?: string;
+}> {
+  return apiRequest(`workflows/${workflowId}/runs/${runId}`);
+}
+
+/**
  * 获取工作流草稿
  */
 export async function getDraft(
