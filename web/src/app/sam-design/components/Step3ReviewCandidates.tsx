@@ -4,7 +4,6 @@
 // SPDX-License-Identifier: MIT
 
 import { useState, useEffect, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
@@ -63,7 +62,6 @@ export function Step3ReviewCandidates({
   const [expandedMolecules, setExpandedMolecules] = useState<Set<number>>(new Set());
   const [saving, setSaving] = useState(false);
   const [hasAutoSaved, setHasAutoSaved] = useState(!!initialMolecules); // 如果从历史记录加载，标记为已保存
-  const [enrichProgress, setEnrichProgress] = useState<{ total: number; done: number }>({ total: 0, done: 0 });
   const hasLoadedRef = useRef(false); // 防止重复加载
   const loadingExecutionIdRef = useRef<string | null>(null); // 跟踪正在加载的执行ID
   const isProcessingRef = useRef(false); // 防止并发处理
@@ -90,21 +88,6 @@ export function Step3ReviewCandidates({
 
   // 获取用于评估的模型（新字段优先，其次兼容旧字段 selectedModel）
   const evaluationModel = executionResult?.evaluationModel || executionResult?.selectedModel;
-
-  const hasCompleteEvaluation = (mol: Partial<Molecule>) => {
-    return !!mol.score && !!mol.analysis && !!mol.properties;
-  };
-
-  const isFullyEnriched = (mol: Partial<Molecule>) => {
-    // 图片不是必须字段，但用于更好的历史回放体验；这里要求图片+评估都齐全才自动保存
-    return !!mol.imageUrl && hasCompleteEvaluation(mol);
-  };
-
-  const updateMolecule = (index: number, patch: Partial<Molecule>) => {
-    setMolecules((prev) =>
-      prev.map((m) => (m.index === index ? { ...m, ...patch } : m))
-    );
-  };
 
   /**
    * 保存历史记录
@@ -175,7 +158,6 @@ export function Step3ReviewCandidates({
       try {
         setLoading(true);
         setError(null);
-        setEnrichProgress({ total: 0, done: 0 });
 
         let moleculesData: Partial<Molecule>[] = [];
 
@@ -224,121 +206,120 @@ export function Step3ReviewCandidates({
           return;
         }
 
-        // 先渲染基础列表（让用户立刻看到候选分子），再逐个回填图像/评估结果
-        const baseMolecules: Molecule[] = moleculesData.map((mol, index) => {
-          const base: Molecule = {
-            index: mol.index || index + 1,
-            smiles: mol.smiles || "",
-            scaffoldCondition: mol.scaffoldCondition,
-            scaffoldSmiles: mol.scaffoldSmiles,
-            imageUrl: mol.imageUrl,
-            properties: mol.properties,
-            score: hasCompleteEvaluation(mol) ? mol.score : undefined,
-            analysis: hasCompleteEvaluation(mol) ? mol.analysis : undefined,
-          };
-          return base;
-        });
-
-        setMolecules(baseMolecules);
-        setEnrichProgress({
-          total: baseMolecules.length,
-          done: baseMolecules.filter((m) => isFullyEnriched(m)).length,
-        });
-        setLoading(false);
-
-        const isStillCurrent = () => loadingExecutionIdRef.current === executionId;
-
-        // 逐个补齐：图片 + 评估（避免 Promise.all 一次性刷新）
-        for (const mol of baseMolecules) {
-          if (!isStillCurrent()) return;
-
-          // 1) 图片（如果缺失）
-          const moleculeKey = mol.smiles;
-          if (!mol.imageUrl && mol.smiles && !processedMoleculeImagesRef.current.has(moleculeKey)) {
-            try {
-              processedMoleculeImagesRef.current.add(moleculeKey);
-              console.log(`Generating image for molecule ${mol.index}: ${mol.smiles.substring(0, 30)}...`);
-              const visResult = await executeTool("visualize_molecules_tool", {
-                smiles_text: `${mol.index}. SMILES: ${mol.smiles}`,
-              });
-
-              let imageUrl: string | undefined;
-              const imageIdMatch = visResult.match(/<!--\s*MOLECULAR_IMAGE_ID:([a-f0-9\-]+)\s*-->/i);
-              if (imageIdMatch) {
-                imageUrl = `/molecular_images/${imageIdMatch[1]}.svg`;
-              } else {
-                const imageUrlMatch = visResult.match(/\/molecular_images\/[a-f0-9\-]+\.svg/i);
-                if (imageUrlMatch) imageUrl = imageUrlMatch[0];
+        // 补充缺失的数据（可视化、性质预测、评估）
+        const processedMolecules = await Promise.all(
+          moleculesData.map(async (mol, index) => {
+            // 检查分子是否已经有完整的评估结果（从历史记录或工作流结果中可能已经包含）
+            const hasCompleteEvaluation = mol.score && mol.analysis && mol.properties;
+            
+            const molecule: Molecule = {
+              index: mol.index || index + 1,
+              smiles: mol.smiles || "",
+              scaffoldCondition: mol.scaffoldCondition,
+              scaffoldSmiles: mol.scaffoldSmiles,
+              imageUrl: mol.imageUrl,
+              properties: mol.properties,
+              // 如果已有完整评估结果，直接复制
+              score: hasCompleteEvaluation ? mol.score : undefined,
+              analysis: hasCompleteEvaluation ? mol.analysis : undefined,
+            };
+            
+            // 如果没有图像，为每个分子单独生成图片
+            // 使用SMILES作为唯一标识，防止重复生成
+            const moleculeKey = molecule.smiles;
+            if (!molecule.imageUrl && molecule.smiles && !processedMoleculeImagesRef.current.has(moleculeKey)) {
+              try {
+                // 标记为正在处理
+                processedMoleculeImagesRef.current.add(moleculeKey);
+                console.log(`Generating image for molecule ${molecule.index}: ${molecule.smiles.substring(0, 30)}...`);
+                const visResult = await executeTool("visualize_molecules_tool", {
+                  smiles_text: `${molecule.index}. SMILES: ${molecule.smiles}`,
+                });
+                
+                // 从结果中提取图像URL（支持多种格式）
+                // 格式1: <!-- MOLECULAR_IMAGE_ID:uuid -->
+                const imageIdMatch = visResult.match(/<!--\s*MOLECULAR_IMAGE_ID:([a-f0-9\-]+)\s*-->/i);
+                if (imageIdMatch) {
+                  molecule.imageUrl = `/molecular_images/${imageIdMatch[1]}.svg`;
+                } else {
+                  // 格式2: /molecular_images/uuid.svg
+                  const imageUrlMatch = visResult.match(/\/molecular_images\/[a-f0-9\-]+\.svg/i);
+                  if (imageUrlMatch) {
+                    molecule.imageUrl = imageUrlMatch[0];
+                  }
+                }
+              } catch (err) {
+                console.error(`Failed to visualize molecule ${molecule.index}:`, err);
               }
-
-              if (imageUrl && isStillCurrent()) {
-                updateMolecule(mol.index, { imageUrl });
-              }
-            } catch (err) {
-              console.error(`Failed to visualize molecule ${mol.index}:`, err);
             }
-          }
 
-          if (!isStillCurrent()) return;
-
-          // 2) 评估（如果缺失）
-          if (!hasCompleteEvaluation(mol) && mol.smiles) {
-            try {
-              console.log(`Evaluating molecule ${mol.index}: ${mol.smiles.substring(0, 30)}...`);
-              const evalResult = await apiRequest<{
-                success: boolean;
-                score: {
-                  total: number;
-                  surfaceAnchoring?: number;
-                  energyLevel?: number;
-                  packingDensity?: number;
-                };
-                description: string;
-                explanation: string;
-                properties?: {
-                  HOMO?: number;
-                  LUMO?: number;
-                  DM?: number;
-                };
-              }>("sam-design/evaluate-molecule", {
-                method: "POST",
-                body: JSON.stringify({
-                  model: evaluationModel,
-                  smiles: mol.smiles,
-                  objective: objective.text,
-                  constraints: constraints.map((c) => ({
-                    name: c.name,
-                    value: c.value,
-                    enabled: c.enabled,
-                  })),
-                  properties: mol.properties,
-                }),
-              });
-
-              if (evalResult.success && isStillCurrent()) {
-                updateMolecule(mol.index, {
+            // 如果已经有完整的评估结果，直接使用，不重新执行评估
+            if (hasCompleteEvaluation) {
+              molecule.score = mol.score;
+              molecule.analysis = mol.analysis;
+              molecule.properties = mol.properties;
+              console.log(`Molecule ${molecule.index} already has complete evaluation, skipping re-evaluation`);
+            } else if (molecule.smiles) {
+              // 只有在没有完整评估结果时才进行评估
+              // 评估API会自动使用LLM预测性质（如果没有提供），所以不需要单独调用性质预测工具
+              try {
+                console.log(`Evaluating molecule ${molecule.index}: ${molecule.smiles.substring(0, 30)}...`);
+                const evalResult = await apiRequest<{
+                  success: boolean;
                   score: {
+                    total: number;
+                    surfaceAnchoring?: number;
+                    energyLevel?: number;
+                    packingDensity?: number;
+                  };
+                  description: string;
+                  explanation: string;
+                  properties?: {
+                    HOMO?: number;
+                    LUMO?: number;
+                    DM?: number;
+                  };
+                }>("sam-design/evaluate-molecule", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    model: evaluationModel, // 传递评估模型
+                    smiles: molecule.smiles,
+                    objective: objective.text,
+                    constraints: constraints.map((c) => ({
+                      name: c.name,
+                      value: c.value,
+                      enabled: c.enabled,
+                    })),
+                    properties: molecule.properties, // 如果已有性质则传递，否则评估API会用LLM预测
+                  }),
+                });
+
+                if (evalResult.success) {
+                  molecule.score = {
                     total: evalResult.score.total,
                     surfaceAnchoring: evalResult.score.surfaceAnchoring,
                     energyLevel: evalResult.score.energyLevel,
                     packingDensity: evalResult.score.packingDensity,
-                  },
-                  analysis: {
+                  };
+                  molecule.analysis = {
                     description: evalResult.description,
                     explanation: evalResult.explanation,
-                  },
-                  properties: evalResult.properties ?? mol.properties,
-                });
+                  };
+                  // 如果评估API返回了预测的性质，更新molecule.properties
+                  if (evalResult.properties && !molecule.properties) {
+                    molecule.properties = evalResult.properties;
+                  }
+                }
+              } catch (err) {
+                console.error(`Failed to evaluate molecule ${molecule.index}:`, err);
               }
-            } catch (err) {
-              console.error(`Failed to evaluate molecule ${mol.index}:`, err);
             }
-          }
 
-          if (!isStillCurrent()) return;
-          // 不在这里手动累加 done（避免闭包/并发导致不准）；由下面的 effect 统一按“是否完整”重算进度
-        }
+            return molecule;
+          })
+        );
 
+        setMolecules(processedMolecules);
         hasLoadedRef.current = true;
         isProcessingRef.current = false;
         console.log("Molecules loaded successfully, executionId:", executionId);
@@ -352,7 +333,6 @@ export function Step3ReviewCandidates({
           loadingExecutionIdRef.current = null;
         }
       } finally {
-        // loading 在“基础列表渲染完成”时就会置为 false；这里保底
         setLoading(false);
       }
     };
@@ -374,9 +354,8 @@ export function Step3ReviewCandidates({
       return;
     }
     
-    // 只有在分子数据“补齐完成”后才自动保存（避免保存半成品）
-    const allDone = molecules.length > 0 && molecules.every((m) => isFullyEnriched(m));
-    if (allDone && executionResult && !loading && !saving && !hasAutoSaved) {
+    // 只有在分子数据加载完成且不为空时才自动保存，且只保存一次
+    if (molecules.length > 0 && executionResult && !loading && !saving && !hasAutoSaved) {
       // 延迟保存，避免频繁保存
       const autoSaveTimer = setTimeout(async () => {
         try {
@@ -413,13 +392,6 @@ export function Step3ReviewCandidates({
     }
   }, [molecules, executionResult, loading, saving, hasAutoSaved, objective, constraints, initialMolecules]);
 
-  // 进度条兜底：根据 molecules 当前是否完整动态计算 done
-  useEffect(() => {
-    if (molecules.length === 0) return;
-    const done = molecules.filter((m) => isFullyEnriched(m)).length;
-    setEnrichProgress({ total: molecules.length, done });
-  }, [molecules]);
-
   const toggleExpanded = (index: number) => {
     setExpandedMolecules((prev) => {
       const next = new Set(prev);
@@ -446,25 +418,6 @@ export function Step3ReviewCandidates({
         </div>
         {headerRight ? <div className="pt-1">{headerRight}</div> : null}
       </div>
-
-      {/* 渐进式评估进度（评估结果会逐个回填） */}
-      {enrichProgress.total > 0 && enrichProgress.done < enrichProgress.total ? (
-        <Card className="shadow-sm">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between gap-4">
-              <div className="text-sm text-slate-700 dark:text-slate-300">
-                正在评估候选分子：{enrichProgress.done}/{enrichProgress.total}
-              </div>
-              <div className="w-56">
-                <Progress
-                  value={(enrichProgress.done / enrichProgress.total) * 100}
-                  className="h-2"
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
 
       {/* 主要内容 */}
       <Card className="shadow-sm">
@@ -525,18 +478,9 @@ export function Step3ReviewCandidates({
             </div>
           ) : (
             <div className="space-y-4">
-              <AnimatePresence initial={false}>
-                {molecules.map((molecule, idx) => (
-                  <motion.div
-                    key={molecule.index}
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    transition={{ duration: 0.25, delay: Math.min(0.2, idx * 0.03) }}
-                  >
-                    <Card className="overflow-hidden">
-                      <CardContent className="p-6">
+              {molecules.map((molecule) => (
+                <Card key={molecule.index} className="overflow-hidden">
+                  <CardContent className="p-6">
                     <div className="flex flex-col lg:flex-row gap-6">
                       {/* 左侧：分子结构图 */}
                       <div className="flex-shrink-0 w-full lg:w-auto">
@@ -579,36 +523,14 @@ export function Step3ReviewCandidates({
                             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
                               候选分子 {molecule.index}
                             </h3>
-                            <AnimatePresence mode="wait" initial={false}>
-                              {molecule.score ? (
-                                <motion.div
-                                  key="score"
-                                  initial={{ opacity: 0, y: 6 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0, y: -6 }}
-                                  transition={{ duration: 0.2 }}
-                                >
-                                  <Badge
-                                    variant="outline"
-                                    className={`text-lg font-bold px-3 py-1 ${getScoreColor(molecule.score.total)}`}
-                                  >
-                                    {formatScore(molecule.score.total)} 分
-                                  </Badge>
-                                </motion.div>
-                              ) : (
-                                <motion.div
-                                  key="scoring"
-                                  initial={{ opacity: 0 }}
-                                  animate={{ opacity: 1 }}
-                                  exit={{ opacity: 0 }}
-                                  transition={{ duration: 0.2 }}
-                                >
-                                  <Badge variant="secondary" className="text-xs">
-                                    评估中…
-                                  </Badge>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
+                            {molecule.score && (
+                              <Badge
+                                variant="outline"
+                                className={`text-lg font-bold px-3 py-1 ${getScoreColor(molecule.score.total)}`}
+                              >
+                                {formatScore(molecule.score.total)} 分
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-sm font-mono text-slate-600 dark:text-slate-400 break-all">
                             SMILES: {molecule.smiles}
@@ -616,43 +538,19 @@ export function Step3ReviewCandidates({
                         </div>
 
                         {/* 总评分 */}
-                        <AnimatePresence mode="wait" initial={false}>
-                          {molecule.score ? (
-                            <motion.div
-                              key="total_score"
-                              initial={{ opacity: 0, y: 6 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -6 }}
-                              transition={{ duration: 0.2 }}
-                              className="space-y-2"
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                  总评分
-                                </span>
-                                <span className={`text-lg font-bold ${getScoreColor(molecule.score.total)}`}>
-                                  {formatScore(molecule.score.total)} / 100
-                                </span>
-                              </div>
-                              <Progress value={molecule.score.total} className="h-2" />
-                            </motion.div>
-                          ) : (
-                            <motion.div
-                              key="total_score_skeleton"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="space-y-2"
-                            >
-                              <div className="flex items-center justify-between">
-                                <Skeleton className="h-4 w-20" />
-                                <Skeleton className="h-4 w-24" />
-                              </div>
-                              <Skeleton className="h-2 w-full" />
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                        {molecule.score && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                总评分
+                              </span>
+                              <span className={`text-lg font-bold ${getScoreColor(molecule.score.total)}`}>
+                                {formatScore(molecule.score.total)} / 100
+                              </span>
+                            </div>
+                            <Progress value={molecule.score.total} className="h-2" />
+                          </div>
+                        )}
 
                         {/* 各维度指标 */}
                         {molecule.score && (
@@ -739,39 +637,17 @@ export function Step3ReviewCandidates({
                           </div>
                         )}
 
-                        {/* 分子描述（评估返回后淡入更新） */}
-                        <AnimatePresence mode="wait" initial={false}>
-                          {molecule.analysis ? (
-                            <motion.div
-                              key="desc"
-                              initial={{ opacity: 0, y: 6 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              exit={{ opacity: 0, y: -6 }}
-                              transition={{ duration: 0.2 }}
-                              className="space-y-2"
-                            >
-                              <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                分子描述
-                              </h4>
-                              <p className="text-sm text-slate-600 dark:text-slate-400">
-                                {molecule.analysis.description}
-                              </p>
-                            </motion.div>
-                          ) : (
-                            <motion.div
-                              key="desc_skeleton"
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              exit={{ opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="space-y-2"
-                            >
-                              <Skeleton className="h-4 w-24" />
-                              <Skeleton className="h-4 w-full" />
-                              <Skeleton className="h-4 w-5/6" />
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
+                        {/* 分子描述 */}
+                        {molecule.analysis && (
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                              分子描述
+                            </h4>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
+                              {molecule.analysis.description}
+                            </p>
+                          </div>
+                        )}
 
                         {/* 系统解释（可折叠） */}
                         {molecule.analysis && (
@@ -806,11 +682,9 @@ export function Step3ReviewCandidates({
                         )}
                       </div>
                     </div>
-                      </CardContent>
-                    </Card>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           )}
 

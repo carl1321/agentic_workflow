@@ -60,13 +60,11 @@ export function parseSMILESFromText(text: string): string[] {
 
 /**
  * 从工作流执行的node_outputs中提取分子数据
+ * 只从循环节点的 output 字段中提取，忽略其他节点的输出
  */
 export function extractMoleculesFromWorkflowResult(
   nodeOutputs: Record<string, any>
 ): Partial<Molecule>[] {
-  // 新实现：工作流输出通常是结构化JSON（数组/对象），而不是包含“SMILES:”的纯文本。
-  // 这里递归地从 workflow 的最终 outputs / node_outputs 中提取带 smiles 的对象/数组，
-  // 并去重后返回给 Step3 做评估。
   const moleculeMap = new Map<string, Partial<Molecule>>();
   const imageUrlMap = new Map<string, string>(); // smiles -> imageUrl（如果输出里带了）
 
@@ -98,43 +96,60 @@ export function extractMoleculesFromWorkflowResult(
     }
   };
 
-  const walk = (value: any) => {
-    if (value === null || value === undefined) return;
-    if (Array.isArray(value)) {
-      for (const item of value) walk(item);
-      return;
-    }
-    if (typeof value !== "object") return;
-
-    // 先尝试从当前对象本身提取 smiles
-    tryCollectFromObject(value);
-
-    // 对 loop 节点输出做优先遍历：passed_items / pending_items / output
-    if (Array.isArray((value as any).passed_items)) walk((value as any).passed_items);
-    if (Array.isArray((value as any).pending_items)) walk((value as any).pending_items);
-    if (Array.isArray((value as any).output)) walk((value as any).output);
-
-    // 继续遍历所有子字段
-    for (const v of Object.values(value)) {
-      walk(v);
+  // 从数组中提取分子
+  const extractFromArray = (arr: any[]) => {
+    for (const item of arr) {
+      if (Array.isArray(item)) {
+        extractFromArray(item);
+      } else if (item && typeof item === "object") {
+        tryCollectFromObject(item);
+      }
     }
   };
 
-  // 从所有 nodeOutputs 递归提取
-  for (const output of Object.values(nodeOutputs)) {
-    // 常见结构：{ output: ... } / { outputs: ... } / { <nodeId>: {..} }
-    walk(output);
+  // 只从循环节点的 output 字段中提取
+  // 循环节点的特征：有 passed_items 或 pending_items 字段，或者有 iterations 字段
+  for (const [nodeId, nodeOutput] of Object.entries(nodeOutputs)) {
+    if (!nodeOutput || typeof nodeOutput !== "object") continue;
+
+    // 检查是否是循环节点：有 passed_items、pending_items 或 iterations 字段
+    const isLoopNode = 
+      "passed_items" in nodeOutput || 
+      "pending_items" in nodeOutput || 
+      "iterations" in nodeOutput;
+
+    if (isLoopNode) {
+      // 只从循环节点的 output 字段中提取
+      const output = nodeOutput.output;
+      if (Array.isArray(output)) {
+        extractFromArray(output);
+      } else if (output && typeof output === "object") {
+        tryCollectFromObject(output);
+      }
+    }
   }
 
   // 如果没提取到结构化 smiles，尝试退化到文本解析（兼容老的工具输出）
   if (moleculeMap.size === 0) {
-    for (const output of Object.values(nodeOutputs)) {
-      const outputText = typeof output?.output === "string" ? output.output : JSON.stringify(output ?? "");
-      const smilesList = parseSMILESFromText(outputText);
-      for (const smiles of smilesList) {
-        const key = normalizeSmiles(smiles);
-        if (!moleculeMap.has(key)) {
-          moleculeMap.set(key, { smiles: key });
+    // 只从循环节点的 output 中尝试文本解析
+    for (const [nodeId, nodeOutput] of Object.entries(nodeOutputs)) {
+      if (!nodeOutput || typeof nodeOutput !== "object") continue;
+      
+      const isLoopNode = 
+        "passed_items" in nodeOutput || 
+        "pending_items" in nodeOutput || 
+        "iterations" in nodeOutput;
+
+      if (isLoopNode && nodeOutput.output) {
+        const outputText = typeof nodeOutput.output === "string" 
+          ? nodeOutput.output 
+          : JSON.stringify(nodeOutput.output);
+        const smilesList = parseSMILESFromText(outputText);
+        for (const smiles of smilesList) {
+          const key = normalizeSmiles(smiles);
+          if (!moleculeMap.has(key)) {
+            moleculeMap.set(key, { smiles: key });
+          }
         }
       }
     }
