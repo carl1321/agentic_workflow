@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from ..dependencies import CurrentUser, require_permission
 from ..models import MenuCreate, MenuResponse, MenuUpdate
 from .menus import MenuAdminDB
+from .permissions import PermissionAdminDB
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +98,13 @@ async def get_menu(
     menu = find_menu(menus_tree, menu_id)
     if not menu:
         # Return flat menu if not found in tree
+        menu_id_uuid = menu_data["id"] if isinstance(menu_data["id"], UUID) else UUID(str(menu_data["id"]))
+        parent_id_uuid = None
+        if menu_data.get("parent_id"):
+            raw_parent = menu_data["parent_id"]
+            parent_id_uuid = raw_parent if isinstance(raw_parent, UUID) else UUID(str(raw_parent))
         return MenuResponse(
-            id=UUID(menu_data["id"]),
+            id=menu_id_uuid,
             code=menu_data["code"],
             name=menu_data["name"],
             path=menu_data.get("path"),
@@ -107,7 +113,7 @@ async def get_menu(
             menu_type=menu_data.get("menu_type", "menu"),
             permission_code=menu_data.get("permission_code"),
             is_visible=menu_data.get("is_visible", True),
-            parent_id=UUID(menu_data["parent_id"]) if menu_data.get("parent_id") else None,
+            parent_id=parent_id_uuid,
             is_system=menu_data.get("is_system", False),
             sort_order=menu_data.get("sort_order", 0),
             created_at=menu_data.get("created_at").isoformat() if menu_data.get("created_at") else None,
@@ -124,6 +130,46 @@ async def create_menu(
     current_user: CurrentUser = Depends(require_permission("menu:create")),
 ):
     """Create a new menu."""
+    # Auto-generate permission_code from menu code if not provided
+    permission_code = menu_data.permission_code
+    if not permission_code and menu_data.code:
+        # Use menu code as resource, default to "read" action
+        permission_code = f"{menu_data.code}:read"
+    
+    # If permission_code is provided, ensure the permission exists and create related permissions
+    if permission_code:
+        parts = permission_code.split(":", 1)
+        if len(parts) == 2:
+            resource, _ = parts
+            # Action name mapping for Chinese
+            action_names = {
+                "read": "查看",
+                "create": "创建",
+                "update": "更新",
+                "delete": "删除",
+            }
+            
+            # Auto-create all standard permissions (read, create, update, delete) if they don't exist
+            standard_actions = ["read", "create", "update", "delete"]
+            for action in standard_actions:
+                perm_code = f"{resource}:{action}"
+                existing_perm = PermissionAdminDB.get_by_code(perm_code)
+                if not existing_perm:
+                    action_name = action_names.get(action, action)
+                    perm_name = f"{action_name}{menu_data.name}"
+                    perm_description = f"{action_name}菜单「{menu_data.name}」的权限"
+                    PermissionAdminDB.create_permission(
+                        code=perm_code,
+                        name=perm_name,
+                        resource=resource,
+                        action=action,
+                        description=perm_description,
+                    )
+                    logger.info(f"Auto-created permission: {perm_code}")
+        else:
+            logger.warning(f"Invalid permission_code format: {permission_code}, expected 'resource:action'")
+            permission_code = None
+    
     menu_id = MenuAdminDB.create_menu(
         code=menu_data.code,
         name=menu_data.name,
@@ -131,7 +177,7 @@ async def create_menu(
         icon=menu_data.icon,
         component=menu_data.component,
         menu_type=menu_data.menu_type,
-        permission_code=menu_data.permission_code,
+        permission_code=permission_code,
         is_visible=menu_data.is_visible,
         parent_id=menu_data.parent_id,
     )
@@ -144,8 +190,13 @@ async def create_menu(
     
     # Get created menu
     created_menu = MenuAdminDB.get_by_id(menu_id)
+    menu_id_uuid = created_menu["id"] if isinstance(created_menu["id"], UUID) else UUID(str(created_menu["id"]))
+    parent_id_uuid = None
+    if created_menu.get("parent_id"):
+        raw_parent = created_menu["parent_id"]
+        parent_id_uuid = raw_parent if isinstance(raw_parent, UUID) else UUID(str(raw_parent))
     return MenuResponse(
-        id=UUID(created_menu["id"]),
+        id=menu_id_uuid,
         code=created_menu["code"],
         name=created_menu["name"],
         path=created_menu.get("path"),
@@ -154,7 +205,7 @@ async def create_menu(
         menu_type=created_menu.get("menu_type", "menu"),
         permission_code=created_menu.get("permission_code"),
         is_visible=created_menu.get("is_visible", True),
-        parent_id=UUID(created_menu["parent_id"]) if created_menu.get("parent_id") else None,
+        parent_id=parent_id_uuid,
         is_system=created_menu.get("is_system", False),
         sort_order=created_menu.get("sort_order", 0),
         created_at=created_menu.get("created_at").isoformat() if created_menu.get("created_at") else None,
@@ -207,8 +258,13 @@ async def update_menu(
     
     # Get updated menu
     updated_menu = MenuAdminDB.get_by_id(menu_id)
+    menu_id_uuid = updated_menu["id"] if isinstance(updated_menu["id"], UUID) else UUID(str(updated_menu["id"]))
+    parent_id_uuid = None
+    if updated_menu.get("parent_id"):
+        raw_parent = updated_menu["parent_id"]
+        parent_id_uuid = raw_parent if isinstance(raw_parent, UUID) else UUID(str(raw_parent))
     return MenuResponse(
-        id=UUID(updated_menu["id"]),
+        id=menu_id_uuid,
         code=updated_menu["code"],
         name=updated_menu["name"],
         path=updated_menu.get("path"),
@@ -217,7 +273,7 @@ async def update_menu(
         menu_type=updated_menu.get("menu_type", "menu"),
         permission_code=updated_menu.get("permission_code"),
         is_visible=updated_menu.get("is_visible", True),
-        parent_id=UUID(updated_menu["parent_id"]) if updated_menu.get("parent_id") else None,
+        parent_id=parent_id_uuid,
         is_system=updated_menu.get("is_system", False),
         sort_order=updated_menu.get("sort_order", 0),
         created_at=updated_menu.get("created_at").isoformat() if updated_menu.get("created_at") else None,
