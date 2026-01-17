@@ -2430,6 +2430,234 @@ async def delete_design_history(
         raise HTTPException(status_code=500, detail=f"Failed to delete design history: {str(e)}")
 
 
+# ============= newSam 执行历史 API =============
+
+@app.post("/api/new-sam/save-execution-history")
+async def save_new_sam_execution_history(
+    request: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    保存newSam执行历史记录
+    
+    Request body:
+    {
+        "runId": str (UUID),
+        "workflowId": str (UUID),
+        "name": str (可选),
+        "objective": Dict,
+        "constraints": List[Dict],
+        "executionState": str,
+        "startedAt": str (ISO datetime, 可选),
+        "finishedAt": str (ISO datetime, 可选),
+        "executionLogs": List[str],
+        "nodeOutputs": Dict,
+        "iterationNodeOutputs": Dict,  # Map<iter, Record<nodeId, outputs>> 序列化为对象
+        "iterationSnapshots": List[Dict],
+        "workflowGraph": Dict,
+        "iterationAnalytics": Dict,
+        "candidateMolecules": List[Dict]
+    }
+    """
+    try:
+        from src.server.new_sam.db import save_execution_history
+        from uuid import UUID
+        from datetime import datetime
+        
+        run_id = UUID(request.get("runId"))
+        workflow_id = UUID(request.get("workflowId"))
+        name = request.get("name")
+        if not name:
+            # 自动生成名称：基于objective的前30个字符 + 时间戳
+            objective_text = request.get("objective", {}).get("text", "")
+            if objective_text:
+                name = objective_text[:30] + (objective_text[30:] and "...")
+            else:
+                name = f"newSam执行-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        
+        objective = request.get("objective", {})
+        constraints = request.get("constraints", [])
+        execution_state = request.get("executionState", "completed")
+        
+        started_at = None
+        if request.get("startedAt"):
+            started_at = datetime.fromisoformat(request["startedAt"].replace("Z", "+00:00"))
+        
+        finished_at = None
+        if request.get("finishedAt"):
+            finished_at = datetime.fromisoformat(request["finishedAt"].replace("Z", "+00:00"))
+        
+        execution_logs = request.get("executionLogs")
+        node_outputs = request.get("nodeOutputs")
+        iteration_node_outputs = request.get("iterationNodeOutputs")
+        iteration_snapshots = request.get("iterationSnapshots")
+        workflow_graph = request.get("workflowGraph")
+        iteration_analytics = request.get("iterationAnalytics")
+        candidate_molecules = request.get("candidateMolecules")
+        
+        if not objective:
+            raise HTTPException(status_code=400, detail="Objective is required")
+        
+        logger.info(f"Saving newSam execution history for user {current_user.id}, name: {name}, run_id: {run_id}")
+        
+        history_id = save_execution_history(
+            run_id=run_id,
+            workflow_id=workflow_id,
+            user_id=current_user.id,
+            name=name,
+            objective=objective,
+            constraints=constraints,
+            execution_state=execution_state,
+            started_at=started_at,
+            finished_at=finished_at,
+            execution_logs=execution_logs,
+            node_outputs=node_outputs,
+            iteration_node_outputs=iteration_node_outputs,
+            iteration_snapshots=iteration_snapshots,
+            workflow_graph=workflow_graph,
+            iteration_analytics=iteration_analytics,
+            candidate_molecules=candidate_molecules,
+        )
+        
+        logger.info(f"newSam execution history saved successfully with ID: {history_id}")
+        
+        return {
+            "success": True,
+            "id": str(history_id),
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error saving newSam execution history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to save execution history: {str(e)}")
+
+
+@app.get("/api/new-sam/execution-history")
+async def get_new_sam_execution_history_list(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    获取当前用户的newSam执行历史记录列表
+    """
+    try:
+        from src.server.new_sam.db import list_execution_history
+        
+        history_list = list_execution_history(
+            user_id=current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+        
+        # 转换UUID和datetime为字符串
+        result = []
+        for item in history_list:
+            result.append({
+                "id": str(item["id"]),
+                "runId": str(item["run_id"]),
+                "workflowId": str(item["workflow_id"]),
+                "name": item["name"],
+                "executionState": item["execution_state"],
+                "startedAt": item.get("started_at"),
+                "finishedAt": item.get("finished_at"),
+                "createdAt": item.get("created_at"),
+                "moleculeCount": item.get("molecule_count", 0),
+            })
+        
+        return {
+            "success": True,
+            "history": result,
+        }
+        
+    except Exception as e:
+        logger.exception(f"Error getting newSam execution history list: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get execution history list: {str(e)}")
+
+
+@app.get("/api/new-sam/execution-history/{history_id}")
+async def get_new_sam_execution_history(
+    history_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    获取单个newSam执行历史记录详情
+    """
+    try:
+        from src.server.new_sam.db import get_execution_history
+        from uuid import UUID
+        
+        history = get_execution_history(
+            history_id=UUID(history_id),
+            user_id=current_user.id,
+        )
+        
+        if not history:
+            raise HTTPException(status_code=404, detail="Execution history record not found")
+        
+        return {
+            "success": True,
+            "history": {
+                "id": str(history["id"]),
+                "runId": str(history["run_id"]),
+                "workflowId": str(history["workflow_id"]),
+                "name": history["name"],
+                "objective": history["objective"],
+                "constraints": history["constraints"],
+                "executionState": history["execution_state"],
+                "startedAt": history.get("started_at"),
+                "finishedAt": history.get("finished_at"),
+                "executionLogs": history.get("execution_logs"),
+                "nodeOutputs": history.get("node_outputs"),
+                "iterationNodeOutputs": history.get("iteration_node_outputs"),
+                "iterationSnapshots": history.get("iteration_snapshots"),
+                "workflowGraph": history.get("workflow_graph"),
+                "iterationAnalytics": history.get("iteration_analytics"),
+                "candidateMolecules": history.get("candidate_molecules"),
+                "createdAt": history.get("created_at"),
+                "updatedAt": history.get("updated_at"),
+            },
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error getting newSam execution history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get execution history: {str(e)}")
+
+
+@app.delete("/api/new-sam/execution-history/{history_id}")
+async def delete_new_sam_execution_history(
+    history_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    删除newSam执行历史记录
+    """
+    try:
+        from src.server.new_sam.db import delete_execution_history
+        from uuid import UUID
+        
+        deleted = delete_execution_history(
+            history_id=UUID(history_id),
+            user_id=current_user.id,
+        )
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Execution history record not found")
+        
+        return {
+            "success": True,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error deleting newSam execution history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete execution history: {str(e)}")
+
+
 # Data Extraction Records API
 @app.post("/api/data-extraction/records", response_model=DataExtractionRecordResponse)
 async def save_extraction_record(request: DataExtractionRecordRequest):
@@ -2754,7 +2982,7 @@ async def execute_workflow(request: WorkflowExecuteRequest, current_user: Option
         if request.files:
             workflow_inputs["files"] = request.files
         
-        # 获取工作流的当前发布版本
+        # 获取工作流的当前发布版本（或按需使用草稿生成一次性 release）
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
@@ -2766,13 +2994,88 @@ async def execute_workflow(request: WorkflowExecuteRequest, current_user: Option
                 workflow = cursor.fetchone()
                 if not workflow:
                     raise ValueError(f"Workflow {request.workflow_id} not found")
-                
-                if not workflow['current_release_id']:
-                    raise ValueError(f"Workflow {request.workflow_id} has no release")
-                
-                release_id = workflow['current_release_id']
+
                 workflow_id = workflow['workflow_id']
                 created_by = current_user.id if current_user else UUID('00000000-0000-0000-0000-000000000000')
+
+                # useDraft: 用最新草稿（或指定草稿）生成一次性 release 来执行，避免“改了 loopCount 仍跑旧 release”
+                if getattr(request, "use_draft", False):
+                    from src.server.workflow.db import get_workflow, get_draft, get_draft_by_id, create_release
+                    import hashlib
+
+                    wf = get_workflow(conn, workflow_id)
+                    wf_name = (wf.get("name") if wf else None) or "未命名工作流"
+
+                    if getattr(request, "draft_id", None):
+                        draft = get_draft_by_id(conn, UUID(request.draft_id))
+                    else:
+                        draft = get_draft(conn, workflow_id)
+
+                    if not draft:
+                        # 兼容：没有草稿时回退到 current_release_id
+                        if not workflow['current_release_id']:
+                            raise ValueError(f"Workflow {request.workflow_id} has no release")
+                        release_id = workflow['current_release_id']
+                        draft = None
+
+                    if draft:
+                        graph = draft.get("graph") or {}
+                        nodes = graph.get("nodes") or []
+                        edges = graph.get("edges") or []
+
+                        # 构造与发布 spec 同结构的执行规范
+                        spec = {
+                            "name": wf_name,
+                            "nodes": [],
+                            "edges": [],
+                        }
+
+                        for n in nodes:
+                            if not isinstance(n, dict):
+                                continue
+                            data = dict(n.get("data") or {})
+                            # 兼容：如果只有 taskName，则映射回 nodeName
+                            if "nodeName" not in data and "node_name" not in data and data.get("taskName"):
+                                data["nodeName"] = data.get("taskName")
+                            spec["nodes"].append({
+                                "id": n.get("id"),
+                                "type": n.get("type"),
+                                "position": n.get("position") or {},
+                                "data": data,
+                            })
+
+                        for e in edges:
+                            if not isinstance(e, dict):
+                                continue
+                            spec["edges"].append({
+                                "id": e.get("id"),
+                                "source": e.get("source"),
+                                "target": e.get("target"),
+                                "sourceHandle": e.get("sourceHandle") or e.get("source_handle"),
+                                "targetHandle": e.get("targetHandle") or e.get("target_handle"),
+                                "condition": e.get("condition"),
+                            })
+
+                        checksum = hashlib.sha256(
+                            json.dumps(spec, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                        ).hexdigest()
+
+                        source_draft_uuid = draft["id"] if isinstance(draft.get("id"), UUID) else UUID(str(draft.get("id")))
+                        release_id = create_release(
+                            conn,
+                            workflow_id,
+                            source_draft_uuid,
+                            spec=spec,
+                            checksum=checksum,
+                            created_by=UUID(str(created_by)),
+                            set_current=False,  # 一次性执行，不改变 current_release_id
+                        )
+                        # 关键：必须提交 release 插入，否则后续 create_run 使用的新连接看不到该 release，触发外键错误
+                        conn.commit()
+                else:
+                    if not workflow['current_release_id']:
+                        raise ValueError(f"Workflow {request.workflow_id} has no release")
+                    release_id = workflow['current_release_id']
             
             # 创建运行记录
             run_id = await executor.create_run(
@@ -2810,7 +3113,7 @@ async def execute_workflow_stream(request: WorkflowExecuteRequest, current_user:
         if request.files:
             workflow_inputs["files"] = request.files
         
-        # 获取工作流的当前发布版本
+        # 获取工作流的当前发布版本（或按需使用草稿生成一次性 release）
         conn = get_db_connection()
         try:
             with conn.cursor() as cursor:
@@ -2822,13 +3125,85 @@ async def execute_workflow_stream(request: WorkflowExecuteRequest, current_user:
                 workflow = cursor.fetchone()
                 if not workflow:
                     raise ValueError(f"Workflow {request.workflow_id} not found")
-                
-                if not workflow['current_release_id']:
-                    raise ValueError(f"Workflow {request.workflow_id} has no release")
-                
-                release_id = workflow['current_release_id']
+
                 workflow_id = workflow['workflow_id']
                 created_by = current_user.id if current_user else UUID('00000000-0000-0000-0000-000000000000')
+
+                if getattr(request, "use_draft", False):
+                    from src.server.workflow.db import get_workflow, get_draft, get_draft_by_id, create_release
+                    import hashlib
+
+                    wf = get_workflow(conn, workflow_id)
+                    wf_name = (wf.get("name") if wf else None) or "未命名工作流"
+
+                    if getattr(request, "draft_id", None):
+                        draft = get_draft_by_id(conn, UUID(request.draft_id))
+                    else:
+                        draft = get_draft(conn, workflow_id)
+
+                    if not draft:
+                        # 兼容：没有草稿时回退到 current_release_id
+                        if not workflow['current_release_id']:
+                            raise ValueError(f"Workflow {request.workflow_id} has no release")
+                        release_id = workflow['current_release_id']
+                        draft = None
+
+                    if draft:
+                        graph = draft.get("graph") or {}
+                        nodes = graph.get("nodes") or []
+                        edges = graph.get("edges") or []
+
+                        spec = {
+                            "name": wf_name,
+                            "nodes": [],
+                            "edges": [],
+                        }
+
+                        for n in nodes:
+                            if not isinstance(n, dict):
+                                continue
+                            data = dict(n.get("data") or {})
+                            if "nodeName" not in data and "node_name" not in data and data.get("taskName"):
+                                data["nodeName"] = data.get("taskName")
+                            spec["nodes"].append({
+                                "id": n.get("id"),
+                                "type": n.get("type"),
+                                "position": n.get("position") or {},
+                                "data": data,
+                            })
+
+                        for e in edges:
+                            if not isinstance(e, dict):
+                                continue
+                            spec["edges"].append({
+                                "id": e.get("id"),
+                                "source": e.get("source"),
+                                "target": e.get("target"),
+                                "sourceHandle": e.get("sourceHandle") or e.get("source_handle"),
+                                "targetHandle": e.get("targetHandle") or e.get("target_handle"),
+                                "condition": e.get("condition"),
+                            })
+
+                        checksum = hashlib.sha256(
+                            json.dumps(spec, ensure_ascii=False, sort_keys=True).encode("utf-8")
+                        ).hexdigest()
+
+                        source_draft_uuid = draft["id"] if isinstance(draft.get("id"), UUID) else UUID(str(draft.get("id")))
+                        release_id = create_release(
+                            conn,
+                            workflow_id,
+                            source_draft_uuid,
+                            spec=spec,
+                            checksum=checksum,
+                            created_by=UUID(str(created_by)),
+                            set_current=False,
+                        )
+                        # 关键：必须提交 release 插入，否则后续 create_run 使用的新连接看不到该 release，触发外键错误
+                        conn.commit()
+                else:
+                    if not workflow['current_release_id']:
+                        raise ValueError(f"Workflow {request.workflow_id} has no release")
+                    release_id = workflow['current_release_id']
             
             # 创建运行记录
             run_id = await executor.create_run(

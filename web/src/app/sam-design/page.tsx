@@ -13,7 +13,7 @@ import { Button } from "~/components/ui/button";
 import { History } from "lucide-react";
 import { getDesignHistory } from "~/core/api/sam-design";
 import { toast } from "sonner";
-import type { DesignStep, DesignState, DesignObjective, Constraint, ExecutionResult, DesignHistory } from "./types";
+import type { DesignStep, DesignState, DesignObjective, Constraint, ExecutionResult, DesignHistory, Molecule } from "./types";
 
 /**
  * 从 localStorage 加载设计状态
@@ -326,4 +326,3 @@ export default function SAMDesignPage() {
     </div>
   );
 }
-

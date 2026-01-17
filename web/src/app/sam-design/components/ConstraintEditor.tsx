@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: MIT
 
 import { nanoid } from "nanoid";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, RotateCcw } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
@@ -106,7 +106,7 @@ export function ConstraintEditor({
   return (
     <div className="flex flex-col gap-4">
       {/* 约束列表：3列并排 */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-3 gap-4">
         {constraints.length === 0 ? (
           <div className="col-span-full rounded-lg border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 py-8 text-center">
             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -295,8 +295,8 @@ export function ConstraintEditor({
         )}
       </div>
 
-      {/* 添加约束按钮 */}
-      <div className="col-span-full pt-2">
+      {/* 添加约束和恢复默认按钮 */}
+      <div className="col-span-full pt-2 flex items-center gap-2">
         <Button
           type="button"
           variant="outline"
@@ -305,6 +305,47 @@ export function ConstraintEditor({
         >
           <Plus className="mr-2 h-4 w-4" />
           添加约束
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            // 恢复默认的三个约束
+            const defaultConstraints = [
+              {
+                id: `constraint-${nanoid()}`,
+                name: "表面锚定强度",
+                type: "surface_anchoring" as const,
+                valueType: "select" as const,
+                value: "High",
+                enabled: true,
+                options: ["High", "Medium", "Low"],
+              },
+              {
+                id: `constraint-${nanoid()}`,
+                name: "能级匹配",
+                type: "energy_level" as const,
+                valueType: "range" as const,
+                value: { min: -0.2, max: 0.2 },
+                enabled: true,
+                unit: "eV",
+              },
+              {
+                id: `constraint-${nanoid()}`,
+                name: "膜致密度和稳定性",
+                type: "packing_density" as const,
+                valueType: "select" as const,
+                value: "High",
+                enabled: true,
+                options: ["High", "Medium", "Low"],
+              },
+            ];
+            onConstraintsChange(defaultConstraints);
+          }}
+          className="w-full sm:w-auto"
+        >
+          <RotateCcw className="mr-2 h-4 w-4" />
+          恢复默认约束
         </Button>
       </div>
     </div>

@@ -389,7 +389,47 @@ def create_workflow_tables(conn):
                 UNIQUE(run_id, seq),
                 FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
             );
+        """)
+        
+        # 检查并添加缺失的 created_at 列（兼容旧表结构）
+        cursor.execute("""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'run_logs' AND column_name = 'created_at'
+        """)
+        if not cursor.fetchone():
+            # 检查表是否有数据
+            cursor.execute("SELECT COUNT(*) as count FROM run_logs")
+            count_row = cursor.fetchone()
+            row_count = count_row['count'] if count_row else 0
             
+            if row_count > 0:
+                # 如果表有数据，添加可空列，然后设置为默认值
+                # 注意：现有行的 created_at 会被设置为执行 ALTER 时的时间，而不是实际创建时间
+                logger.warning(f"run_logs 表已有 {row_count} 条数据，添加 created_at 列时现有记录的 created_at 将被设置为当前时间")
+                cursor.execute("""
+                    ALTER TABLE run_logs 
+                    ADD COLUMN created_at TIMESTAMP WITH TIME ZONE;
+                """)
+                cursor.execute("""
+                    UPDATE run_logs 
+                    SET created_at = NOW() 
+                    WHERE created_at IS NULL;
+                """)
+                cursor.execute("""
+                    ALTER TABLE run_logs 
+                    ALTER COLUMN created_at SET NOT NULL,
+                    ALTER COLUMN created_at SET DEFAULT NOW();
+                """)
+            else:
+                # 如果表为空，直接添加 NOT NULL 列
+                cursor.execute("""
+                    ALTER TABLE run_logs 
+                    ADD COLUMN created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+                """)
+        
+        # 创建索引
+        cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_run_logs_run_id ON run_logs(run_id);
             CREATE INDEX IF NOT EXISTS idx_run_logs_seq ON run_logs(run_id, seq);
             CREATE INDEX IF NOT EXISTS idx_run_logs_event ON run_logs(event);
@@ -509,8 +549,53 @@ def create_sam_design_tables(conn):
             CREATE INDEX IF NOT EXISTS idx_sam_design_history_created_at ON sam_design_history(created_at DESC);
         """)
         
+        # 创建 newSam 执行历史表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS new_sam_execution_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                run_id UUID NOT NULL,
+                workflow_id UUID NOT NULL,
+                user_id UUID NOT NULL,
+                
+                -- 基本信息
+                name VARCHAR(255) NOT NULL,
+                objective JSONB NOT NULL,
+                constraints JSONB NOT NULL,
+                
+                -- 执行状态
+                execution_state VARCHAR(20) NOT NULL,
+                started_at TIMESTAMP WITH TIME ZONE,
+                finished_at TIMESTAMP WITH TIME ZONE,
+                
+                -- 执行数据（JSONB格式存储）
+                execution_logs JSONB,
+                node_outputs JSONB,
+                iteration_node_outputs JSONB,
+                iteration_snapshots JSONB,
+                workflow_graph JSONB,
+                
+                -- 分析数据
+                iteration_analytics JSONB,
+                candidate_molecules JSONB,
+                
+                -- 元数据
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                
+                FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+                FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_new_sam_exec_history_run_id ON new_sam_execution_history(run_id);
+            CREATE INDEX IF NOT EXISTS idx_new_sam_exec_history_workflow_id ON new_sam_execution_history(workflow_id);
+            CREATE INDEX IF NOT EXISTS idx_new_sam_exec_history_user_id ON new_sam_execution_history(user_id);
+            CREATE INDEX IF NOT EXISTS idx_new_sam_exec_history_created_at ON new_sam_execution_history(created_at DESC);
+        """)
+        
         conn.commit()
         logger.info("SAM分子设计历史记录表创建完成")
+        logger.info("newSam执行历史表创建完成")
 
 
 def init_database():

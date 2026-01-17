@@ -338,6 +338,10 @@ export interface ExecuteWorkflowRequest {
   inputs?: Record<string, any>;
   files?: string[];
   threadId?: string;
+  /** 直接用草稿执行（不依赖 current_release_id） */
+  useDraft?: boolean;
+  /** 可选：指定草稿ID，不填则使用该工作流最新草稿 */
+  draftId?: string;
 }
 
 /**
@@ -363,6 +367,8 @@ export async function executeWorkflow(
       inputs: data.inputs || {},
       files: data.files,
       threadId: data.threadId,
+      useDraft: data.useDraft,
+      draftId: data.draftId,
     }),
   });
 }
@@ -407,6 +413,8 @@ export async function* executeWorkflowStream(
       inputs: data.inputs || {},
       files: data.files,
       threadId: data.threadId,
+      useDraft: data.useDraft,
+      draftId: data.draftId,
     }),
   })) {
     if (streamEvent.data) {

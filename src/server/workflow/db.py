@@ -993,6 +993,26 @@ def get_draft(conn: psycopg.Connection, workflow_id: UUID, version: Optional[int
         return None
 
 
+def get_draft_by_id(conn: psycopg.Connection, draft_id: UUID) -> Optional[Dict[str, Any]]:
+    """
+    通过草稿ID获取草稿
+    """
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT * FROM workflow_drafts
+            WHERE id = %s
+        """, (draft_id,))
+        row = cursor.fetchone()
+        if row:
+            draft = dict(row)
+            if isinstance(draft.get('graph'), str):
+                draft['graph'] = json.loads(draft['graph'])
+            if isinstance(draft.get('validation'), str):
+                draft['validation'] = json.loads(draft['validation'])
+            return draft
+        return None
+
+
 def delete_draft(conn: psycopg.Connection, workflow_id: UUID, version: Optional[int] = None) -> bool:
     """
     删除工作流草稿
@@ -1026,6 +1046,7 @@ def create_release(
     spec: Dict[str, Any],
     checksum: str,
     created_by: UUID,
+    set_current: bool = True,
 ) -> UUID:
     """
     创建工作流发布
@@ -1063,8 +1084,9 @@ def create_release(
             json.dumps(spec), checksum, created_by
         ))
     
-    # 更新工作流的current_release_id和status
-    update_workflow(conn, workflow_id, current_release_id=release_id, status='published')
+    # 更新工作流的current_release_id和status（仅在正式发布时）
+    if set_current:
+        update_workflow(conn, workflow_id, current_release_id=release_id, status='published')
     
     return release_id
 

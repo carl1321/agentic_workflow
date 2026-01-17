@@ -30,12 +30,12 @@ interface Step1DefineObjectiveProps {
 }
 
 /**
- * 示例目标模板
+ * 示例目标模板（中文）
  */
 const EXAMPLE_OBJECTIVES = [
-  "Design an SAM molecule with strong surface anchoring, favorable energy-level alignment, and dense, stable film formation.",
-  "Create a self-assembled monolayer molecule with high packing density and excellent electronic properties for photovoltaic applications.",
-  "Develop an SAM molecule with specific anchoring groups for metal oxide surfaces and optimal energy level alignment.",
+  "生成3个包含咔唑骨架和磷酸锚定基团的SAM分子。",
+  "设计5个具有高表面锚定强度和优异能级匹配的SAM分子，用于钙钛矿太阳能电池。",
+  "生成10个包含苯并噻吩骨架和羧酸锚定基团的SAM分子，要求能级在-4.5到-5.0 eV之间。",
 ];
 
 /**

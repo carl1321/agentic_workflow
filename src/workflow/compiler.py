@@ -14,7 +14,7 @@ from typing_extensions import NotRequired
 from langgraph.graph import END, START, StateGraph
 from src.server.workflow_request import WorkflowConfigRequest, WorkflowNode, WorkflowEdge
 from src.server.workflow.template_parser import render_template
-from src.llms.llm import get_llm_by_model_name
+from src.llms.llm import get_llm_by_model_name, get_model_supports_thinking
 from src.llms.rate_limiter import acquire_llm_call_permission
 
 logger = logging.getLogger(__name__)
@@ -652,7 +652,6 @@ def build_loop_subgraph(
         logger.warning(f"Loop node {loop_node_id} has no exit nodes")
         return None
     
-    logger.info(f"Loop node {loop_node_id} subgraph: {len(loop_body_nodes)} nodes, {len(loop_body_edges)} edges, {len(entry_nodes)} entry nodes, {len(exit_nodes)} exit nodes")
     
     return {
         "nodes": loop_body_nodes,
@@ -716,7 +715,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
         if loop_id:
             body_node_ids.add(node.id)
     
-    logger.info(f"Found {len(body_node_ids)} nodes in loop bodies, will be executed within loop nodes")
     
     for node in nodes:
         node_id = node.id
@@ -736,7 +734,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         logger.error(f"State manager is None for start node {nid}! State keys: {list(state.keys())}")
                         # 即使状态管理器为 None，也继续执行，但记录错误
                     
-                    logger.info(f"Executing start node {nid}, state_manager present: {state_manager is not None}, state keys: {list(state.keys())}")
                     
                     # 获取工作流输入
                     workflow_inputs = state.get("workflow_inputs", {})
@@ -781,7 +778,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         result_state["state_manager"] = state_manager
                         state_manager.mark_node_success(nid, outputs)
                     
-                    logger.info(f"Start node {nid} completed successfully, returning state with keys: {list(result_state.keys())}")
                     return result_state
                 return start_node_func
             
@@ -799,7 +795,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                     if not state_manager:
                         logger.warning(f"State manager is None for end node {nid}, node execution may not be logged")
                     
-                    logger.info(f"Executing end node {nid}")
                     
                     if state_manager:
                         state_manager.mark_node_running(nid)
@@ -827,7 +822,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         result_state["state_manager"] = state_manager
                         state_manager.mark_node_success(nid, final_outputs)
                     
-                    logger.info(f"End node {nid} completed successfully, returning state with keys: {list(result_state.keys())}")
                     return result_state
                 return end_node_func
             
@@ -863,7 +857,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             if upstream_completed:
                                 # 上游节点已完成，标记为 READY
                                 state_manager.mark_node_ready(nid)
-                                logger.info(f"LLM node {nid} is ready (upstream nodes completed)")
                         
                         # 获取LLM实例（支持两种字段名格式）
                         model_name = getattr(ndata, 'llm_model', None) or getattr(ndata, 'llmModel', None)
@@ -900,18 +893,9 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 task = get_node_task(conn, task_id)
                                 if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
                                     retry_delay = task['retry_delay_seconds']
-                                    logger.info(f"[LLM_NODE] Node {nid} waiting {retry_delay}s before retry")
                                     await asyncio.sleep(retry_delay)
                             finally:
                                 state_manager._close_conn_if_needed(conn)
-                        
-                        if state_manager:
-                            input_data = {
-                                "model": model_name,
-                                "prompt": raw_prompt,
-                                "system_prompt": raw_system_prompt
-                            }
-                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration, timeout_seconds=timeout_seconds)
                         
                         # 构建节点标签映射（用于模板解析）
                         # 注意：n.data 是 WorkflowNodeData 对象，应该使用 node_name 属性
@@ -952,7 +936,15 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             if system_prompt:
                                 system_prompt = render_template(system_prompt, node_outputs, node_labels, loop_context, node_output_formats)
                         
-                        logger.info(f"Executing LLM node {nid} with model {model_name}")
+                        # 模板解析后，记录 node_start（使用解析后的 prompt，确保日志中记录的是实际使用的 prompt）
+                        if state_manager:
+                            input_data = {
+                                "model": model_name,
+                                "prompt": prompt,  # 使用解析后的 prompt
+                                "system_prompt": system_prompt  # 使用解析后的 system_prompt
+                            }
+                            state_manager.mark_node_running(nid, input_data=input_data, loop_id=loop_id, iteration=iteration, timeout_seconds=timeout_seconds)
+                        
                         
                         llm = get_llm_by_model_name(model_name)
                         temperature = getattr(ndata, 'llm_temperature', None) or getattr(ndata, 'llmTemperature', None) or 0.7
@@ -995,7 +987,11 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         messages.append(HumanMessage(content=prompt))
                         
                         # 调用LLM（使用超时）
-                        logger.info(f"Invoking LLM node {nid} (model: {model_name}, timeout: {timeout_seconds}s)")
+                        
+                        # 初始化推理模型识别变量（在 try 块外初始化，确保异常情况下也有默认值）
+                        is_reasoning_model = False
+                        has_reasoning_content = False
+                        
                         try:
                             # 限流检查：1秒内最多5次调用
                             await acquire_llm_call_permission()
@@ -1004,7 +1000,18 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 llm.ainvoke(messages),
                                 timeout=timeout_seconds
                             )
-                            logger.info(f"LLM node {nid} invocation successful")
+                            # 识别推理模型（两种方式都检查）
+                            # 方式1：通过配置检查
+                            try:
+                                is_reasoning_model = get_model_supports_thinking(model_name)
+                            except Exception:
+                                pass
+                            
+                            # 方式2：通过响应对象检查
+                            if hasattr(response, 'additional_kwargs') and response.additional_kwargs:
+                                has_reasoning_content = bool(response.additional_kwargs.get("reasoning_content"))
+                                if has_reasoning_content:
+                                    is_reasoning_model = True
                         except asyncio.TimeoutError:
                             error_msg = f"LLM node {nid} execution timeout after {timeout_seconds}s"
                             logger.error(f"[LLM_NODE] {error_msg}")
@@ -1015,64 +1022,124 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             logger.error(f"LLM node {nid} invocation failed with {type(e).__name__}: {e}", exc_info=True)
                             raise
                         
-                        response_content = response.content if hasattr(response, 'content') else str(response)
-                        
-                        # 提取JSON内容（如果包含markdown代码块）
+                        # 获取响应内容（优先使用 content，推理模型在 content 为空或不完整时使用 reasoning_content 作为后备）
                         import re
                         import json
-                        json_match = re.search(r'```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```', response_content, re.DOTALL)
-                        if json_match:
-                            response_content = json_match.group(1).strip()
-                        else:
-                            # 尝试提取所有JSON对象（支持多个JSON对象拼接的情况）
-                            # 先尝试提取数组
-                            array_match = re.search(r'\[.*?\]', response_content, re.DOTALL)
-                            if array_match:
-                                response_content = array_match.group(0).strip()
-                            else:
-                                # 尝试提取多个JSON对象（逐个提取）
-                                json_objects = []
-                                # 使用平衡括号匹配来提取每个JSON对象
-                                brace_count = 0
-                                start_idx = -1
-                                for i, char in enumerate(response_content):
-                                    if char == '{':
-                                        if brace_count == 0:
-                                            start_idx = i
-                                        brace_count += 1
-                                    elif char == '}':
-                                        brace_count -= 1
-                                        if brace_count == 0 and start_idx >= 0:
-                                            json_str = response_content[start_idx:i+1]
-                                            try:
-                                                json_obj = json.loads(json_str)
-                                                json_objects.append(json_obj)
-                                            except json.JSONDecodeError:
-                                                pass
-                                            start_idx = -1
-                                
-                                if json_objects:
-                                    # 如果找到多个JSON对象，组合成数组
-                                    if len(json_objects) > 1:
-                                        response_content = json.dumps(json_objects)
-                                        logger.info(f"LLM node {nid} extracted {len(json_objects)} JSON objects, combined into array")
-                                    else:
-                                        # 单个对象，保持原样（后续会根据output_format处理）
-                                        response_content = json.dumps(json_objects[0])
-                                else:
-                                    # 回退到原来的逻辑：只提取第一个JSON对象
-                                    json_match = re.search(r'(\[.*?\]|\{.*?\})', response_content, re.DOTALL)
-                                    if json_match:
-                                        response_content = json_match.group(1).strip()
                         
-                        # 尝试解析为JSON对象（如果还是字符串）
-                        parsed_response = response_content
-                        if isinstance(response_content, str):
+                        response_content = None
+                        content_source = "content"
+                        reasoning_content = None
+                        
+                        # 获取 content 和 reasoning_content
+                        if hasattr(response, 'content') and response.content:
+                            response_content = response.content
+                            content_source = "content"
+                        
+                        if is_reasoning_model and hasattr(response, 'additional_kwargs') and response.additional_kwargs:
+                            reasoning_content = response.additional_kwargs.get("reasoning_content")
+                        
+                        # 如果 content 为空，使用 reasoning_content 作为后备
+                        if not response_content:
+                            if is_reasoning_model and reasoning_content:
+                                response_content = reasoning_content
+                                content_source = "reasoning_content (fallback)"
+                            else:
+                                # 普通模型或无法获取内容时的后备
+                                response_content = str(response) if response else ""
+                                content_source = "str(response)"
+                        
+                        if not response_content:
+                            logger.warning(f"LLM node {nid} could not extract any content")
+                        
+                        # 提取JSON内容的辅助函数
+                        def extract_json_from_text(text: str) -> Optional[str]:
+                            """从文本中提取 JSON 内容"""
+                            if not text:
+                                return None
+                            
+                            # 先尝试提取 markdown 代码块中的 JSON
+                            json_match = re.search(r'```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```', text, re.DOTALL)
+                            if json_match:
+                                return json_match.group(1).strip()
+                            
+                            # 尝试提取数组
+                            array_match = re.search(r'\[.*?\]', text, re.DOTALL)
+                            if array_match:
+                                return array_match.group(0).strip()
+                            
+                            # 尝试提取多个JSON对象（逐个提取）
+                            json_objects = []
+                            brace_count = 0
+                            start_idx = -1
+                            for i, char in enumerate(text):
+                                if char == '{':
+                                    if brace_count == 0:
+                                        start_idx = i
+                                    brace_count += 1
+                                elif char == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0 and start_idx >= 0:
+                                        json_str = text[start_idx:i+1]
+                                        try:
+                                            json_obj = json.loads(json_str)
+                                            json_objects.append(json_obj)
+                                        except json.JSONDecodeError:
+                                            pass
+                                        start_idx = -1
+                            
+                            if json_objects:
+                                if len(json_objects) > 1:
+                                    return json.dumps(json_objects)
+                                else:
+                                    return json.dumps(json_objects[0])
+                            
+                            # 回退到原来的逻辑：只提取第一个JSON对象
+                            json_match = re.search(r'(\[.*?\]|\{.*?\})', text, re.DOTALL)
+                            if json_match:
+                                return json_match.group(1).strip()
+                            
+                            return None
+                        
+                        # 从 response_content 中提取 JSON
+                        extracted_json = extract_json_from_text(response_content)
+                        
+                        # 如果 JSON 解析失败且是推理模型，尝试从 reasoning_content 中提取完整的 JSON
+                        parsed_response = None
+                        if extracted_json:
                             try:
-                                parsed_response = json.loads(response_content)
-                                logger.debug(f"LLM node {nid} parsed response: {parsed_response}")
-                            except json.JSONDecodeError as e:
-                                logger.warning(f"LLM node {nid} failed to parse JSON: {e}, raw content: {response_content[:200]}")
+                                parsed_response = json.loads(extracted_json)
+                            except json.JSONDecodeError:
+                                # 如果是推理模型且 content 中的 JSON 不完整，尝试从 reasoning_content 中提取
+                                if is_reasoning_model and reasoning_content and content_source == "content":
+                                    reasoning_json = extract_json_from_text(reasoning_content)
+                                    if reasoning_json:
+                                        try:
+                                            parsed_response = json.loads(reasoning_json)
+                                            content_source = "reasoning_content (JSON fallback)"
+                                        except json.JSONDecodeError:
+                                            pass
+                                
+                                # 如果仍然无法解析，使用原始内容
+                                if parsed_response is None:
+                                    parsed_response = extracted_json
+                        else:
+                            # 如果无法提取 JSON，尝试直接解析整个 response_content
+                            if isinstance(response_content, str):
+                                try:
+                                    parsed_response = json.loads(response_content)
+                                except json.JSONDecodeError:
+                                    # 如果是推理模型，尝试从 reasoning_content 中提取
+                                    if is_reasoning_model and reasoning_content:
+                                        reasoning_json = extract_json_from_text(reasoning_content)
+                                        if reasoning_json:
+                                            try:
+                                                parsed_response = json.loads(reasoning_json)
+                                                content_source = "reasoning_content (JSON fallback)"
+                                            except json.JSONDecodeError:
+                                                parsed_response = response_content
+                                    else:
+                                        parsed_response = response_content
+                            else:
                                 parsed_response = response_content
                         
                         # 检查是否是JSON Schema格式（LLM可能返回 {'type': 'array', 'items': [...]}）
@@ -1100,11 +1167,9 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                                         data_item[field_name] = field_schema
                                                 extracted_items.append(data_item)
                                         parsed_response = extracted_items
-                                        logger.debug(f"LLM node {nid} extracted data from nested JSON Schema: {len(extracted_items)} items")
                                     else:
                                         # items 中的元素已经是数据对象，直接使用
                                         parsed_response = items
-                                        logger.debug(f"LLM node {nid} extracted items from JSON Schema: {len(items)} items")
                                 # 如果 items 是对象（单个item），转换为数组
                                 elif isinstance(items, dict):
                                     # 检查是否是JSON Schema对象
@@ -1118,11 +1183,9 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             elif isinstance(field_schema, dict):
                                                 data_item[field_name] = field_schema
                                         parsed_response = [data_item]
-                                        logger.debug(f"LLM node {nid} extracted data from single nested JSON Schema item")
                                     else:
                                         # 已经是数据对象，转换为数组
                                         parsed_response = [items]
-                                        logger.debug(f"LLM node {nid} converted single item to array from JSON Schema")
                             # 如果包含 'items' 字段（可能是数组格式的JSON Schema）
                             elif 'items' in parsed_response and isinstance(parsed_response.get('items'), list):
                                 items = parsed_response.get('items')
@@ -1140,10 +1203,8 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                                     data_item[field_name] = field_schema
                                             extracted_items.append(data_item)
                                     parsed_response = extracted_items
-                                    logger.debug(f"LLM node {nid} extracted data from nested JSON Schema items array: {len(extracted_items)} items")
                                 else:
                                     parsed_response = items
-                                    logger.debug(f"LLM node {nid} extracted items array from JSON Schema: {len(parsed_response)} items")
                         
                         # 获取Token消耗等指标
                         metrics = {}
@@ -1203,11 +1264,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 )
                         except Exception as _norm_err:
                             # 归一化失败不影响主流程
-                            logger.debug(f"LLM node {nid} array-normalization skipped: {_norm_err}")
-                        
-                        logger.debug(f"LLM node {nid} output_format: {output_format}, output_fields: {output_fields}, parsed_response type: {type(parsed_response)}")
                         outputs = format_node_output(parsed_response, output_format, output_fields)
-                        logger.debug(f"LLM node {nid} formatted outputs: {outputs}")
                         
                         # 构建包含resolved_inputs的节点输出（用于循环体内部节点记录实际输入）
                         # format_node_output 已经返回 { "output": <数据> }，直接合并即可
@@ -1233,7 +1290,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             result_state["state_manager"] = state_manager
                             state_manager.mark_node_success(nid, outputs, metrics=metrics, loop_id=loop_id, iteration=iteration)
                         
-                        logger.info(f"LLM node {nid} completed successfully, returning state with keys: {list(result_state.keys())}")
                         return result_state
                     except Exception as e:
                         logger.error(f"Error executing LLM node {nid}: {e}", exc_info=True)
@@ -1279,9 +1335,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             if upstream_completed:
                                 # 上游节点已完成，标记为 READY
                                 state_manager.mark_node_ready(nid)
-                                logger.info(f"Tool node {nid} is ready (upstream nodes completed)")
                         
-                        logger.info(f"Executing tool node {nid}")
                         
                         # 获取原始参数（模板解析前）
                         raw_tool_params = getattr(ndata, 'tool_params', None) or getattr(ndata, 'toolParams', None) or {}
@@ -1312,7 +1366,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 task = get_node_task(conn, task_id)
                                 if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
                                     retry_delay = task['retry_delay_seconds']
-                                    logger.info(f"[TOOL_NODE] Node {nid} waiting {retry_delay}s before retry")
                                     await asyncio.sleep(retry_delay)
                             finally:
                                 state_manager._close_conn_if_needed(conn)
@@ -1374,7 +1427,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         tool_params = parsed_params
                         
                         # 执行工具（工具可能是函数或可调用对象，使用超时）
-                        logger.info(f"Invoking tool node {nid} (tool: {tool_name}, timeout: {timeout_seconds}s)")
                         try:
                             if callable(tool_func):
                                 if hasattr(tool_func, 'ainvoke'):
@@ -1468,7 +1520,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             result_state["state_manager"] = state_manager
                             state_manager.mark_node_success(nid, outputs, loop_id=loop_id, iteration=iteration)
                         
-                        logger.info(f"Tool node {nid} completed successfully, returning state with keys: {list(result_state.keys())}")
                         return result_state
                     except Exception as e:
                         logger.error(f"Error executing Tool node {nid}: {e}", exc_info=True)
@@ -1513,9 +1564,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             if upstream_completed:
                                 # 上游节点已完成，标记为 READY
                                 state_manager.mark_node_ready(nid)
-                                logger.info(f"Condition node {nid} is ready (upstream nodes completed)")
                         
-                        logger.info(f"Executing condition node {nid}")
                         
                         # 获取原始条件表达式（模板解析前）
                         raw_condition_expression = getattr(ndata, 'condition_expression', None) or getattr(ndata, 'conditionExpression', None) or ""
@@ -1546,7 +1595,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 task = get_node_task(conn, task_id)
                                 if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
                                     retry_delay = task['retry_delay_seconds']
-                                    logger.info(f"[CONDITION_NODE] Node {nid} waiting {retry_delay}s before retry")
                                     await asyncio.sleep(retry_delay)
                             finally:
                                 state_manager._close_conn_if_needed(conn)
@@ -1594,7 +1642,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         
                         # 评估条件表达式（简单实现，实际应该使用更安全的表达式解析器）
                         # 这里使用eval，但在生产环境中应该使用更安全的方法
-                        logger.info(f"Evaluating condition node {nid} (timeout: {timeout_seconds}s)")
                         try:
                             # 使用 asyncio.wait_for 实现超时（将eval包装在线程中）
                             result = await asyncio.wait_for(
@@ -1644,7 +1691,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             result_state["state_manager"] = state_manager
                             state_manager.mark_node_success(nid, outputs, loop_id=loop_id, iteration=iteration)
                         
-                        logger.info(f"Condition node {nid} completed successfully, result: {condition_result}, returning state with keys: {list(result_state.keys())}")
                         return result_state
                     except Exception as e:
                         logger.error(f"Error executing Condition node {nid}: {e}", exc_info=True)
@@ -1689,9 +1735,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             if upstream_completed:
                                 # 上游节点已完成，标记为 READY
                                 state_manager.mark_node_ready(nid, loop_id=nid)
-                                logger.info(f"Loop node {nid} is ready (upstream nodes completed)")
                         
-                        logger.info(f"Executing loop node {nid}")
                         
                         if state_manager:
                             state_manager.mark_node_running(nid, loop_id=nid)
@@ -1774,27 +1818,20 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         # 初始化待优化数据（从循环变量或初始输入获取）
                         # 如果循环变量中有初始数据，将其作为第一轮的待优化数据
                         initial_pending = loop_context[nid].get("filtered_data", {}).get("pending", [])
-                        logger.debug(f"Loop node {nid} initial filtered_data.pending: {len(initial_pending) if initial_pending else 0} items")
                         if not initial_pending:
                             # 尝试从上游节点获取初始数据
-                            logger.debug(f"Loop node {nid} trying to get initial data from {len(incoming_edges)} incoming edges")
                             for edge in incoming_edges:
                                 source_output = node_outputs.get(edge.source, {})
-                                logger.debug(f"Checking upstream node {edge.source}: has output={source_output and 'output' in source_output}, keys={list(source_output.keys()) if source_output else []}")
                                 if source_output and "output" in source_output:
                                     output_data = source_output.get("output")
-                                    logger.debug(f"Found output_data from node {edge.source}: type={type(output_data)}, is_list={isinstance(output_data, list)}, is_dict={isinstance(output_data, dict)}")
                                     if isinstance(output_data, list):
                                         initial_pending = output_data
-                                        logger.info(f"Loop node {nid} got {len(initial_pending)} initial pending items from upstream node {edge.source} (list)")
                                     elif isinstance(output_data, dict):
                                         initial_pending = [output_data]
-                                        logger.info(f"Loop node {nid} got 1 initial pending item from upstream node {edge.source} (dict)")
                                     break
                         if initial_pending:
                             loop_context[nid]["filtered_data"]["pending"] = initial_pending
                             loop_context[nid]["variables"][pending_items_var_name] = initial_pending
-                            logger.info(f"Loop node {nid} initialized with {len(initial_pending)} pending items")
                         else:
                             # 如果没有初始数据，初始化空数组（将在第一次迭代后从循环体内节点获取）
                             loop_context[nid]["filtered_data"]["pending"] = []
@@ -1806,7 +1843,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                             loop_context[nid]["iteration"] = iteration
                             loop_context[nid]["previous_output"] = previous_iteration_output
                             
-                            logger.info(f"Loop node {nid} iteration {iteration}/{max_iterations}")
                             
                             # 执行循环体内的节点（按拓扑顺序）
                             # 构建循环体内的边映射
@@ -1846,7 +1882,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                     # 验证loop_context中的pending_items
                                     if nid in loop_context and "variables" in loop_context[nid]:
                                         pending_in_context = loop_context[nid]["variables"].get(pending_items_var_name, [])
-                                        logger.debug(f"Loop iteration {iteration}: passing loop_context to node {node_id}, pending_items in context: {len(pending_in_context)} items")
                                     if state_manager:
                                         body_state["state_manager"] = state_manager
                                     
@@ -1899,7 +1934,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             task = get_node_task(conn, task_id)
                                             if task and task.get('retry_delay_seconds') and task['retry_delay_seconds'] > 0:
                                                 retry_delay = task['retry_delay_seconds']
-                                                logger.info(f"[LOOP_BODY_NODE] Node {node_id} iteration {iteration} waiting {retry_delay}s before retry")
                                                 await asyncio.sleep(retry_delay)
                                         finally:
                                             state_manager._close_conn_if_needed(conn)
@@ -1908,12 +1942,10 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         # 增加微小延时，防止CPU空转，并让其他协程有机会运行
                                         await asyncio.sleep(0.01)
                                         # 执行节点函数（使用超时）
-                                        logger.debug(f"Starting execution of loop body node {node_id} (timeout: {timeout_seconds}s)")
                                         body_result = await asyncio.wait_for(
                                             body_node_func(body_state),
                                             timeout=timeout_seconds
                                         )
-                                        logger.debug(f"Finished execution of loop body node {node_id}")
                                         
                                         # 记录节点执行结束时间
                                         end_time = time.time()
@@ -1953,7 +1985,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         })
                                         
                                         executed_nodes.add(node_id)
-                                        logger.debug(f"Executed loop body node {node_id} in iteration {iteration}")
                                     except asyncio.TimeoutError:
                                         error_msg = f"Loop body node {node_id} execution timeout after {timeout_seconds}s in iteration {iteration}"
                                         logger.error(f"[LOOP_BODY_NODE] {error_msg}")
@@ -1976,7 +2007,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             state_manager.mark_node_error(node_id, error_msg, loop_id=nid, iteration=iteration)
                                         
                                         executed_nodes.add(node_id)  # 标记为已执行，避免死循环
-                                        logger.debug(f"Loop body node {node_id} timeout in iteration {iteration}")
                                         
                                         # 超时错误也应该停止整个工作流执行
                                         raise RuntimeError(f"Workflow stopped due to loop body node {node_id} timeout in iteration {iteration}: {error_msg}")
@@ -2561,7 +2591,6 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                         )
                                         logger.debug(f"Final save for loop body node {body_node_id} to database")
                         
-                        logger.info(f"Loop node {nid} completed successfully after {iteration} iterations, returning state with keys: {list(result_state.keys())}")
                         return result_state
                     except BaseException as e:  # 捕获所有异常
                         logger.error(f"Critical error executing Loop node {nid}: {type(e).__name__}: {e}", exc_info=True)

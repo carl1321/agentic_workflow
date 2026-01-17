@@ -135,6 +135,10 @@ class WorkflowExecuteRequest(BaseModel):
     inputs: Optional[Dict[str, Any]] = None
     files: Optional[List[str]] = None
     thread_id: Optional[str] = Field(None, alias="threadId")
+    # 允许直接用草稿执行（避免“编辑后仍执行旧发布版本”）
+    use_draft: bool = Field(False, alias="useDraft")
+    # 可选：指定草稿ID；不提供则使用该工作流最新草稿
+    draft_id: Optional[str] = Field(None, alias="draftId")
 
 
 class NodeExecuteRequest(BaseModel):
