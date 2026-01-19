@@ -3,7 +3,8 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { SamDesignUnifiedPage } from "../sam-design/components/SamDesignUnifiedPage";
 import { Step1DefineObjective } from "../sam-design/components/Step1DefineObjective";
 import {
@@ -13,6 +14,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import type { DesignState, DesignObjective, Constraint } from "../sam-design/types";
+import { useAuthStore } from "~/core/store/auth-store";
 
 /**
  * 从 localStorage 加载设计状态
@@ -46,6 +48,11 @@ function saveDesignState(state: Partial<DesignState>) {
  * 新SAM分子设计主页面（统一单页布局）
  */
 export default function NewSAMDesignPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { token, loading, refreshUser } = useAuthStore();
+  const hasCheckedAuthRef = useRef(false);
+
   // 使用useState和useEffect来避免hydration错误
   const [isClient, setIsClient] = useState(false);
   const [objective, setObjective] = useState<DesignObjective>({ text: "" });
@@ -97,6 +104,23 @@ export default function NewSAMDesignPage() {
     }
   }, []);
 
+  // 访问 /newSam 时进行登录态校验：token 不存在 -> 跳转登录；token 过期 -> refreshUser 触发 401 自动跳登录
+  useEffect(() => {
+    if (!isClient) return;
+    if (loading) return;
+
+    if (!token) {
+      router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
+      return;
+    }
+
+    // 只在本页首次挂载时做一次后端校验（避免重复请求）
+    if (hasCheckedAuthRef.current) return;
+    hasCheckedAuthRef.current = true;
+    // refreshUser 内部会调用 /auth/me；若 401，则 api-client 会 logout 并重定向到 /login
+    refreshUser();
+  }, [isClient, loading, token, refreshUser, router, pathname]);
+
   // 保存状态到 localStorage
   useEffect(() => {
     if (!isClient) return; // 只在客户端保存
@@ -110,6 +134,15 @@ export default function NewSAMDesignPage() {
 
   if (!isClient) {
     return null; // 避免 hydration 错误
+  }
+
+  // 未登录：已在 effect 里触发跳转，这里只做占位
+  if (!token) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
+        正在跳转到登录页...
+      </div>
+    );
   }
 
   return (

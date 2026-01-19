@@ -639,9 +639,9 @@ export function extractDimScoresFromResolvedInputsPrompt(promptText: string): Ma
       const existing = result.get(id) || {};
       if (aspect.includes("表面锚定")) {
         existing.surfaceAnchoring = score;
-      } else if (aspect.includes("能级")) {
+      } else if (aspect.includes("能级匹配") || aspect.includes("能级")) {
         existing.energyLevel = score;
-      } else if (aspect.includes("膜致密度")) {
+      } else if (aspect.includes("膜致密度") || aspect.includes("膜致密度和稳定性")) {
         existing.packingDensity = score;
       }
       result.set(id, existing);
@@ -691,6 +691,12 @@ export interface CandidateTrendPoint {
   moleculeId: number | string;
   smiles?: string;
   scoresByIter: Map<number, number>; // iter -> total score
+  /** 维度分数趋势（按迭代轮次） */
+  dimensionScoresByIter: Map<number, {
+    surfaceAnchoring?: number;
+    energyLevel?: number;
+    packingDensity?: number;
+  }>;
 }
 
 /**
@@ -773,7 +779,70 @@ export function extractIterationAnalytics(
         const promptText = entry?.resolved_inputs?.prompt;
         if (typeof promptText === "string" && promptText.length > 0) {
           const m = extractDimScoresFromResolvedInputsPrompt(promptText);
-          if (m.size > 0) return { candidates, dimsById: m };
+          if (m.size > 0) {
+            // 合并到 dimsById（不直接返回，继续查找其他来源）
+            for (const [id, dims] of m.entries()) {
+              const existing = dimsById.get(id) || {};
+              dimsById.set(id, {
+                surfaceAnchoring: dims.surfaceAnchoring ?? existing.surfaceAnchoring,
+                energyLevel: dims.energyLevel ?? existing.energyLevel,
+                packingDensity: dims.packingDensity ?? existing.packingDensity,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 2.5) 从评估节点的直接输出中提取维度分数（如果 prompt 中没有找到或数据不完整）
+    // 评估节点的 output 包含 critic_aspect 和 score 字段
+    // 首先从当前迭代的 output 中提取
+    for (const nodeOutput of Object.values(iterOutputs)) {
+      if (!nodeOutput || typeof nodeOutput !== "object") continue;
+      if (Array.isArray((nodeOutput as any).output)) {
+        for (const item of (nodeOutput as any).output) {
+          if (!item || typeof item !== "object") continue;
+          const id = (item as any).id;
+          const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
+          const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
+          
+          if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
+          
+          const existing = dimsById.get(id) || {};
+          if (criticAspect.includes("表面锚定")) {
+            existing.surfaceAnchoring = score;
+          } else if (criticAspect.includes("能级匹配") || criticAspect.includes("能级")) {
+            existing.energyLevel = score;
+          } else if (criticAspect.includes("膜致密度") || criticAspect.includes("膜致密度和稳定性")) {
+            existing.packingDensity = score;
+          }
+          dimsById.set(id, existing);
+        }
+      }
+      
+      // 也从 iteration_outputs 数组中提取（评估节点的历史输出）
+      const iterationOutputs = (nodeOutput as any).iteration_outputs;
+      if (Array.isArray(iterationOutputs)) {
+        const entry = iterationOutputs.find((x: any) => x && typeof x === "object" && x.iteration === iter);
+        if (entry && Array.isArray(entry.output)) {
+          for (const item of entry.output) {
+            if (!item || typeof item !== "object") continue;
+            const id = (item as any).id;
+            const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
+            const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
+            
+            if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
+            
+            const existing = dimsById.get(id) || {};
+            if (criticAspect.includes("表面锚定")) {
+              existing.surfaceAnchoring = score;
+            } else if (criticAspect.includes("能级匹配") || criticAspect.includes("能级")) {
+              existing.energyLevel = score;
+            } else if (criticAspect.includes("膜致密度") || criticAspect.includes("膜致密度和稳定性")) {
+              existing.packingDensity = score;
+            }
+            dimsById.set(id, existing);
+          }
         }
       }
     }
@@ -839,10 +908,12 @@ export function extractIterationAnalytics(
       // 每个候选的 total 也是从总结节点给出的 score（确定的）
       for (const c of candidates) {
         const dims = dimsById.get(c.id);
+        // 只有当维度分数存在时才使用，避免0值覆盖undefined
+        // 使用 undefined 而不是 0，这样在构建 dimensionScoresByIter 时可以区分"数据缺失"和"有效0值"
         paretoPoints.push({
-          energyLevel: dims?.energyLevel || 0,
-          surfaceAnchoring: dims?.surfaceAnchoring || 0,
-          packingDensity: dims?.packingDensity || 0,
+          energyLevel: dims?.energyLevel,
+          surfaceAnchoring: dims?.surfaceAnchoring,
+          packingDensity: dims?.packingDensity,
           total: c.score || 0, // 直接用总结节点给出的 score
           iter,
           smiles: c.smiles,
@@ -855,27 +926,57 @@ export function extractIterationAnalytics(
       }
     }
     
-    // 构建每个候选分子的总分趋势（跨迭代）
+    // 构建每个候选分子的总分趋势和维度分数趋势（跨迭代）
     const candidateTrendMap = new Map<number | string, Map<number, number>>();
+    const candidateDimensionMap = new Map<number | string, Map<number, {
+      surfaceAnchoring?: number;
+      energyLevel?: number;
+      packingDensity?: number;
+    }>>();
+    
     for (const p of paretoPoints) {
       if (typeof p.iter !== "number" || p.moleculeId === undefined) continue;
       const total = typeof p.total === "number" ? p.total : 0;
-      if (total <= 0) continue;
       
-      if (!candidateTrendMap.has(p.moleculeId)) {
-        candidateTrendMap.set(p.moleculeId, new Map());
+      // 构建总分趋势
+      if (total > 0) {
+        if (!candidateTrendMap.has(p.moleculeId)) {
+          candidateTrendMap.set(p.moleculeId, new Map());
+        }
+        candidateTrendMap.get(p.moleculeId)!.set(p.iter, total);
       }
-      candidateTrendMap.get(p.moleculeId)!.set(p.iter, total);
+      
+      // 构建维度分数趋势
+      if (!candidateDimensionMap.has(p.moleculeId)) {
+        candidateDimensionMap.set(p.moleculeId, new Map());
+      }
+      const dimensionMap = candidateDimensionMap.get(p.moleculeId)!;
+      // 只有当维度分数存在时才设置（避免undefined覆盖已有值）
+      const existing = dimensionMap.get(p.iter) || {};
+      dimensionMap.set(p.iter, {
+        surfaceAnchoring: p.surfaceAnchoring !== undefined && p.surfaceAnchoring !== null
+          ? p.surfaceAnchoring 
+          : existing.surfaceAnchoring,
+        energyLevel: p.energyLevel !== undefined && p.energyLevel !== null
+          ? p.energyLevel 
+          : existing.energyLevel,
+        packingDensity: p.packingDensity !== undefined && p.packingDensity !== null
+          ? p.packingDensity 
+          : existing.packingDensity,
+      });
     }
     
     for (const [moleculeId, scoresByIter] of candidateTrendMap.entries()) {
       const firstPoint = Array.from(scoresByIter.entries())[0];
       if (!firstPoint) continue;
       
+      const dimensionScoresByIter = candidateDimensionMap.get(moleculeId) || new Map();
+      
       candidateTrends.push({
         moleculeId,
         smiles: paretoPoints.find((p) => p.moleculeId === moleculeId)?.smiles,
         scoresByIter,
+        dimensionScoresByIter,
       });
     }
     
@@ -996,27 +1097,49 @@ export function extractIterationAnalytics(
     }
   }
 
-  // 构建每个候选分子的总分趋势（跨迭代）- 回退逻辑
+  // 构建每个候选分子的总分趋势和维度分数趋势（跨迭代）- 回退逻辑
   const candidateTrendMap = new Map<number | string, Map<number, number>>();
+  const candidateDimensionMap = new Map<number | string, Map<number, {
+    surfaceAnchoring?: number;
+    energyLevel?: number;
+    packingDensity?: number;
+  }>>();
+  
   for (const p of paretoPoints) {
     if (typeof p.iter !== "number" || p.moleculeId === undefined) continue;
     const total = typeof p.total === "number" ? p.total : 0;
-    if (total <= 0) continue;
     
-    if (!candidateTrendMap.has(p.moleculeId)) {
-      candidateTrendMap.set(p.moleculeId, new Map());
+    // 构建总分趋势
+    if (total > 0) {
+      if (!candidateTrendMap.has(p.moleculeId)) {
+        candidateTrendMap.set(p.moleculeId, new Map());
+      }
+      candidateTrendMap.get(p.moleculeId)!.set(p.iter, total);
     }
-    candidateTrendMap.get(p.moleculeId)!.set(p.iter, total);
+    
+    // 构建维度分数趋势
+    if (!candidateDimensionMap.has(p.moleculeId)) {
+      candidateDimensionMap.set(p.moleculeId, new Map());
+    }
+    const dimensionMap = candidateDimensionMap.get(p.moleculeId)!;
+    dimensionMap.set(p.iter, {
+      surfaceAnchoring: p.surfaceAnchoring > 0 ? p.surfaceAnchoring : undefined,
+      energyLevel: p.energyLevel > 0 ? p.energyLevel : undefined,
+      packingDensity: p.packingDensity > 0 ? p.packingDensity : undefined,
+    });
   }
   
   for (const [moleculeId, scoresByIter] of candidateTrendMap.entries()) {
     const firstPoint = Array.from(scoresByIter.entries())[0];
     if (!firstPoint) continue;
     
+    const dimensionScoresByIter = candidateDimensionMap.get(moleculeId) || new Map();
+    
     candidateTrends.push({
       moleculeId,
       smiles: paretoPoints.find((p) => p.moleculeId === moleculeId)?.smiles,
       scoresByIter,
+      dimensionScoresByIter,
     });
   }
 

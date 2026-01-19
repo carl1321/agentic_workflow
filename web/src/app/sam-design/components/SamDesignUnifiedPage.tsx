@@ -347,6 +347,9 @@ export function SamDesignUnifiedPage({
       if (result.success && result.history) {
         const history = result.history;
         
+        // 标记为已保存，避免从历史记录加载时触发自动保存
+        hasSavedHistoryRef.current = true;
+        
         // 还原基本信息
         onObjectiveChange(history.objective);
         onConstraintsChange(history.constraints);

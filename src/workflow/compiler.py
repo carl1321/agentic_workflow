@@ -91,6 +91,7 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
         包含 output 字段的输出字典，output 字段存储格式化后的数据
     """
     import json
+    import re
     
     # 如果没有定义字段，直接返回原始输出
     if not output_fields or not isinstance(output_fields, list):
@@ -98,13 +99,134 @@ def format_node_output(output: Any, output_format: str, output_fields: Optional[
             "output": output
         }
     
-    # 尝试解析输出（如果是字符串，尝试解析为 JSON）
+    # 尝试解析输出（如果是字符串，尽可能宽松地解析为 JSON）
+    # 兼容常见不规范输出：
+    # 1) 多个 JSON 对象直接拼接（会触发 json.loads 的 Extra data）
+    # 2) 输出被截断（尽量提取已闭合的 JSON 片段）
+    # 3) Markdown ```json 代码块包裹
+    def _try_parse_json_loose(text: str):
+        if not text or not isinstance(text, str):
+            return None
+
+        s = text.strip()
+        if not s:
+            return None
+
+        # 1) 优先提取 markdown code block
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s, re.IGNORECASE)
+        if m:
+            inner = m.group(1).strip()
+            if inner:
+                try:
+                    return json.loads(inner)
+                except Exception:
+                    # 继续后续兜底
+                    pass
+
+        # 2) 直接 json.loads（最严格/最快）
+        try:
+            return json.loads(s)
+        except json.JSONDecodeError as e:
+            # 3) 处理“多个 JSON 值拼接”的情况：用 raw_decode 逐段解析
+            #    例如：{...}\n{...} 或 [...]\n{...}
+            try:
+                decoder = json.JSONDecoder()
+                idx = 0
+                values = []
+                length = len(s)
+                while idx < length:
+                    # skip whitespace
+                    while idx < length and s[idx].isspace():
+                        idx += 1
+                    if idx >= length:
+                        break
+                    val, end = decoder.raw_decode(s, idx)
+                    values.append(val)
+                    idx = end
+                if values:
+                    # 如果只解析出一个值，直接返回该值
+                    if len(values) == 1:
+                        return values[0]
+                    # 多个值：通常是多个对象拼接，统一返回数组
+                    return values
+            except Exception:
+                pass
+
+            # 4) 处理“截断”或“夹杂文本”的情况：提取已闭合的数组/对象（简单括号计数）
+            # 4.1) 尝试提取第一个闭合的 JSON 数组
+            start = s.find("[")
+            if start != -1:
+                depth = 0
+                in_str = False
+                escape = False
+                for i in range(start, len(s)):
+                    ch = s[i]
+                    if in_str:
+                        if escape:
+                            escape = False
+                        elif ch == "\\":
+                            escape = True
+                        elif ch == "\"":
+                            in_str = False
+                        continue
+                    if ch == "\"":
+                        in_str = True
+                        continue
+                    if ch == "[":
+                        depth += 1
+                    elif ch == "]":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = s[start:i+1]
+                            try:
+                                return json.loads(candidate)
+                            except Exception:
+                                break
+
+            # 4.2) 尝试提取一个或多个闭合的 JSON 对象（收集到数组）
+            objs = []
+            depth = 0
+            in_str = False
+            escape = False
+            obj_start = -1
+            for i, ch in enumerate(s):
+                if in_str:
+                    if escape:
+                        escape = False
+                    elif ch == "\\":
+                        escape = True
+                    elif ch == "\"":
+                        in_str = False
+                    continue
+                if ch == "\"":
+                    in_str = True
+                    continue
+                if ch == "{":
+                    if depth == 0:
+                        obj_start = i
+                    depth += 1
+                elif ch == "}":
+                    if depth > 0:
+                        depth -= 1
+                        if depth == 0 and obj_start >= 0:
+                            candidate = s[obj_start:i+1]
+                            try:
+                                objs.append(json.loads(candidate))
+                            except Exception:
+                                pass
+                            obj_start = -1
+            if objs:
+                return objs if len(objs) > 1 else objs[0]
+
+            # 5) 最后兜底：返回 None（保持原字符串）
+            return None
+        except Exception:
+            return None
+
     parsed_output = output
     if isinstance(output, str):
-        try:
-            parsed_output = json.loads(output)
-        except:
-            parsed_output = output
+        parsed = _try_parse_json_loose(output)
+        parsed_output = parsed if parsed is not None else output
     
     # 检查是否是JSON Schema格式（LLM可能返回 {'type': 'array', 'items': [...]}）
     if isinstance(parsed_output, dict):
@@ -1050,6 +1172,69 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                         
                         if not response_content:
                             logger.warning(f"LLM node {nid} could not extract any content")
+
+                        # ===== 调试：完整打印/落盘「生成分子」节点的原始输出 =====
+                        # 目的：明确是 LLM 输出本身不完整/不合规，还是解析逻辑导致的丢失。
+                        try:
+                            # 仅对“分子生成节点”启用（通过输出字段判断：包含 backbone + anchor_group）
+                            _field_names_for_debug = []
+                            if output_fields and isinstance(output_fields, list):
+                                for f in output_fields:
+                                    if isinstance(f, dict) and f.get("name"):
+                                        _field_names_for_debug.append(str(f.get("name")))
+                            _is_molecule_generation_node = ("backbone" in _field_names_for_debug and "anchor_group" in _field_names_for_debug)
+
+                            if _is_molecule_generation_node and isinstance(response_content, str) and response_content:
+                                import os
+                                import datetime as _dt
+
+                                run_id_for_debug = getattr(state_manager, "run_id", None) or "unknown_run"
+                                iter_for_debug = iteration if iteration is not None else "na"
+                                ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                                debug_dir = os.path.join(os.getcwd(), "logs", "llm_raw")
+                                os.makedirs(debug_dir, exist_ok=True)
+                                debug_path = os.path.join(
+                                    debug_dir, f"{run_id_for_debug}_{nid}_iter{iter_for_debug}_{ts}.txt"
+                                )
+
+                                # 写入文件（避免终端/日志截断）
+                                with open(debug_path, "w", encoding="utf-8") as f:
+                                    f.write(f"run_id: {run_id_for_debug}\n")
+                                    f.write(f"node_id: {nid}\n")
+                                    f.write(f"node_name: {node_labels.get(nid) if isinstance(node_labels, dict) else ''}\n")
+                                    f.write(f"loop_id: {loop_id}\n")
+                                    f.write(f"iteration: {iteration}\n")
+                                    f.write(f"model: {model_name}\n")
+                                    f.write(f"content_source: {content_source}\n")
+                                    f.write(f"content_length: {len(response_content)}\n")
+                                    f.write(f"has_reasoning_content: {bool(reasoning_content)}\n")
+                                    # 尽量记录 response_metadata（如 finish_reason / token_usage 等）
+                                    try:
+                                        if hasattr(response, "response_metadata"):
+                                            f.write(f"response_metadata: {response.response_metadata}\n")
+                                    except Exception:
+                                        pass
+                                    f.write("\n===== RESPONSE_CONTENT_BEGIN =====\n")
+                                    f.write(response_content)
+                                    f.write("\n===== RESPONSE_CONTENT_END =====\n")
+                                    if isinstance(reasoning_content, str) and reasoning_content:
+                                        f.write("\n===== REASONING_CONTENT_BEGIN =====\n")
+                                        f.write(reasoning_content)
+                                        f.write("\n===== REASONING_CONTENT_END =====\n")
+
+                                # 控制台完整打印（加 BEGIN/END 标记，便于定位）
+                                logger.warning(
+                                    f"[LLM_RAW_OUTPUT_SAVED] Molecule generation raw output saved to: {debug_path} "
+                                    f"(len={len(response_content)}, source={content_source}, model={model_name})"
+                                )
+                                logger.warning(
+                                    f"[LLM_RAW_OUTPUT_BEGIN] run_id={run_id_for_debug} node_id={nid} iter={iter_for_debug} source={content_source}\n"
+                                    f"{response_content}\n"
+                                    f"[LLM_RAW_OUTPUT_END] run_id={run_id_for_debug} node_id={nid}"
+                                )
+                        except Exception as _raw_dump_err:
+                            logger.error(f"Failed to dump raw LLM output for node {nid}: {_raw_dump_err}", exc_info=True)
                         
                         # 提取JSON内容的辅助函数
                         def extract_json_from_text(text: str) -> Optional[str]:
@@ -1264,6 +1449,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                 )
                         except Exception as _norm_err:
                             # 归一化失败不影响主流程
+                            pass
                         outputs = format_node_output(parsed_response, output_format, output_fields)
                         
                         # 构建包含resolved_inputs的节点输出（用于循环体内部节点记录实际输入）

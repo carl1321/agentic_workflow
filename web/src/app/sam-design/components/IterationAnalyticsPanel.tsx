@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { extractIterationAnalytics } from "../utils/molecule";
 import type { Molecule } from "../types";
 import { ScoreTrendChart } from "./ScoreTrendChart";
-import { ParetoScatterChart } from "./ParetoScatterChart";
+import { DimensionTrendChart } from "./DimensionTrendChart";
 
 interface IterationAnalyticsPanelProps {
   nodeOutputs: Record<string, any>;
@@ -52,7 +52,7 @@ export function IterationAnalyticsPanel({
         <Tabs defaultValue="trend" className="h-full flex flex-col">
           <TabsList className="mx-4 mt-2">
             <TabsTrigger value="trend">总分趋势</TabsTrigger>
-            <TabsTrigger value="pareto">总分散点</TabsTrigger>
+            <TabsTrigger value="dimension">维度趋势</TabsTrigger>
           </TabsList>
           <TabsContent value="trend" className="flex-1 overflow-hidden mt-0">
             <ScoreTrendChart
@@ -61,9 +61,9 @@ export function IterationAnalyticsPanel({
               executionState={executionState}
             />
           </TabsContent>
-          <TabsContent value="pareto" className="flex-1 overflow-hidden mt-0">
-            <ParetoScatterChart
-              paretoPoints={analytics.paretoPoints}
+          <TabsContent value="dimension" className="flex-1 overflow-hidden mt-0">
+            <DimensionTrendChart
+              candidateTrends={analytics.candidateTrends}
               hasData={analytics.hasData}
               executionState={executionState}
             />

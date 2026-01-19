@@ -22,7 +22,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button } from "~/components/ui/button";
-import { ArrowLeft, Save, Play } from "lucide-react";
+import { ArrowLeft, Save, Play, Copy, Loader2 } from "lucide-react";
 import { useDebouncedCallback } from "use-debounce";
 import { StartNode } from "./nodes/StartNode";
 import { EndNode } from "./nodes/EndNode";
@@ -35,7 +35,7 @@ import { EdgeConfigPanel } from "./EdgeConfigPanel";
 import { NodePalette } from "./NodePalette";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
-import { createRelease, executeWorkflowStream, getRunStatus, getWorkflowRuns, type WorkflowExecutionEvent } from "~/core/api/workflow";
+import { createRelease, createWorkflow, getDraft, getWorkflow, listWorkflows, saveDraft, executeWorkflowStream, getRunStatus, getWorkflowRuns, type WorkflowExecutionEvent } from "~/core/api/workflow";
 import { toast } from "sonner";
 
 // 参考 szlabAgent 的 LOOP_PADDING 常量
@@ -366,10 +366,85 @@ function WorkflowEditorInner({
   const [isRunning, setIsRunning] = useState(false);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null); // 当前运行的 ID
   const [isReady, setIsReady] = useState(false); // 画布是否准备就绪
+  const [isDuplicating, setIsDuplicating] = useState(false);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef(false); // 防止无限递归的标志
   const router = useRouter();
   const { screenToFlowPosition, addNodes, fitView } = useReactFlow();
+
+  const computeNextCopyName = useCallback(async (baseName: string): Promise<string> => {
+    // 需求：名称后面加 1；若已存在则自动递增，避免重名带来的创建失败
+    const trimmed = (baseName || "").trim() || "未命名工作流";
+    let stem = trimmed;
+    let startNum = 1;
+    const m = trimmed.match(/^(.*?)(\d+)$/);
+    if (m) {
+      stem = m[1] || trimmed;
+      startNum = (parseInt(m[2], 10) || 0) + 1;
+    }
+
+    const existing = new Set<string>();
+    try {
+      const res = await listWorkflows({ limit: 500 });
+      for (const w of res.workflows || []) {
+        if (w?.name) existing.add(String(w.name));
+      }
+    } catch {
+      // 忽略：如果列表加载失败，就退化为最简单的 `${name}1`
+    }
+
+    // 优先满足“追加 1”的直觉：若原名不带数字，先尝试 `${name}1`
+    if (!m) {
+      const candidate = `${trimmed}1`;
+      if (!existing.has(candidate)) return candidate;
+      // 冲突则递增
+      let i = 2;
+      while (existing.has(`${trimmed}${i}`) && i < 1000) i += 1;
+      return `${trimmed}${i}`;
+    }
+
+    // 原名本身带数字：使用递增后的数字
+    let i = startNum;
+    while (existing.has(`${stem}${i}`) && i < 1000) i += 1;
+    return `${stem}${i}`;
+  }, []);
+
+  const handleDuplicateWorkflow = useCallback(async () => {
+    if (isDuplicating) return;
+    setIsDuplicating(true);
+    try {
+      // 1) 先确保当前画布的最新内容落盘（避免复制到旧版本）
+      // 用 autosave=false，保证生成一个明确的草稿版本
+      await onSave({ nodes, edges }, false);
+
+      // 2) 读取当前工作流信息（用于复制 description/status）
+      const wf = await getWorkflow(workflowId);
+      const newName = await computeNextCopyName(wf?.name || workflowName || "未命名工作流");
+
+      // 3) 创建新工作流
+      const newWf = await createWorkflow({
+        name: newName,
+        description: wf?.description || "",
+        status: wf?.status || "draft",
+      });
+
+      // 4) 复制最新草稿图（以最新 draft 为准，保证“一模一样”）
+      // - 先取源工作流最新 draft（服务端存储的规范化 graph）
+      // - 再保存到新工作流，生成其 draft
+      const srcDraft = await getDraft(workflowId);
+      await saveDraft(newWf.id, { graph: srcDraft.graph, is_autosave: false });
+
+      toast.success(`已复制工作流：${newName}`);
+
+      // 5) 自动打开新工作流编辑页
+      router.push(`/workflows/${newWf.id}/editor`);
+    } catch (e: any) {
+      console.error("Duplicate workflow failed:", e);
+      toast.error(e?.message || "复制工作流失败");
+    } finally {
+      setIsDuplicating(false);
+    }
+  }, [isDuplicating, onSave, nodes, edges, workflowId, workflowName, computeNextCopyName, router]);
   
   // 初始化画布视图：等待布局稳定后显示
   useEffect(() => {
@@ -1273,6 +1348,24 @@ function WorkflowEditorInner({
         </div>
         <div className="flex items-center gap-3">
           <div className="text-sm text-muted-foreground">{saveStatusText}</div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDuplicateWorkflow}
+            disabled={isDuplicating || isRunning || saveStatus === "saving"}
+          >
+            {isDuplicating ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                复制中...
+              </>
+            ) : (
+              <>
+                <Copy className="h-4 w-4 mr-2" />
+                复制
+              </>
+            )}
+          </Button>
           <Button onClick={handleManualSave} size="sm" disabled={saveStatus === "saving"}>
             <Save className="h-4 w-4 mr-2" />
             保存
