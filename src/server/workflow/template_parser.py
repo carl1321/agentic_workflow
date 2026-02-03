@@ -54,7 +54,10 @@ def render_template(
     if not template:
         return template
     
-    # 先处理条件语句 {% if ... %} ... {% endif %}
+    # 先处理循环语句 {% for ... %} ... {% endfor %}
+    template = _process_loops(template, loop_context)
+    
+    # 再处理条件语句 {% if ... %} ... {% endif %}
     template = _process_conditionals(template, loop_context)
     
     pattern = r'\{\{([^}]+)\}\}'
@@ -410,6 +413,120 @@ def render_template(
         return str(value)
     
     return re.sub(pattern, replace_match, template)
+
+
+def _process_loops(template: str, loop_context: Optional[Dict[str, Any]] = None) -> str:
+    """
+    处理模板中的循环语句 {% for item in loop.variables.var_name %} ... {% endfor %}
+    
+    Args:
+        template: 包含循环语句的模板字符串
+        loop_context: 循环上下文，用于获取循环变量
+        
+    Returns:
+        处理后的模板字符串
+    """
+    if not template:
+        return template
+    
+    # 获取循环上下文
+    current_loop_context = None
+    if loop_context:
+        for loop_id, ctx in loop_context.items():
+            current_loop_context = ctx
+            break
+    
+    if not current_loop_context:
+        # 如果没有循环上下文，直接返回原模板（循环语句不会被处理）
+        return template
+    
+    # 匹配 {% for item in loop.variables.var_name %} ... {% endfor %}
+    pattern = r'\{%\s*for\s+(\w+)\s+in\s+([^%]+)\s*%\}(.*?)\{%\s*endfor\s*%\}'
+    
+    def replace_loop(match):
+        item_var = match.group(1).strip()  # 循环变量名，如 "item"
+        collection_path = match.group(2).strip()  # 集合路径，如 "loop.variables.pending_items"
+        loop_body = match.group(3) if match.group(3) else ""  # 循环体内容
+        
+        # 解析集合路径，支持：
+        # - loop.variables.var_name
+        # - loop.filtered_data.pending
+        # - loop.filtered_data.passed
+        collection = None
+        
+        if collection_path.startswith("loop.variables."):
+            var_name = collection_path.replace("loop.variables.", "").strip()
+            variables = current_loop_context.get("variables", {})
+            collection = variables.get(var_name)
+        elif collection_path == "loop.filtered_data.pending":
+            collection = current_loop_context.get("filtered_data", {}).get("pending", [])
+        elif collection_path == "loop.filtered_data.passed":
+            collection = current_loop_context.get("filtered_data", {}).get("passed", [])
+        elif collection_path.startswith("loop."):
+            # 直接访问循环上下文字段
+            field_path = collection_path.replace("loop.", "").strip()
+            collection = current_loop_context.get(field_path)
+        
+        if collection is None:
+            logger.warning(f"Loop collection not found: {collection_path}, returning empty string")
+            return ""
+        
+        # 确保 collection 是列表
+        if not isinstance(collection, list):
+            if isinstance(collection, dict):
+                # 如果是字典，转换为列表（包含单个元素）
+                collection = [collection]
+            else:
+                logger.warning(f"Loop collection is not a list or dict: {type(collection)}, returning empty string")
+                return ""
+        
+        # 对每个元素进行循环处理
+        results = []
+        for item in collection:
+            # 在循环体中替换 {{item.field}} 或 {{item}} 变量
+            item_template = loop_body
+            
+            # 替换 {{item}} 为整个 item 的 JSON 表示
+            if isinstance(item, (dict, list)):
+                import json
+                try:
+                    item_json = json.dumps(item, ensure_ascii=False)
+                except:
+                    item_json = str(item)
+            else:
+                item_json = str(item)
+            
+            # 替换 {{item}} 或 {{item_var}}（如 {{item}}）
+            item_pattern = r'\{\{' + re.escape(item_var) + r'\}\}'
+            item_template = re.sub(item_pattern, item_json, item_template)
+            
+            # 替换 {{item.field}} 或 {{item_var.field}}（如 {{item.generation_id}}）
+            if isinstance(item, dict):
+                item_field_pattern = r'\{\{' + re.escape(item_var) + r'\.([^}]+)\}\}'
+                def replace_item_field(m):
+                    field_name = m.group(1).strip()
+                    field_value = item.get(field_name)
+                    if field_value is None:
+                        logger.debug(f"Field '{field_name}' not found in loop item, returning empty string")
+                        return ""
+                    # 转换为字符串
+                    if isinstance(field_value, (dict, list)):
+                        import json
+                        try:
+                            return json.dumps(field_value, ensure_ascii=False)
+                        except:
+                            return str(field_value)
+                    return str(field_value)
+                item_template = re.sub(item_field_pattern, replace_item_field, item_template)
+            
+            results.append(item_template)
+        
+        # 将所有结果连接起来
+        return "".join(results)
+    
+    # 使用 DOTALL 标志以支持多行内容
+    result = re.sub(pattern, replace_loop, template, flags=re.DOTALL)
+    return result
 
 
 def _process_conditionals(template: str, loop_context: Optional[Dict[str, Any]] = None) -> str:

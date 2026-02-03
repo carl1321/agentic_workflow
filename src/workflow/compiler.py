@@ -1431,21 +1431,36 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                     if isinstance(f, dict) and f.get("name"):
                                         field_names.append(str(f.get("name")))
 
-                            has_molecule_keys = ("id" in field_names and "smiles" in field_names)
+                            # 检查是否是分子相关的输出（支持 id 或 generation_id）
+                            has_molecule_keys = (
+                                ("id" in field_names or "generation_id" in field_names or "generationId" in field_names)
+                                and "smiles" in field_names
+                            )
+                            # 或者检查实际解析出的数据中是否包含这些字段（作为后备检查）
+                            if not has_molecule_keys and isinstance(parsed_response, dict):
+                                has_id_or_gen_id = (
+                                    "id" in parsed_response 
+                                    or "generation_id" in parsed_response 
+                                    or "generationId" in parsed_response
+                                )
+                                has_smiles = "smiles" in parsed_response or "SMILES" in parsed_response
+                                if has_id_or_gen_id and has_smiles:
+                                    has_molecule_keys = True
+                            
                             system_hints_array = (
                                 (final_system_prompt and ("输出举例" in final_system_prompt) and ("[" in final_system_prompt))
                                 or (raw_system_prompt and ("输出举例" in raw_system_prompt) and ("[" in raw_system_prompt))
-                                or (prompt and ("只返回JSON数组" in prompt or "JSON数组" in prompt))
+                                or (prompt and ("只返回JSON数组" in prompt or "JSON数组" in prompt or "JSON array" in prompt))
                             )
                             prompt_looks_array = isinstance(prompt, str) and prompt.lstrip().startswith("[")
-
+                            
                             if has_molecule_keys and (system_hints_array or prompt_looks_array):
                                 force_array = True
-
+                            
                             if force_array and isinstance(parsed_response, dict):
                                 parsed_response = [parsed_response]
                                 logger.debug(
-                                    f"LLM node {nid} normalized single-object response to array (force_array=True)"
+                                    f"LLM node {nid} normalized single-object response to array (force_array=True, has_molecule_keys={has_molecule_keys})"
                                 )
                         except Exception as _norm_err:
                             # 归一化失败不影响主流程
@@ -2315,10 +2330,16 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                     if body_node_id != nid:  # 排除循环节点本身
                                         # 构建包含当前所有迭代结果的节点输出
                                         current_iteration_outputs = accumulated_iteration_outputs.get(body_node_id, [])
+                                        last_output = results[-1].get("output", {}) if results else {}
+                                        
+                                        # 调试：检查输出是否为空
+                                        if not last_output or (isinstance(last_output, dict) and len(last_output) == 0):
+                                            logger.warning(f"Iteration {iteration}, node {body_node_id}: last_output is empty! results count: {len(results)}, results[-1] keys: {list(results[-1].keys()) if results else []}")
+                                        
                                         body_node_output = {
                                             "iteration_outputs": current_iteration_outputs,
                                             # 更新最后一次迭代的输出（向后兼容）
-                                            "output": results[-1].get("output", {}) if results else {}
+                                            "output": last_output
                                         }
                                         
                                         # 保存到数据库（每次迭代后都保存，让前端能够实时看到）
@@ -2329,7 +2350,7 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             loop_id=nid,
                                             iteration=iteration
                                         )
-                                        logger.info(f"Updated iteration {iteration} results for loop body node {body_node_id} to database ({len(current_iteration_outputs)} total iterations)")
+                                        logger.info(f"Updated iteration {iteration} results for loop body node {body_node_id} to database ({len(current_iteration_outputs)} total iterations, output keys: {list(last_output.keys()) if isinstance(last_output, dict) else 'not a dict'})")
                                 
                                 # 保存循环节点本身的结果（包含当前的passed_items和pending_items）
                                 current_filtered_data = loop_context[nid].get("filtered_data", {})
@@ -2568,17 +2589,36 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                             passed_items = []
                                             pending_items = []
                                             
+                                            # 如果 source_data 是字典，转换为数组以便统一处理
+                                            if isinstance(source_data, dict):
+                                                source_data = [source_data]
+                                                logger.info(f"Loop iteration {iteration}: converted source_data from dict to list for unified processing (now has {len(source_data)} items)")
+                                            
                                             if isinstance(source_data, list):
                                                 # source_data 是数组，需要与 current_pending 匹配
                                                 # 重要：passed_items 应该使用当前迭代 source_data 中的最新数据，而不是 current_pending 中的旧数据
                                                 # 假设 source_data 和 current_pending 的顺序一致，或者通过 id 匹配
                                                 for pending_item in current_pending:
                                                     # 在 source_data 中查找对应的条目
-                                                    # 优先通过 id 匹配，如果没有 id 则按索引匹配
+                                                    # 优先通过 generation_id 匹配，如果没有则通过 id 匹配，最后按索引匹配
                                                     matched_data = None
-                                                    pending_id = pending_item.get("id") if isinstance(pending_item, dict) else None
+                                                    pending_id = None
+                                                    pending_generation_id = None
                                                     
-                                                    if pending_id:
+                                                    if isinstance(pending_item, dict):
+                                                        # 优先使用 generation_id 匹配
+                                                        pending_generation_id = pending_item.get("generation_id") or pending_item.get("generationId")
+                                                        pending_id = pending_item.get("id")
+                                                    
+                                                    if pending_generation_id is not None:
+                                                        # 通过 generation_id 匹配
+                                                        for data_item in source_data:
+                                                            if isinstance(data_item, dict):
+                                                                item_gen_id = data_item.get("generation_id") or data_item.get("generationId")
+                                                                if item_gen_id is not None and str(item_gen_id) == str(pending_generation_id):
+                                                                    matched_data = data_item
+                                                                    break
+                                                    elif pending_id:
                                                         # 通过 id 匹配
                                                         for data_item in source_data:
                                                             if isinstance(data_item, dict) and data_item.get("id") == pending_id:
@@ -2594,25 +2634,28 @@ def compile_workflow_to_langgraph(config: WorkflowConfigRequest):
                                                         # 检查匹配的数据是否满足条件
                                                         field_value = get_nested_field_value(matched_data, actual_field_path)
                                                         condition_result = evaluate_condition(field_value, filter_operator, filter_value)
-                                                        logger.info(f"Loop iteration {iteration}: matching pending_item id={pending_id or 'N/A'} with source_data, field_path={actual_field_path}, field_value={field_value}, condition={filter_operator} {filter_value}, result={condition_result}")
+                                                        match_id = pending_generation_id or pending_id or 'N/A'
+                                                        logger.info(f"Loop iteration {iteration}: matching pending_item id={match_id} with source_data, field_path={actual_field_path}, field_value={field_value}, condition={filter_operator} {filter_value}, result={condition_result}")
                                                         logger.debug(f"Loop iteration {iteration}: matched_data keys: {list(matched_data.keys()) if isinstance(matched_data, dict) else 'not a dict'}")
                                                         if condition_result:
                                                             # 重要：使用当前迭代 source_data 中的最新数据，而不是 current_pending 中的旧数据
                                                             passed_items.append(matched_data)
-                                                            logger.info(f"Loop iteration {iteration}: item id={pending_id or 'N/A'} passed condition (field_value={field_value} {filter_operator} {filter_value}), moved to passed_items with current iteration data")
+                                                            logger.info(f"Loop iteration {iteration}: item id={match_id} passed condition (field_value={field_value} {filter_operator} {filter_value}), moved to passed_items with current iteration data")
                                                         else:
                                                             # 对于不满足条件的，也使用当前迭代的最新数据
                                                             pending_items.append(matched_data)
-                                                            logger.info(f"Loop iteration {iteration}: item id={pending_id or 'N/A'} did not pass condition (field_value={field_value} {filter_operator} {filter_value}), kept in pending_items with current iteration data")
+                                                            logger.info(f"Loop iteration {iteration}: item id={match_id} did not pass condition (field_value={field_value} {filter_operator} {filter_value}), kept in pending_items with current iteration data")
                                                     else:
                                                         # 如果没有匹配的数据，保留在 pending_items 中（使用旧数据）
-                                                        logger.warning(f"Loop iteration {iteration}: Could not match pending_item id={pending_id or 'N/A'} with source_data (source_data has {len(source_data)} items), keeping in pending_items")
+                                                        match_id = pending_generation_id or pending_id or 'N/A'
+                                                        logger.warning(f"Loop iteration {iteration}: Could not match pending_item id={match_id} with source_data (source_data has {len(source_data)} items), keeping in pending_items")
                                                         logger.debug(f"Loop iteration {iteration}: pending_item: {pending_item}")
-                                                        logger.debug(f"Loop iteration {iteration}: source_data items: {[item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in source_data[:5]]}")
+                                                        logger.debug(f"Loop iteration {iteration}: source_data items: {[item.get('generation_id') or item.get('generationId') or item.get('id', 'N/A') if isinstance(item, dict) else 'N/A' for item in source_data[:5]]}")
                                                         pending_items.append(pending_item)
                                             else:
-                                                # source_data 不是数组，直接筛选 current_pending
+                                                # source_data 不是数组也不是字典，直接筛选 current_pending
                                                 # 这种情况较少见，但为了兼容性保留
+                                                logger.warning(f"Loop iteration {iteration}: source_data is neither list nor dict (type: {type(source_data)}), using fallback logic")
                                                 for pending_item in current_pending:
                                                     field_value = get_nested_field_value(pending_item, actual_field_path)
                                                     if evaluate_condition(field_value, filter_operator, filter_value):

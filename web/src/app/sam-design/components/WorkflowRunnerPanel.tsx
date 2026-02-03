@@ -14,7 +14,11 @@ import {
 } from "~/components/ui/select";
 import { Play, Loader2 } from "lucide-react";
 import { listWorkflows, getDraft, executeWorkflowStream, type Workflow, type WorkflowExecutionEvent } from "~/core/api/workflow";
-import { extractMoleculesFromWorkflowResult, extractMoleculesFromEndNode } from "../utils/molecule";
+import {
+  extractMoleculesFromWorkflowResult,
+  extractMoleculesFromEndNode,
+  parseDimensionScoresFromOptDes,
+} from "../utils/molecule";
 import { toast } from "sonner";
 import type { DesignObjective, Constraint, ExecutionResult, Molecule } from "../types";
 
@@ -259,42 +263,122 @@ export function WorkflowRunnerPanel({
             }
           } else if (event.type === "run_end") {
             if (event.success) {
-              // 从end节点提取最终候选分子
+              // 生成最终候选分子（优先使用循环节点的 passed_items：这是“通过筛选”的权威结果）
               let molecules: Molecule[] = [];
               if (Object.keys(workflowNodeOutputsRef.current).length > 0) {
                 try {
-                  // 优先从end节点提取
-                  const partialMolecules = extractMoleculesFromEndNode(
-                    workflowNodeOutputsRef.current,
-                    workflowGraphRef.current
-                  );
-                  
-                  // 如果从end节点没提取到，回退到原来的方法（兼容性）
-                  const finalMolecules = partialMolecules.length > 0 
-                    ? partialMolecules 
-                    : extractMoleculesFromWorkflowResult(workflowNodeOutputsRef.current);
-                  
-                  // 过滤：只保留评分 >= 7 的分子
-                  const filteredMolecules = finalMolecules.filter((m) => {
-                    const score = m.score?.total || 0;
-                    return score >= 7;
-                  });
-                  
-                  molecules = filteredMolecules.map((m, idx) => ({
-                    index: idx + 1,
-                    smiles: m.smiles || "",
-                    scaffoldCondition: m.scaffoldCondition,
-                    scaffoldSmiles: m.scaffoldSmiles,
-                    imageUrl: m.imageUrl,
-                    properties: m.properties,
-                    score: m.score,
-                    analysis: m.analysis,
-                  })) as Molecule[];
-                  
-                  if (molecules.length > 0) {
-                    onLogUpdate([`>>> 从end节点提取了 ${molecules.length} 个候选分子（评分 >= 7）`]);
-                  } else if (finalMolecules.length > 0) {
-                    onLogUpdate([`>>> 从end节点提取了 ${finalMolecules.length} 个分子，但均未达到7分阈值`]);
+                  // 1) 先找循环节点输出（有 passed_items/pending_items/iterations）
+                  const loopNodeOutput = Object.values(workflowNodeOutputsRef.current).find((v: any) => {
+                    if (!v || typeof v !== "object") return false;
+                    return (
+                      Array.isArray((v as any).passed_items) &&
+                      Array.isArray((v as any).pending_items) &&
+                      typeof (v as any).iterations === "number"
+                    );
+                  }) as any;
+
+                  const passedItems: any[] = Array.isArray(loopNodeOutput?.passed_items)
+                    ? loopNodeOutput.passed_items
+                    : [];
+
+                  if (passedItems.length > 0) {
+                    // 额外合并：从 end 节点（总结/最终评估节点）提取结构化结果，用于补全三维评分/描述/性质
+                    // 关键点：候选集合仍以 passed_items 为准（通过筛选），但展示信息尽量来自同一“最终评估”来源，避免分数与描述对不上。
+                    const endEvaluated = extractMoleculesFromEndNode(
+                      workflowNodeOutputsRef.current,
+                      workflowGraphRef.current
+                    );
+                    const endBySmiles = new Map<string, Partial<Molecule>>();
+                    const normalizeSmiles = (s: string) => s.trim();
+                    for (const m of endEvaluated) {
+                      if (m?.smiles) endBySmiles.set(normalizeSmiles(m.smiles), m);
+                    }
+
+                    const picked = passedItems
+                      .filter((it) => it && typeof it === "object" && typeof it.smiles === "string" && it.smiles.length > 0)
+                      .map((it) => {
+                        const id = it.id;
+                        const total =
+                          typeof it.score === "number"
+                            ? it.score
+                            : 0;
+                        const smiles = normalizeSmiles(it.smiles);
+                        const endMol = endBySmiles.get(smiles);
+                        const dimScores =
+                          typeof it.opt_des === "string" && it.opt_des.length > 0
+                            ? parseDimensionScoresFromOptDes(it.opt_des)
+                            : null;
+
+                        const surfaceAnchoring =
+                          endMol?.score?.surfaceAnchoring ?? dimScores?.surfaceAnchoring;
+                        const energyLevel =
+                          endMol?.score?.energyLevel ?? dimScores?.energyLevel;
+                        const packingDensity =
+                          endMol?.score?.packingDensity ?? dimScores?.packingDensity;
+
+                        // 描述优先用最终评估节点的 description（如果存在），否则回退到 passed_items 的 opt_des
+                        const description =
+                          endMol?.analysis?.description ||
+                          (typeof it.opt_des === "string" ? it.opt_des : undefined);
+                        return {
+                          index: typeof id === "number" ? id : undefined,
+                          smiles,
+                          imageUrl: endMol?.imageUrl || it.imageUrl || it.image_url,
+                          properties: endMol?.properties || it.properties,
+                          score: {
+                            // total 以 passed_items 的 score 为准（筛选/最终候选的权威总分）
+                            total: total || endMol?.score?.total || 0,
+                            surfaceAnchoring,
+                            energyLevel,
+                            packingDensity,
+                          },
+                          analysis: description
+                            ? { description, explanation: description }
+                            : endMol?.analysis,
+                        } as Molecule;
+                      })
+                      .sort((a, b) => (b.score?.total || 0) - (a.score?.total || 0))
+                      .slice(0, 10);
+
+                    // index 兜底：如果没有 id，就用展示序号
+                    molecules = picked.map((m, idx) => ({
+                      ...m,
+                      index: typeof m.index === "number" ? m.index : idx + 1,
+                    }));
+
+                    onLogUpdate([`>>> 最终候选分子（通过筛选）: ${molecules.length} 个`]);
+                  } else {
+                    // 2) 如果没有 passed_items，再尝试从 end 节点/旧逻辑提取（兼容性）
+                    const partialMolecules = extractMoleculesFromEndNode(
+                      workflowNodeOutputsRef.current,
+                      workflowGraphRef.current
+                    );
+
+                    const finalMolecules =
+                      partialMolecules.length > 0
+                        ? partialMolecules
+                        : extractMoleculesFromWorkflowResult(workflowNodeOutputsRef.current);
+
+                    // 注意：不要在这里做硬阈值过滤，否则会导致候选分子面板/历史记录里显示为 0。
+                    // 如需阈值筛选，应交由 UI 展示层或由用户配置。
+                    molecules = finalMolecules.map((m, idx) => ({
+                      // 注意：index 在后续面板里用于分子 id 对齐；这里尽量保留原值
+                      index: (m as any).index || idx + 1,
+                      smiles: m.smiles || "",
+                      scaffoldCondition: m.scaffoldCondition,
+                      scaffoldSmiles: m.scaffoldSmiles,
+                      imageUrl: m.imageUrl,
+                      properties: m.properties,
+                      score: m.score,
+                      analysis: m.analysis,
+                    })) as Molecule[];
+
+                    if (molecules.length > 0) {
+                      const ge8 = molecules.filter((m) => (m.score?.total || 0) >= 8).length;
+                      onLogUpdate([
+                        `>>> 从工作流输出提取了 ${molecules.length} 个候选分子（其中评分 >= 8：${ge8} 个）`,
+                      ]);
+                    }
                   }
                 } catch (err) {
                   console.warn("Failed to extract molecules from end node:", err);

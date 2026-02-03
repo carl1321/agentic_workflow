@@ -553,10 +553,13 @@ export function parseDimensionScoresFromOptDes(optDes: string): {
   // - 能级匹配（8分） / 能级匹配: 8
   // - 膜致密度与稳定性（8分） / 膜致密度: 8.0
   const number = "([-+]?\\d+(?:\\.\\d+)?)";
+  const scoreLabel = "(?:评分|得分)?";
   const surfaceMatch =
     // 允许 “表面锚定强度...（7分）” 中间插入少量描述文字
-    optDes.match(new RegExp(`表面锚定(?:强度)?[^\\d]{0,20}[（(：:\\s]\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
+    optDes.match(new RegExp(`表面锚定(?:强度)?[^\\d]{0,20}[（(：:\\s]\\s*${scoreLabel}\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
     optDes.match(new RegExp(`表面锚定(?:强度)?[^\\d]{0,12}(?:得分为|为)\\s*${number}`, "i")) ||
+    // 允许 “表面锚定强度8分 / 表面锚定8分” 这种无括号写法
+    optDes.match(new RegExp(`表面锚定(?:强度)?[^\\d]{0,12}${scoreLabel}\\s*${number}\\s*(?:分|score)`, "i")) ||
     optDes.match(new RegExp(`surface\\s*anchoring\\s*[=:：\\s]\\s*${number}`, "i"));
   if (surfaceMatch) {
     scores.surfaceAnchoring = parseFloat(surfaceMatch[1]) || 0;
@@ -564,16 +567,20 @@ export function parseDimensionScoresFromOptDes(optDes: string): {
 
   const energyMatch =
     // 允许 “能级匹配度优异（8分）” 这种中间带“度优异”的写法
-    optDes.match(new RegExp(`能级匹配[^\\d]{0,20}[（(：:\\s]\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
-    optDes.match(new RegExp(`能级匹配[^\\d]{0,12}(?:得分为|为)\\s*${number}`, "i")) ||
+    optDes.match(new RegExp(`能级匹配(?:度)?[^\\d]{0,20}[（(：:\\s]\\s*${scoreLabel}\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
+    optDes.match(new RegExp(`能级匹配(?:度)?[^\\d]{0,12}(?:得分为|为)\\s*${number}`, "i")) ||
+    // 允许 “能级匹配9分 / 能级匹配度9分 / 能级匹配评分9分” 这种无括号写法
+    optDes.match(new RegExp(`能级匹配(?:度)?[^\\d]{0,12}${scoreLabel}\\s*${number}\\s*(?:分|score)`, "i")) ||
     optDes.match(new RegExp(`energy\\s*level\\s*(?:match(?:ing)?)?\\s*[=:：\\s]\\s*${number}`, "i"));
   if (energyMatch) {
     scores.energyLevel = parseFloat(energyMatch[1]) || 0;
   }
 
   const packingMatch =
-    optDes.match(new RegExp(`膜致密度(?:与稳定性)?[^\\d]{0,20}[（(：:\\s]\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
+    optDes.match(new RegExp(`膜致密度(?:与稳定性)?[^\\d]{0,20}[（(：:\\s]\\s*${scoreLabel}\\s*${number}\\s*(?:分|score)?\\s*[)）]?`, "i")) ||
     optDes.match(new RegExp(`膜致密度(?:与稳定性)?[^\\d]{0,12}(?:得分为|为)\\s*${number}`, "i")) ||
+    // 允许 “膜致密度与稳定性8分 / 膜致密度8分 / 膜稳定性8分” 这种无括号写法
+    optDes.match(new RegExp(`(?:膜致密度(?:与稳定性)?|膜稳定性)[^\\d]{0,12}${scoreLabel}\\s*${number}\\s*(?:分|score)`, "i")) ||
     optDes.match(new RegExp(`packing\\s*density\\s*[=:：\\s]\\s*${number}`, "i"));
   if (packingMatch) {
     scores.packingDensity = parseFloat(packingMatch[1]) || 0;
@@ -596,10 +603,10 @@ export function parseDimensionScoresFromOptDes(optDes: string): {
  */
 export function extractDimScoresFromResolvedInputsPrompt(promptText: string): Map<string | number, {
   surfaceAnchoring?: number;
-  energyLevel?: number;
-  packingDensity?: number;
+  chemistryValidity?: number;
+  defectPassivation?: number;
 }> {
-  const result = new Map<string | number, { surfaceAnchoring?: number; energyLevel?: number; packingDensity?: number }>();
+  const result = new Map<string | number, { surfaceAnchoring?: number; chemistryValidity?: number; defectPassivation?: number }>();
   if (!promptText || typeof promptText !== "string") return result;
 
   // 抽取所有顶层 JSON 数组片段（通过 [] 深度计数，避免正则匹配不平衡括号）
@@ -631,20 +638,28 @@ export function extractDimScoresFromResolvedInputsPrompt(promptText: string): Ma
 
     for (const item of arr) {
       if (!item || typeof item !== "object") continue;
-      const id = item.id as (string | number | undefined);
+      // 维度趋势严格以 generation_id 为唯一匹配 key（不再使用 id / smiles 兜底）
+      const key = (item.generation_id ?? item.generationId) as (string | number | undefined);
       const aspect = String(item.critic_aspect || item.criticAspect || "").trim();
       const score = typeof item.score === "number" ? item.score : parseFloat(String(item.score ?? ""));
-      if (id === undefined || Number.isNaN(score)) continue;
+      if (key === undefined || Number.isNaN(score)) continue;
 
-      const existing = result.get(id) || {};
-      if (aspect.includes("表面锚定")) {
+      const existing = result.get(key) || {};
+      // 支持中英文关键词匹配（转换为小写进行匹配，避免大小写问题）
+      const aspectLower = aspect.toLowerCase();
+      if (aspect.includes("表面锚定") || aspectLower.includes("anchoring") || aspectLower.includes("interface-binding")) {
         existing.surfaceAnchoring = score;
-      } else if (aspect.includes("能级匹配") || aspect.includes("能级")) {
-        existing.energyLevel = score;
-      } else if (aspect.includes("膜致密度") || aspect.includes("膜致密度和稳定性")) {
-        existing.packingDensity = score;
+        console.log(`[extractDimScoresFromResolvedInputsPrompt] Molecule ${key}: set surfaceAnchoring=${score} from critic_aspect="${aspect}"`);
+      } else if (aspect.includes("化学有效性") || aspectLower.includes("chemistry") || aspectLower.includes("chemistry-validity") || aspectLower.includes("structural sanity")) {
+        existing.chemistryValidity = score;
+        console.log(`[extractDimScoresFromResolvedInputsPrompt] Molecule ${key}: set chemistryValidity=${score} from critic_aspect="${aspect}"`);
+      } else if (aspect.includes("缺陷评估") || aspect.includes("缺陷") || aspectLower.includes("defect") || aspectLower.includes("defect-passivation") || aspectLower.includes("interface-defect") || aspectLower.includes("passivation")) {
+        existing.defectPassivation = score;
+        console.log(`[extractDimScoresFromResolvedInputsPrompt] Molecule ${key}: set defectPassivation=${score} from critic_aspect="${aspect}"`);
+      } else {
+        console.warn(`[extractDimScoresFromResolvedInputsPrompt] Molecule ${key}: unknown critic_aspect="${aspect}", score=${score}`);
       }
-      result.set(id, existing);
+      result.set(key, existing);
     }
   }
 
@@ -680,8 +695,8 @@ export interface IterationDataPoint {
   iter: number;
   total_best: number;
   surfaceAnchoring_best: number;
-  energyLevel_best: number;
-  packingDensity_best: number;
+  chemistryValidity_best: number;
+  defectPassivation_best: number;
 }
 
 /**
@@ -694,8 +709,8 @@ export interface CandidateTrendPoint {
   /** 维度分数趋势（按迭代轮次） */
   dimensionScoresByIter: Map<number, {
     surfaceAnchoring?: number;
-    energyLevel?: number;
-    packingDensity?: number;
+    chemistryValidity?: number;
+    defectPassivation?: number;
   }>;
 }
 
@@ -703,9 +718,9 @@ export interface CandidateTrendPoint {
  * Pareto 数据点
  */
 export interface ParetoDataPoint {
-  energyLevel: number;
-  surfaceAnchoring: number;
-  packingDensity: number;
+  surfaceAnchoring?: number;
+  chemistryValidity?: number;
+  defectPassivation?: number;
   total: number;
   iter?: number;
   smiles?: string;
@@ -748,27 +763,69 @@ export function extractIterationAnalytics(
   // - outputs.iteration_outputs: [{iteration, resolved_inputs:{prompt}, output:[...]} , ...]
   const getIterSummary = (iter: number): {
     candidates: Array<{ id: number | string; score: number; smiles?: string; opt_des?: string }>;
-    dimsById: Map<string | number, { surfaceAnchoring?: number; energyLevel?: number; packingDensity?: number }>;
+    dimsById: Map<string | number, { surfaceAnchoring?: number; chemistryValidity?: number; defectPassivation?: number }>;
   } => {
-    const dimsById = new Map<string | number, { surfaceAnchoring?: number; energyLevel?: number; packingDensity?: number }>();
+    const dimsById = new Map<string | number, { surfaceAnchoring?: number; chemistryValidity?: number; defectPassivation?: number }>();
     const candidates: Array<{ id: number | string; score: number; smiles?: string; opt_des?: string }> = [];
 
     const iterOutputs = iterationNodeOutputs?.get(iter);
-    if (!iterOutputs) return { candidates, dimsById };
+    if (!iterOutputs) {
+      console.log(`[extractIterationAnalytics] Iter ${iter}: no iterOutputs`);
+      return { candidates, dimsById };
+    }
 
     // 1) 先抓 candidates（通常在某个总结节点的 outputs.output 里）
-    for (const nodeOutput of Object.values(iterOutputs)) {
+    for (const [nodeId, nodeOutput] of Object.entries(iterOutputs)) {
       if (!nodeOutput || typeof nodeOutput !== "object") continue;
-      if (Array.isArray((nodeOutput as any).output)) {
-        for (const item of (nodeOutput as any).output) {
+      const output = (nodeOutput as any).output;
+      
+      // 调试：打印节点输出结构
+      if (output && (Array.isArray(output) || (typeof output === "object" && (output.id || output.generation_id)))) {
+        console.log(`[extractIterationAnalytics] Iter ${iter}, Node ${nodeId}: found output`, {
+          isArray: Array.isArray(output),
+          hasId: !!(output.id || output.generation_id),
+          keys: Array.isArray(output) ? `array[${output.length}]` : Object.keys(output),
+        });
+      }
+      
+      // 处理数组格式
+      if (Array.isArray(output)) {
+        for (const item of output) {
           if (!item || typeof item !== "object") continue;
-          const id = (item as any).id;
+          // 维度趋势严格以 generation_id 为唯一匹配 key（这里 candidates.id 实际承载 generation_id）
+          // 总结节点可能使用 id 或 generation_id
+          const id = (item as any).generation_id ?? (item as any).generationId ?? (item as any).id;
           const scoreNum = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
           if (id === undefined || Number.isNaN(scoreNum)) continue;
           candidates.push({ id, score: scoreNum, smiles: (item as any).smiles || (item as any).SMILES, opt_des: (item as any).opt_des });
         }
+      } 
+      // 处理单个对象格式（总结节点可能返回单个对象而不是数组）
+      else if (output && typeof output === "object") {
+        // 维度趋势严格以 generation_id 为唯一匹配 key（这里 candidates.id 实际承载 generation_id）
+        // 总结节点可能使用 id 或 generation_id
+        const id = (output as any).generation_id ?? (output as any).generationId ?? (output as any).id;
+        const scoreNum = typeof (output as any).score === "number" ? (output as any).score : parseFloat(String((output as any).score ?? ""));
+        if (id !== undefined && !Number.isNaN(scoreNum)) {
+          candidates.push({ 
+            id, 
+            score: scoreNum, 
+            smiles: (output as any).smiles || (output as any).SMILES, 
+            opt_des: (output as any).opt_des 
+          });
+        }
       }
     }
+
+    // 候选分子集合（key= generation_id）
+    const candidateIdSet = new Set<string | number>(candidates.map((c) => c.id));
+    
+    // 调试：打印候选分子和ID集合
+    console.log(`[extractIterationAnalytics] Iter ${iter}: candidates extracted:`, {
+      count: candidates.length,
+      ids: candidates.map(c => ({ id: c.id, score: c.score, hasSmiles: !!c.smiles })),
+      candidateIdSet: Array.from(candidateIdSet),
+    });
 
     // 2) 再抓 dims（优先从 iteration_outputs[iter].resolved_inputs.prompt 解析）
     for (const nodeOutput of Object.values(iterOutputs)) {
@@ -781,12 +838,13 @@ export function extractIterationAnalytics(
           const m = extractDimScoresFromResolvedInputsPrompt(promptText);
           if (m.size > 0) {
             // 合并到 dimsById（不直接返回，继续查找其他来源）
-            for (const [id, dims] of m.entries()) {
-              const existing = dimsById.get(id) || {};
-              dimsById.set(id, {
+            for (const [genId, dims] of m.entries()) {
+              if (!candidateIdSet.has(genId)) continue;
+              const existing = dimsById.get(genId) || {};
+              dimsById.set(genId, {
                 surfaceAnchoring: dims.surfaceAnchoring ?? existing.surfaceAnchoring,
-                energyLevel: dims.energyLevel ?? existing.energyLevel,
-                packingDensity: dims.packingDensity ?? existing.packingDensity,
+                chemistryValidity: dims.chemistryValidity ?? existing.chemistryValidity,
+                defectPassivation: dims.defectPassivation ?? existing.defectPassivation,
               });
             }
           }
@@ -796,25 +854,63 @@ export function extractIterationAnalytics(
 
     // 2.5) 从评估节点的直接输出中提取维度分数（如果 prompt 中没有找到或数据不完整）
     // 评估节点的 output 包含 critic_aspect 和 score 字段
-    // 首先从当前迭代的 output 中提取
-    for (const nodeOutput of Object.values(iterOutputs)) {
-      if (!nodeOutput || typeof nodeOutput !== "object") continue;
-      if (Array.isArray((nodeOutput as any).output)) {
-        for (const item of (nodeOutput as any).output) {
-          if (!item || typeof item !== "object") continue;
-          const id = (item as any).id;
-          const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
-          const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
-          
-          if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
+      // 首先从当前迭代的 output 中提取
+      for (const nodeOutput of Object.values(iterOutputs)) {
+        if (!nodeOutput || typeof nodeOutput !== "object") continue;
+        const output = (nodeOutput as any).output;
+        
+        // 处理数组格式
+        if (Array.isArray(output)) {
+          for (const item of output) {
+            if (!item || typeof item !== "object") continue;
+            // 维度趋势严格以 generation_id 为唯一匹配 key
+            const id = (item as any).generation_id ?? (item as any).generationId;
+            const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
+            const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
+            
+            if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
+            if (!candidateIdSet.has(id)) continue;
           
           const existing = dimsById.get(id) || {};
-          if (criticAspect.includes("表面锚定")) {
+          // 支持中英文关键词匹配（转换为小写进行匹配，避免大小写问题）
+          const aspectLower = criticAspect.toLowerCase();
+          if (criticAspect.includes("表面锚定") || aspectLower.includes("anchoring") || aspectLower.includes("interface-binding")) {
             existing.surfaceAnchoring = score;
-          } else if (criticAspect.includes("能级匹配") || criticAspect.includes("能级")) {
-            existing.energyLevel = score;
-          } else if (criticAspect.includes("膜致密度") || criticAspect.includes("膜致密度和稳定性")) {
-            existing.packingDensity = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set surfaceAnchoring=${score} from critic_aspect="${criticAspect}"`);
+          } else if (criticAspect.includes("化学有效性") || aspectLower.includes("chemistry") || aspectLower.includes("chemistry-validity") || aspectLower.includes("structural sanity")) {
+            existing.chemistryValidity = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set chemistryValidity=${score} from critic_aspect="${criticAspect}"`);
+          } else if (criticAspect.includes("缺陷评估") || criticAspect.includes("缺陷") || aspectLower.includes("defect") || aspectLower.includes("defect-passivation") || aspectLower.includes("interface-defect") || aspectLower.includes("passivation")) {
+            existing.defectPassivation = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set defectPassivation=${score} from critic_aspect="${criticAspect}"`);
+          } else {
+            console.warn(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: unknown critic_aspect="${criticAspect}", score=${score}`);
+          }
+          dimsById.set(id, existing);
+        }
+      }
+      // 处理单个对象格式（评估节点可能返回单个对象而不是数组）
+      else if (output && typeof output === "object" && !Array.isArray(output)) {
+        // 维度趋势严格以 generation_id 为唯一匹配 key
+        const id = (output as any).generation_id ?? (output as any).generationId;
+        const criticAspect = String((output as any).critic_aspect || (output as any).criticAspect || "").trim();
+        const score = typeof (output as any).score === "number" ? (output as any).score : parseFloat(String((output as any).score ?? ""));
+        
+        if (id !== undefined && !Number.isNaN(score) && criticAspect && candidateIdSet.has(id)) {
+          const existing = dimsById.get(id) || {};
+          // 支持中英文关键词匹配（转换为小写进行匹配，避免大小写问题）
+          const aspectLower = criticAspect.toLowerCase();
+          if (criticAspect.includes("表面锚定") || aspectLower.includes("anchoring") || aspectLower.includes("interface-binding")) {
+            existing.surfaceAnchoring = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set surfaceAnchoring=${score} from critic_aspect="${criticAspect}" (single object)`);
+          } else if (criticAspect.includes("化学有效性") || aspectLower.includes("chemistry") || aspectLower.includes("chemistry-validity") || aspectLower.includes("structural sanity")) {
+            existing.chemistryValidity = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set chemistryValidity=${score} from critic_aspect="${criticAspect}" (single object)`);
+          } else if (criticAspect.includes("缺陷评估") || criticAspect.includes("缺陷") || aspectLower.includes("defect") || aspectLower.includes("defect-passivation") || aspectLower.includes("interface-defect") || aspectLower.includes("passivation")) {
+            existing.defectPassivation = score;
+            console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set defectPassivation=${score} from critic_aspect="${criticAspect}" (single object)`);
+          } else {
+            console.warn(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: unknown critic_aspect="${criticAspect}", score=${score} (single object)`);
           }
           dimsById.set(id, existing);
         }
@@ -824,75 +920,155 @@ export function extractIterationAnalytics(
       const iterationOutputs = (nodeOutput as any).iteration_outputs;
       if (Array.isArray(iterationOutputs)) {
         const entry = iterationOutputs.find((x: any) => x && typeof x === "object" && x.iteration === iter);
-        if (entry && Array.isArray(entry.output)) {
-          for (const item of entry.output) {
-            if (!item || typeof item !== "object") continue;
-            const id = (item as any).id;
-            const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
-            const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
-            
-            if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
-            
-            const existing = dimsById.get(id) || {};
-            if (criticAspect.includes("表面锚定")) {
-              existing.surfaceAnchoring = score;
-            } else if (criticAspect.includes("能级匹配") || criticAspect.includes("能级")) {
-              existing.energyLevel = score;
-            } else if (criticAspect.includes("膜致密度") || criticAspect.includes("膜致密度和稳定性")) {
-              existing.packingDensity = score;
+        if (entry) {
+          const entryOutput = entry.output;
+          // 处理数组格式
+          if (Array.isArray(entryOutput)) {
+            for (const item of entryOutput) {
+              if (!item || typeof item !== "object") continue;
+              // 维度趋势严格以 generation_id 为唯一匹配 key
+              const id = (item as any).generation_id ?? (item as any).generationId;
+              const criticAspect = String((item as any).critic_aspect || (item as any).criticAspect || "").trim();
+              const score = typeof (item as any).score === "number" ? (item as any).score : parseFloat(String((item as any).score ?? ""));
+              
+              if (id === undefined || Number.isNaN(score) || !criticAspect) continue;
+              if (!candidateIdSet.has(id)) continue;
+              
+              const existing = dimsById.get(id) || {};
+              // 支持中英文关键词匹配（转换为小写进行匹配，避免大小写问题）
+              const aspectLower = criticAspect.toLowerCase();
+              if (criticAspect.includes("表面锚定") || aspectLower.includes("anchoring") || aspectLower.includes("interface-binding")) {
+                existing.surfaceAnchoring = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set surfaceAnchoring=${score} from critic_aspect="${criticAspect}"`);
+              } else if (criticAspect.includes("化学有效性") || aspectLower.includes("chemistry") || aspectLower.includes("chemistry-validity") || aspectLower.includes("structural sanity")) {
+                existing.chemistryValidity = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set chemistryValidity=${score} from critic_aspect="${criticAspect}"`);
+              } else if (criticAspect.includes("缺陷评估") || criticAspect.includes("缺陷") || aspectLower.includes("defect") || aspectLower.includes("defect-passivation") || aspectLower.includes("interface-defect") || aspectLower.includes("passivation")) {
+                existing.defectPassivation = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set defectPassivation=${score} from critic_aspect="${criticAspect}"`);
+              } else {
+                console.warn(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: unknown critic_aspect="${criticAspect}", score=${score}`);
+              }
+              dimsById.set(id, existing);
             }
-            dimsById.set(id, existing);
+          }
+          // 处理单个对象格式
+          else if (entryOutput && typeof entryOutput === "object" && !Array.isArray(entryOutput)) {
+            // 维度趋势严格以 generation_id 为唯一匹配 key
+            const id = (entryOutput as any).generation_id ?? (entryOutput as any).generationId;
+            const criticAspect = String((entryOutput as any).critic_aspect || (entryOutput as any).criticAspect || "").trim();
+            const score = typeof (entryOutput as any).score === "number" ? (entryOutput as any).score : parseFloat(String((entryOutput as any).score ?? ""));
+            
+            if (id !== undefined && !Number.isNaN(score) && criticAspect && candidateIdSet.has(id)) {
+              const existing = dimsById.get(id) || {};
+              // 支持中英文关键词匹配（转换为小写进行匹配，避免大小写问题）
+              const aspectLower = criticAspect.toLowerCase();
+              if (criticAspect.includes("表面锚定") || aspectLower.includes("anchoring") || aspectLower.includes("interface-binding")) {
+                existing.surfaceAnchoring = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set surfaceAnchoring=${score} from critic_aspect="${criticAspect}" (iteration_outputs, single object)`);
+              } else if (criticAspect.includes("化学有效性") || aspectLower.includes("chemistry") || aspectLower.includes("chemistry-validity") || aspectLower.includes("structural sanity")) {
+                existing.chemistryValidity = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set chemistryValidity=${score} from critic_aspect="${criticAspect}" (iteration_outputs, single object)`);
+              } else if (criticAspect.includes("缺陷评估") || criticAspect.includes("缺陷") || aspectLower.includes("defect") || aspectLower.includes("defect-passivation") || aspectLower.includes("interface-defect") || aspectLower.includes("passivation")) {
+                existing.defectPassivation = score;
+                console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: set defectPassivation=${score} from critic_aspect="${criticAspect}" (iteration_outputs, single object)`);
+              } else {
+                console.warn(`[extractIterationAnalytics] Iter ${iter}, Molecule ${id}: unknown critic_aspect="${criticAspect}", score=${score} (iteration_outputs, single object)`);
+              }
+              dimsById.set(id, existing);
+            }
           }
         }
       }
     }
 
     // 3) 兜底：从 candidates 的 opt_des 文本解析维度分（不如 prompt 可靠）
+    // 注意：parseDimensionScoresFromOptDes 返回的是旧维度名称，但这里我们只使用 surfaceAnchoring
+    // chemistryValidity 和 defectPassivation 需要从评估节点输出中提取
     for (const c of candidates) {
       if (typeof c.opt_des === "string") {
         const ds = parseDimensionScoresFromOptDes(c.opt_des);
         if (ds) {
+          const existing = dimsById.get(c.id) || {};
           dimsById.set(c.id, {
-            surfaceAnchoring: ds.surfaceAnchoring,
-            energyLevel: ds.energyLevel,
-            packingDensity: ds.packingDensity,
+            surfaceAnchoring: ds.surfaceAnchoring || existing.surfaceAnchoring,
+            chemistryValidity: existing.chemistryValidity, // 不从 opt_des 解析，只从评估节点提取
+            defectPassivation: existing.defectPassivation, // 不从 opt_des 解析，只从评估节点提取
           });
         }
       }
     }
 
+    // 调试：打印提取结果
+    if (candidates.length > 0 || dimsById.size > 0) {
+      console.log(`[extractIterationAnalytics] Iter ${iter}: extracted`, {
+        candidatesCount: candidates.length,
+        dimsCount: dimsById.size,
+        candidateIds: candidates.map(c => c.id),
+        dimIds: Array.from(dimsById.keys()),
+        dimsDetails: Array.from(dimsById.entries()).map(([id, dims]) => ({
+          id,
+          surfaceAnchoring: dims.surfaceAnchoring,
+          chemistryValidity: dims.chemistryValidity,
+          defectPassivation: dims.defectPassivation,
+        })),
+        // 检查ID匹配情况
+        idMismatch: candidates.filter(c => !dimsById.has(c.id)).map(c => ({ id: c.id, score: c.score })),
+      });
+    } else {
+      console.warn(`[extractIterationAnalytics] Iter ${iter}: NO candidates or dims extracted!`, {
+        iterOutputsKeys: Object.keys(iterOutputs || {}),
+      });
+    }
+    
     return { candidates, dimsById };
   };
 
   // 优先使用 iterationSnapshots（如果提供）
   if (iterationSnapshots && iterationSnapshots.length > 0) {
+    console.log(`[extractIterationAnalytics] Using iterationSnapshots, count: ${iterationSnapshots.length}`);
     for (const snapshot of iterationSnapshots) {
       const iter = snapshot.iter;
 
       const { candidates, dimsById } = getIterSummary(iter);
+      
+      console.log(`[extractIterationAnalytics] Iter ${iter} summary:`, {
+        candidatesCount: candidates.length,
+        dimsCount: dimsById.size,
+        snapshotBest: snapshot.best?.score?.total,
+      });
 
       // 关键：趋势图的 total_best 必须从 node_end/总结节点每轮迭代给出的 score（确定的）
       // 而不是从多个候选里算统计值
       let total_best = 0;
       let surfaceAnchoring_best = 0;
-      let energyLevel_best = 0;
-      let packingDensity_best = 0;
+      let chemistryValidity_best = 0;
+      let defectPassivation_best = 0;
 
       // 优先从总结节点的 output 里取每轮迭代确定的 score（这是 node_end 给出的）
       if (candidates.length > 0) {
         // 取 score 最高的作为 best（这是总结节点给出的确定总分）
-        const best = candidates.reduce((a, b) => (b.score > a.score ? b : a), candidates[0]);
-        total_best = best.score || 0; // 直接用总结节点给出的 score，不重新计算
-        const dims = dimsById.get(best.id);
-        surfaceAnchoring_best = dims?.surfaceAnchoring || 0;
-        energyLevel_best = dims?.energyLevel || 0;
-        packingDensity_best = dims?.packingDensity || 0;
+        const best = candidates.length > 0 
+          ? candidates.reduce((a, b) => {
+              if (!a) return b;
+              return b.score > a.score ? b : a;
+            }, candidates[0] as { id: number | string; score: number; smiles?: string; opt_des?: string })
+          : null;
+        if (best) {
+          total_best = best.score || 0; // 直接用总结节点给出的 score，不重新计算
+          const dims = dimsById.get(best.id);
+          surfaceAnchoring_best = dims?.surfaceAnchoring ?? 0;
+          chemistryValidity_best = dims?.chemistryValidity ?? 0;
+          defectPassivation_best = dims?.defectPassivation ?? 0;
+        }
       } else if (snapshot.best?.score) {
         // 兜底：没有 candidates 时，用 snapshot.best（可能缺维度分）
-        total_best = snapshot.best.score.total || 0;
-        surfaceAnchoring_best = snapshot.best.score.surfaceAnchoring || 0;
-        energyLevel_best = snapshot.best.score.energyLevel || 0;
-        packingDensity_best = snapshot.best.score.packingDensity || 0;
+        // 注意：snapshot.best.score 可能还是旧的字段名，需要兼容处理
+        const bestScore = snapshot.best.score as any;
+        total_best = bestScore.total || 0;
+        surfaceAnchoring_best = bestScore.surfaceAnchoring ?? 0;
+        chemistryValidity_best = bestScore.chemistryValidity ?? 0;
+        defectPassivation_best = bestScore.defectPassivation ?? 0;
       }
       
       // 添加到趋势数据（total_best 来自 node_end/总结节点确定的 score）
@@ -900,8 +1076,8 @@ export function extractIterationAnalytics(
         iter,
         total_best,
         surfaceAnchoring_best,
-        energyLevel_best,
-        packingDensity_best,
+        chemistryValidity_best,
+        defectPassivation_best,
       });
       
       // 添加到 Pareto 点集：使用 candidates + dimsById（按分子 id 对齐）
@@ -910,15 +1086,24 @@ export function extractIterationAnalytics(
         const dims = dimsById.get(c.id);
         // 只有当维度分数存在时才使用，避免0值覆盖undefined
         // 使用 undefined 而不是 0，这样在构建 dimensionScoresByIter 时可以区分"数据缺失"和"有效0值"
-        paretoPoints.push({
-          energyLevel: dims?.energyLevel,
+        const paretoPoint = {
           surfaceAnchoring: dims?.surfaceAnchoring,
-          packingDensity: dims?.packingDensity,
+          chemistryValidity: dims?.chemistryValidity,
+          defectPassivation: dims?.defectPassivation,
           total: c.score || 0, // 直接用总结节点给出的 score
           iter,
           smiles: c.smiles,
           moleculeId: c.id,
-        });
+        };
+        
+        // 调试：打印维度分数提取情况
+        if (dims && (dims.surfaceAnchoring !== undefined || dims.chemistryValidity !== undefined || dims.defectPassivation !== undefined)) {
+          console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${c.id}: found dims`, dims);
+        } else {
+          console.log(`[extractIterationAnalytics] Iter ${iter}, Molecule ${c.id}: no dims found, dimsById size:`, dimsById.size, 'keys:', Array.from(dimsById.keys()));
+        }
+        
+        paretoPoints.push(paretoPoint);
       }
 
       if (total_best > 0) {
@@ -930,8 +1115,8 @@ export function extractIterationAnalytics(
     const candidateTrendMap = new Map<number | string, Map<number, number>>();
     const candidateDimensionMap = new Map<number | string, Map<number, {
       surfaceAnchoring?: number;
-      energyLevel?: number;
-      packingDensity?: number;
+      chemistryValidity?: number;
+      defectPassivation?: number;
     }>>();
     
     for (const p of paretoPoints) {
@@ -953,17 +1138,41 @@ export function extractIterationAnalytics(
       const dimensionMap = candidateDimensionMap.get(p.moleculeId)!;
       // 只有当维度分数存在时才设置（避免undefined覆盖已有值）
       const existing = dimensionMap.get(p.iter) || {};
-      dimensionMap.set(p.iter, {
+      const newDims = {
         surfaceAnchoring: p.surfaceAnchoring !== undefined && p.surfaceAnchoring !== null
           ? p.surfaceAnchoring 
           : existing.surfaceAnchoring,
-        energyLevel: p.energyLevel !== undefined && p.energyLevel !== null
-          ? p.energyLevel 
-          : existing.energyLevel,
-        packingDensity: p.packingDensity !== undefined && p.packingDensity !== null
-          ? p.packingDensity 
-          : existing.packingDensity,
-      });
+        chemistryValidity: p.chemistryValidity !== undefined && p.chemistryValidity !== null
+          ? p.chemistryValidity 
+          : existing.chemistryValidity,
+        defectPassivation: p.defectPassivation !== undefined && p.defectPassivation !== null
+          ? p.defectPassivation 
+          : existing.defectPassivation,
+      };
+      
+      // 调试：打印维度分数设置情况
+      if (p.surfaceAnchoring !== undefined || p.chemistryValidity !== undefined || p.defectPassivation !== undefined) {
+        console.log(`[extractIterationAnalytics] Setting dims for molecule ${p.moleculeId}, iter ${p.iter}:`, newDims);
+      }
+      
+      dimensionMap.set(p.iter, newDims);
+    }
+    
+    // 获取所有迭代轮次（用于补齐缺失的数据点）
+    const allIters = new Set<number>();
+    if (iterationSnapshots && iterationSnapshots.length > 0) {
+      iterationSnapshots.forEach(s => allIters.add(s.iter));
+    } else {
+      trend.forEach(t => allIters.add(t.iter));
+    }
+    const sortedIters = Array.from(allIters).sort((a, b) => a - b);
+    
+    // 构建分子ID到SMILES的映射（用于在snapshots中查找）
+    const moleculeIdToSmiles = new Map<number | string, string>();
+    for (const p of paretoPoints) {
+      if (p.moleculeId && p.smiles) {
+        moleculeIdToSmiles.set(p.moleculeId, p.smiles);
+      }
     }
     
     for (const [moleculeId, scoresByIter] of candidateTrendMap.entries()) {
@@ -971,6 +1180,65 @@ export function extractIterationAnalytics(
       if (!firstPoint) continue;
       
       const dimensionScoresByIter = candidateDimensionMap.get(moleculeId) || new Map();
+      
+      // 自动补齐逻辑：保持趋势连续性
+      // 优先使用"达到要求"的迭代数据，如果没有达到要求的迭代，则使用最后一次有数据的迭代
+      const allScores = Array.from(scoresByIter.entries()).sort((a, b) => a[0] - b[0]);
+      
+      // 首先尝试找到首次达到要求的迭代
+      let qualifiedIter: number | null = null;
+      let qualifiedScore: number | null = null;
+      let qualifiedDimScores: { surfaceAnchoring?: number; chemistryValidity?: number; defectPassivation?: number } = {};
+      
+      for (const [iter, score] of allScores) {
+        // 判断是否达到要求：分数 >= 7 或在 passed 列表中
+        let isQualified = score >= 7;
+        if (!isQualified && iterationSnapshots && iterationSnapshots.length > 0) {
+          const snapshot = iterationSnapshots.find(s => s.iter === iter);
+          if (snapshot) {
+            const smiles = moleculeIdToSmiles.get(moleculeId);
+            if (smiles) {
+              // 检查该分子是否在 passed 列表中
+              // 维度趋势严格以 generation_id 为唯一匹配 key
+              isQualified = snapshot.passed.some(m => (m as any).generation_id === moleculeId);
+            }
+          }
+        }
+        
+        // 如果达到要求，记录该迭代的分数和维度分数
+        if (isQualified) {
+          qualifiedIter = iter;
+          qualifiedScore = score;
+          qualifiedDimScores = dimensionScoresByIter.get(iter) || {};
+          break; // 找到首次达到要求的迭代后退出
+        }
+      }
+      
+      // 如果没有找到达到要求的迭代，使用最后一次有数据的迭代
+      if (qualifiedIter === null && allScores.length > 0) {
+        const lastScore = allScores[allScores.length - 1];
+        if (lastScore) {
+          qualifiedIter = lastScore[0];
+          qualifiedScore = lastScore[1];
+          qualifiedDimScores = dimensionScoresByIter.get(qualifiedIter) || {};
+        }
+      }
+      
+      // 补齐后续所有缺失迭代的数据点（保持趋势连续性）
+      if (qualifiedIter !== null && qualifiedScore !== null) {
+        for (const iter of sortedIters) {
+          // 如果该迭代已经有数据，跳过
+          if (scoresByIter.has(iter)) continue;
+          
+          // 如果该迭代在最后一次有数据的迭代之后，则补齐
+          if (iter > qualifiedIter) {
+            scoresByIter.set(iter, qualifiedScore);
+            
+            // 同时补齐维度分数（即使维度分数为空对象，也要补齐以保持结构一致）
+            dimensionScoresByIter.set(iter, { ...qualifiedDimScores });
+          }
+        }
+      }
       
       candidateTrends.push({
         moleculeId,
@@ -1014,35 +1282,45 @@ export function extractIterationAnalytics(
             iterMolecules = iterData.molecules;
           } else if (iterData.output && Array.isArray(iterData.output)) {
             iterMolecules = iterData.output;
+          } else if (iterData.output && typeof iterData.output === "object" && (iterData.output.smiles || iterData.output.SMILES)) {
+            // 处理单个对象格式（生成节点可能返回单个对象而不是数组）
+            iterMolecules = [iterData.output];
           }
 
           // 计算该迭代的最佳值
           let total_best = 0;
           let surfaceAnchoring_best = 0;
-          let energyLevel_best = 0;
-          let packingDensity_best = 0;
+          let chemistryValidity_best = 0;
+          let defectPassivation_best = 0;
 
           if (iterMolecules.length > 0) {
             // 找到总分最高的分子
             const bestMol = iterMolecules.reduce((best, mol) => {
+              if (!best) return mol;
               const bestScore = best.score?.total || 0;
               const molScore = mol.score?.total || 0;
               return molScore > bestScore ? mol : best;
-            }, iterMolecules[0]);
+            }, iterMolecules[0] as Partial<Molecule> | undefined);
 
-            total_best = bestMol.score?.total || 0;
-            surfaceAnchoring_best = bestMol.score?.surfaceAnchoring || 0;
-            energyLevel_best = bestMol.score?.energyLevel || 0;
-            packingDensity_best = bestMol.score?.packingDensity || 0;
+            if (bestMol) {
+              total_best = bestMol.score?.total || 0;
+              surfaceAnchoring_best = bestMol.score?.surfaceAnchoring ?? 0;
+              // 注意：molecule.score 可能还是旧的字段名，需要兼容处理
+              const score = bestMol.score as any;
+              chemistryValidity_best = score.chemistryValidity ?? 0;
+              defectPassivation_best = score.defectPassivation ?? 0;
+            }
 
             // 添加到 Pareto 点集
             iterMolecules.forEach((mol) => {
               if (mol.score) {
                 const moleculeId = (mol as any).id ?? (mol as any).moleculeId ?? mol.index ?? mol.smiles;
+                // 注意：molecule.score 可能还是旧的字段名，需要兼容处理
+                const score = mol.score as any;
                 paretoPoints.push({
-                  energyLevel: mol.score.energyLevel || 0,
-                  surfaceAnchoring: mol.score.surfaceAnchoring || 0,
-                  packingDensity: mol.score.packingDensity || 0,
+                  surfaceAnchoring: score.surfaceAnchoring ?? 0,
+                  chemistryValidity: score.chemistryValidity ?? 0,
+                  defectPassivation: score.defectPassivation ?? 0,
                   total: mol.score.total || 0,
                   iter,
                   smiles: mol.smiles,
@@ -1056,8 +1334,8 @@ export function extractIterationAnalytics(
             iter,
             total_best,
             surfaceAnchoring_best,
-            energyLevel_best,
-            packingDensity_best,
+            chemistryValidity_best,
+            defectPassivation_best,
           });
         });
       }
@@ -1067,27 +1345,32 @@ export function extractIterationAnalytics(
   // 如果没有从 iterations 提取到数据，尝试从最终 molecules 生成一个数据点
   if (!hasData && molecules && molecules.length > 0) {
     const bestMol = molecules.reduce((best, mol) => {
+      if (!best) return mol;
       const bestScore = best.score?.total || 0;
       const molScore = mol.score?.total || 0;
       return molScore > bestScore ? mol : best;
-    }, molecules[0]);
+    }, molecules[0] as Partial<Molecule> | undefined);
 
-    if (bestMol.score) {
+    if (bestMol && bestMol.score) {
+      // 注意：molecule.score 可能还是旧的字段名，需要兼容处理
+      const score = bestMol.score as any;
       trend.push({
         iter: 1,
         total_best: bestMol.score.total || 0,
-        surfaceAnchoring_best: bestMol.score.surfaceAnchoring || 0,
-        energyLevel_best: bestMol.score.energyLevel || 0,
-        packingDensity_best: bestMol.score.packingDensity || 0,
+        surfaceAnchoring_best: score.surfaceAnchoring ?? 0,
+        chemistryValidity_best: score.chemistryValidity ?? 0,
+        defectPassivation_best: score.defectPassivation ?? 0,
       });
 
       molecules.forEach((mol) => {
         if (mol.score) {
           const moleculeId = (mol as any).id ?? (mol as any).moleculeId ?? mol.index ?? mol.smiles;
+          // 注意：molecule.score 可能还是旧的字段名，需要兼容处理
+          const score = mol.score as any;
           paretoPoints.push({
-            energyLevel: mol.score.energyLevel || 0,
-            surfaceAnchoring: mol.score.surfaceAnchoring || 0,
-            packingDensity: mol.score.packingDensity || 0,
+            surfaceAnchoring: score.surfaceAnchoring ?? 0,
+            chemistryValidity: score.chemistryValidity ?? 0,
+            defectPassivation: score.defectPassivation ?? 0,
             total: mol.score.total || 0,
             smiles: mol.smiles,
             moleculeId,
@@ -1099,11 +1382,11 @@ export function extractIterationAnalytics(
 
   // 构建每个候选分子的总分趋势和维度分数趋势（跨迭代）- 回退逻辑
   const candidateTrendMap = new Map<number | string, Map<number, number>>();
-  const candidateDimensionMap = new Map<number | string, Map<number, {
-    surfaceAnchoring?: number;
-    energyLevel?: number;
-    packingDensity?: number;
-  }>>();
+    const candidateDimensionMap = new Map<number | string, Map<number, {
+      surfaceAnchoring?: number;
+      chemistryValidity?: number;
+      defectPassivation?: number;
+    }>>();
   
   for (const p of paretoPoints) {
     if (typeof p.iter !== "number" || p.moleculeId === undefined) continue;
@@ -1122,18 +1405,61 @@ export function extractIterationAnalytics(
       candidateDimensionMap.set(p.moleculeId, new Map());
     }
     const dimensionMap = candidateDimensionMap.get(p.moleculeId)!;
+    const existing = dimensionMap.get(p.iter) || {};
+    const sa = p.surfaceAnchoring;
+    const cv = p.chemistryValidity;
+    const dp = p.defectPassivation;
     dimensionMap.set(p.iter, {
-      surfaceAnchoring: p.surfaceAnchoring > 0 ? p.surfaceAnchoring : undefined,
-      energyLevel: p.energyLevel > 0 ? p.energyLevel : undefined,
-      packingDensity: p.packingDensity > 0 ? p.packingDensity : undefined,
+      surfaceAnchoring: (sa !== undefined && sa !== null && sa > 0) 
+        ? sa 
+        : existing.surfaceAnchoring,
+      chemistryValidity: (cv !== undefined && cv !== null && cv > 0)
+        ? cv 
+        : existing.chemistryValidity,
+      defectPassivation: (dp !== undefined && dp !== null && dp > 0)
+        ? dp 
+        : existing.defectPassivation,
     });
   }
+  
+  // 获取所有迭代轮次（用于补齐缺失的数据点）
+  const allItersFallback = new Set<number>();
+  paretoPoints.forEach(p => {
+    if (typeof p.iter === "number") {
+      allItersFallback.add(p.iter);
+    }
+  });
+  const sortedItersFallback = Array.from(allItersFallback).sort((a, b) => a - b);
   
   for (const [moleculeId, scoresByIter] of candidateTrendMap.entries()) {
     const firstPoint = Array.from(scoresByIter.entries())[0];
     if (!firstPoint) continue;
     
     const dimensionScoresByIter = candidateDimensionMap.get(moleculeId) || new Map();
+    
+    // 自动补齐逻辑：保持趋势连续性（回退逻辑：使用最后一次有数据的迭代）
+    const allScores = Array.from(scoresByIter.entries()).sort((a, b) => a[0] - b[0]);
+    if (allScores.length > 0) {
+      const lastScore = allScores[allScores.length - 1];
+      if (lastScore) {
+        const lastIter = lastScore[0];
+        const lastScoreValue = lastScore[1];
+        const lastDimScores = dimensionScoresByIter.get(lastIter) || {};
+        
+        // 补齐后续所有缺失迭代的数据点
+        for (const iter of sortedItersFallback) {
+          // 如果该迭代已经有数据，跳过
+          if (scoresByIter.has(iter)) continue;
+          
+          // 如果该迭代在最后一次有数据的迭代之后，则补齐
+          if (iter > lastIter) {
+            scoresByIter.set(iter, lastScoreValue);
+            // 同时补齐维度分数
+            dimensionScoresByIter.set(iter, { ...lastDimScores });
+          }
+        }
+      }
+    }
     
     candidateTrends.push({
       moleculeId,

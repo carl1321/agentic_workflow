@@ -111,6 +111,7 @@ logs/
 data/molecular_images/*.json
 web/public/molecular_images/*.svg
 web/public/molecular_images/*.json
+web/public/molecular_images/*_3d.sdf
 web/public/images/
 
 # ============================================

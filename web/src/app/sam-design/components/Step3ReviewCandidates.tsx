@@ -210,7 +210,13 @@ export function Step3ReviewCandidates({
         const processedMolecules = await Promise.all(
           moleculesData.map(async (mol, index) => {
             // 检查分子是否已经有完整的评估结果（从历史记录或工作流结果中可能已经包含）
-            const hasCompleteEvaluation = mol.score && mol.analysis && mol.properties;
+            // 严格判断：需要所有必需字段都存在（surfaceAnchoring、packingDensity、HOMO、LUMO）
+            const isMissing = (v: number | undefined) =>
+              v === undefined || v === null || Number.isNaN(v);
+            const hasSurfaceAnchoring = !isMissing(mol.score?.surfaceAnchoring);
+            const hasPackingDensity = !isMissing(mol.score?.packingDensity);
+            const hasHomoLumo = !isMissing(mol.properties?.HOMO) && !isMissing(mol.properties?.LUMO);
+            const hasCompleteEvaluation = hasSurfaceAnchoring && hasPackingDensity && hasHomoLumo && mol.analysis;
             
             const molecule: Molecule = {
               index: mol.index || index + 1,
@@ -295,19 +301,43 @@ export function Step3ReviewCandidates({
                 });
 
                 if (evalResult.success) {
+                  // 合并策略：已有字段优先保留，缺失字段用评估结果填充
+                  const isMissing = (v: number | undefined) =>
+                    v === undefined || v === null || Number.isNaN(v);
+                  
                   molecule.score = {
-                    total: evalResult.score.total,
-                    surfaceAnchoring: evalResult.score.surfaceAnchoring,
-                    energyLevel: evalResult.score.energyLevel,
-                    packingDensity: evalResult.score.packingDensity,
+                    total: !isMissing(molecule.score?.total) 
+                      ? molecule.score!.total 
+                      : evalResult.score.total,
+                    surfaceAnchoring: !isMissing(molecule.score?.surfaceAnchoring)
+                      ? molecule.score!.surfaceAnchoring
+                      : evalResult.score.surfaceAnchoring,
+                    energyLevel: !isMissing(molecule.score?.energyLevel)
+                      ? molecule.score!.energyLevel
+                      : evalResult.score.energyLevel,
+                    packingDensity: !isMissing(molecule.score?.packingDensity)
+                      ? molecule.score!.packingDensity
+                      : evalResult.score.packingDensity,
                   };
-                  molecule.analysis = {
+                  
+                  molecule.analysis = molecule.analysis || {
                     description: evalResult.description,
                     explanation: evalResult.explanation,
                   };
-                  // 如果评估API返回了预测的性质，更新molecule.properties
-                  if (evalResult.properties && !molecule.properties) {
-                    molecule.properties = evalResult.properties;
+                  
+                  // 合并 properties：已有字段保留，缺失字段填充
+                  if (evalResult.properties) {
+                    molecule.properties = {
+                      HOMO: !isMissing(molecule.properties?.HOMO)
+                        ? molecule.properties!.HOMO
+                        : evalResult.properties.HOMO,
+                      LUMO: !isMissing(molecule.properties?.LUMO)
+                        ? molecule.properties!.LUMO
+                        : evalResult.properties.LUMO,
+                      DM: !isMissing(molecule.properties?.DM)
+                        ? molecule.properties!.DM
+                        : evalResult.properties.DM,
+                    };
                   }
                 }
               } catch (err) {

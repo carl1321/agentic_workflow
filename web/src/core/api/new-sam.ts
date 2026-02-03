@@ -188,3 +188,13 @@ export async function deleteExecutionHistory(historyId: string): Promise<{ succe
     method: "DELETE",
   });
 }
+
+/**
+ * 根据 SMILES 按需生成 3D SDF 内容（点击「3D 结构」时调用）
+ */
+export async function generate3DSdf(smiles: string): Promise<{ success: boolean; sdf: string }> {
+  return apiRequest<{ success: boolean; sdf: string }>("new-sam/generate-3d-sdf", {
+    method: "POST",
+    body: JSON.stringify({ smiles: smiles.trim() }),
+  });
+}

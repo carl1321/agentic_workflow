@@ -2658,6 +2658,32 @@ async def delete_new_sam_execution_history(
         raise HTTPException(status_code=500, detail=f"Failed to delete execution history: {str(e)}")
 
 
+@app.post("/api/new-sam/generate-3d-sdf")
+async def generate_3d_sdf(
+    request: dict,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    根据 SMILES 按需生成 3D SDF 内容，供前端 3D 查看器使用（点击「3D 结构」时调用）。
+    Request body: { "smiles": "CCO" }
+    Response: { "success": true, "sdf": "..." }
+    """
+    try:
+        from src.tools.visualize_molecules_tool import smiles_to_3d_sdf
+        smiles = request.get("smiles") or request.get("smiles_text")
+        if not smiles or not isinstance(smiles, str):
+            raise HTTPException(status_code=400, detail="smiles is required")
+        sdf = smiles_to_3d_sdf(smiles.strip())
+        if not sdf:
+            raise HTTPException(status_code=400, detail="Failed to generate 3D structure from SMILES")
+        return {"success": True, "sdf": sdf}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error generating 3D SDF: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Data Extraction Records API
 @app.post("/api/data-extraction/records", response_model=DataExtractionRecordResponse)
 async def save_extraction_record(request: DataExtractionRecordRequest):

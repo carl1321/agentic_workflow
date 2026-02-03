@@ -696,6 +696,13 @@ export function ExecutionLogPanel({
                         lines.push(`    ... (还有 ${molecules.length - 5} 个分子)`);
                       }
                     }
+                  } else if (nodeOutput.output && typeof nodeOutput.output === "object" && (nodeOutput.output.smiles || nodeOutput.output.SMILES)) {
+                    // 处理单个对象格式（生成节点可能返回单个对象而不是数组）
+                    const smiles = nodeOutput.output.smiles || nodeOutput.output.SMILES;
+                    if (smiles) {
+                      lines.push(`\n  【${nodeName}】生成 1 个候选分子`);
+                      lines.push(`    1. ${smiles}`);
+                    }
                   } else if (typeof nodeOutput.output === "string") {
                     lines.push(`\n  【${nodeName}】`);
                     const outputLines = nodeOutput.output.split('\n').filter((l: string) => l.trim()).slice(0, 5);

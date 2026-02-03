@@ -16,12 +16,46 @@ try:
     from rdkit import Chem
     from rdkit.Chem import Draw
     from rdkit.Chem.Draw import MolsToGridImage
+    from rdkit.Chem import AllChem
     RDKIT_AVAILABLE = True
 except ImportError:
     RDKIT_AVAILABLE = False
     MolsToGridImage = None
+    AllChem = None
 
 logger = logging.getLogger(__name__)
+
+
+def smiles_to_3d_sdf(smiles: str) -> str:
+    """
+    将单个 SMILES 转为 3D SDF 字符串（用于前端 3D 查看器按需生成）。
+    若 RDKit/AllChem 不可用或嵌入失败，返回 2D 坐标的 SDF。
+    """
+    if not RDKIT_AVAILABLE or not smiles or not isinstance(smiles, str):
+        return ""
+    smiles = smiles.strip()
+    if not smiles:
+        return ""
+    try:
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return ""
+        mol_3d = Chem.AddHs(Chem.RWMol(mol).GetMol())
+        if AllChem is not None and AllChem.EmbedMolecule(mol_3d, randomSeed=42) == 0:
+            try:
+                AllChem.MMFFOptimizeMolecule(mol_3d)
+            except Exception:
+                pass
+            return Chem.MolToMolBlock(mol_3d) + "\n$$$$\n"
+        mol_2d = Chem.AddHs(mol)
+        if AllChem is not None:
+            AllChem.Compute2DCoords(mol_2d)
+        else:
+            Chem.Compute2DCoords(mol_2d)
+        return Chem.MolToMolBlock(mol_2d) + "\n$$$$\n"
+    except Exception as e:
+        logger.warning(f"smiles_to_3d_sdf failed for '{smiles[:50]}...': {e}")
+        return ""
 
 
 @tool
@@ -154,13 +188,41 @@ def visualize_molecules(smiles_text: str) -> str:
             with open(svg_file, 'wb') as f:
                 f.write(svg_content)
             
+            # Generate 3D structure (SDF) for frontend 3D viewer (rotation, zoom, etc.)
+            sdf_3d_path = None
+            if AllChem is not None:
+                try:
+                    sdf_file = os.path.join(public_dir, f"{image_id}_3d.sdf")
+                    with open(sdf_file, "w", encoding="utf-8") as sdf_out:
+                        for mol in mols:
+                            mol_3d = Chem.AddHs(Chem.RWMol(mol).GetMol())
+                            if AllChem.EmbedMolecule(mol_3d, randomSeed=42) == 0:
+                                try:
+                                    AllChem.MMFFOptimizeMolecule(mol_3d)
+                                except Exception:
+                                    pass
+                                sdf_out.write(Chem.MolToMolBlock(mol_3d))
+                                sdf_out.write("$$$$\n")
+                            else:
+                                # Fallback: write 2D coords as pseudo-3D
+                                mol_2d = Chem.AddHs(mol)
+                                AllChem.Compute2DCoords(mol_2d)
+                                sdf_out.write(Chem.MolToMolBlock(mol_2d))
+                                sdf_out.write("$$$$\n")
+                    sdf_3d_path = f"/molecular_images/{image_id}_3d.sdf"
+                    logger.info(f"Saved 3D SDF to {sdf_file}, URL: {sdf_3d_path}")
+                except Exception as e_3d:
+                    logger.warning(f"3D SDF generation failed (2D still available): {e_3d}")
+            
             logger.info(f"=== VISUALIZE_MOLECULES RETURN ===")
             logger.info(f"Summary length: {len(summary)}")
             logger.info(f"Saved SVG to {svg_file}")
             logger.info(f"Image URL: /molecular_images/{image_id}.svg")
+            if sdf_3d_path:
+                logger.info(f"3D SDF URL: {sdf_3d_path}")
             logger.info(f"=== END VISUALIZE_MOLECULES RETURN ===")
             
-            # Return summary with hidden image ID marker
+            # Return summary with hidden image ID marker (frontend uses same id for 3D: /molecular_images/{id}_3d.sdf)
             return f"{summary}\n<!-- MOLECULAR_IMAGE_ID:{image_id} -->"
             
         except Exception as e:

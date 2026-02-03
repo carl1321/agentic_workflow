@@ -116,13 +116,17 @@ export function DimensionTrendChart({
 
       const dimensions = [
         { name: "表面锚定强度", key: "surfaceAnchoring" as const },
-        { name: "能级匹配", key: "energyLevel" as const },
-        { name: "膜致密度", key: "packingDensity" as const },
+        { name: "化学有效性", key: "chemistryValidity" as const },
+        { name: "缺陷评估", key: "defectPassivation" as const },
       ];
 
       // 为每个维度创建系列数据
       const allSeries: any[] = [];
+      // legend 只按“候选分子”展示一次（避免三个子图重复显示同一分子）
       const legendData: string[] = [];
+      const legendSet = new Set<string>();
+      // 用于 tooltip 分组：seriesIndex -> dimension name
+      const seriesDimByIndex: string[] = [];
 
       dimensions.forEach((dim, dimIdx) => {
         visibleCandidates.forEach((ct, candidateIdx) => {
@@ -135,8 +139,13 @@ export function DimensionTrendChart({
             ? `分子 ${ct.moleculeId} (${ct.smiles.substring(0, 15)}...)`
             : `分子 ${ct.moleculeId}`;
           
-          const seriesName = `${dim.name} - ${label}`;
-          legendData.push(seriesName);
+          // 关键：同一个候选分子在三个维度子图里共享同一个 series name
+          // 这样 legend 点击一次即可联动隐藏/显示该候选分子的三条线，同时 legend 不会重复显示。
+          const seriesName = label;
+          if (!legendSet.has(seriesName)) {
+            legendSet.add(seriesName);
+            legendData.push(seriesName);
+          }
 
           allSeries.push({
             name: seriesName,
@@ -158,6 +167,7 @@ export function DimensionTrendChart({
             symbolSize: candidateIdx === 0 ? 6 : 4,
             connectNulls: false, // 缺失值断开连接
           });
+          seriesDimByIndex.push(dim.name);
         });
       });
 
@@ -177,7 +187,7 @@ export function DimensionTrendChart({
             
             // 按维度分组显示
             dimensions.forEach((dim) => {
-              const dimParams = params.filter((p: any) => p.seriesName.startsWith(dim.name));
+              const dimParams = params.filter((p: any) => seriesDimByIndex[p.seriesIndex] === dim.name);
               if (dimParams.length > 0) {
                 html += `<div style="margin-top: 8px; font-weight: 600; color: ${isDark ? '#cbd5e1' : '#475569'};">
                   ${dim.name}:
@@ -185,10 +195,9 @@ export function DimensionTrendChart({
                 dimParams.forEach((p: any) => {
                   const value = p.value;
                   if (value !== null && value !== undefined) {
-                    const candidateName = p.seriesName.replace(`${dim.name} - `, "");
                     html += `<div style="margin-left: 12px; margin-top: 2px;">
                       <span style="display: inline-block; width: 10px; height: 10px; background: ${p.color}; border-radius: 50%; margin-right: 6px;"></span>
-                      ${candidateName}: <strong>${value.toFixed(1)}</strong>
+                      ${p.seriesName}: <strong>${value.toFixed(1)}</strong>
                     </div>`;
                   }
                 });
@@ -205,10 +214,6 @@ export function DimensionTrendChart({
           textStyle: {
             color: isDark ? "#94a3b8" : "#64748b",
             fontSize: 11,
-          },
-          // 按维度分组显示
-          formatter: (name: string) => {
-            return name.replace(/^(表面锚定强度|能级匹配|膜致密度) - /, "");
           },
         },
         grid: dimensions.map((_, idx) => ({

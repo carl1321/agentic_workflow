@@ -27,7 +27,10 @@ export function MoleculeOptimizationHistory({
   iterationNodeOutputs = new Map(),
   workflowGraph,
 }: MoleculeOptimizationHistoryProps) {
-  if (!molecule.smiles) {
+  const normalizeSmiles = (s: unknown): string => (typeof s === "string" ? s.trim() : "");
+  const targetSmiles = normalizeSmiles(molecule.smiles);
+
+  if (!targetSmiles) {
     return (
       <div className="text-xs text-slate-500 dark:text-slate-400">
         无分子数据
@@ -157,9 +160,9 @@ export function MoleculeOptimizationHistory({
   const moleculeHistory: MoleculeHistoryEntry[] = [];
   
   // 构建演化链：根据分子ID追溯前身
-  const buildEvolutionChain = (targetSmiles: string): MoleculeHistoryEntry[] => {
+  const buildEvolutionChain = (targetSmilesInput: string): MoleculeHistoryEntry[] => {
     const chain: MoleculeHistoryEntry[] = [];
-    let currentSmiles = targetSmiles;
+    let currentSmiles = normalizeSmiles(targetSmilesInput);
     let currentId: number | string | undefined;
     
     // 从后往前遍历迭代，构建演化链
@@ -168,7 +171,10 @@ export function MoleculeOptimizationHistory({
       const allMolecules = [...snapshot.passed, ...snapshot.pending];
       
       // 查找当前SMILES是否在这一轮出现
-      const found = allMolecules.find((m) => m.smiles === currentSmiles);
+      const found = allMolecules.find((m) => {
+        const s = normalizeSmiles((m as any)?.smiles ?? (m as any)?.SMILES);
+        return s !== "" && s === currentSmiles;
+      });
       if (found) {
         // 从工作流获取分子ID和前身ID
         const idInfo = getMoleculeIdFromWorkflow(snapshot.iter, currentSmiles);
@@ -184,7 +190,12 @@ export function MoleculeOptimizationHistory({
           iter: snapshot.iter,
           smiles: currentSmiles,
           moleculeId: currentId,
-          status: snapshot.passed.some((m) => m.smiles === currentSmiles) ? "passed" : "pending",
+          status: snapshot.passed.some((m) => {
+            const s = normalizeSmiles((m as any)?.smiles ?? (m as any)?.SMILES);
+            return s !== "" && s === currentSmiles;
+          })
+            ? "passed"
+            : "pending",
           score: {
             total: finalScore.total || 0,
             surfaceAnchoring: finalScore.surfaceAnchoring,
@@ -198,7 +209,7 @@ export function MoleculeOptimizationHistory({
         if (idInfo.previousId && i > 0) {
           const previousMol = findMoleculeById(i - 1, idInfo.previousId);
           if (previousMol && previousMol.smiles) {
-            currentSmiles = previousMol.smiles;
+            currentSmiles = normalizeSmiles(previousMol.smiles);
             currentId = idInfo.previousId;
           }
         } else if (i > 0) {
@@ -206,12 +217,16 @@ export function MoleculeOptimizationHistory({
           const prevSnapshot = iterationSnapshots[i - 1];
           const prevMolecules = [...prevSnapshot.passed, ...prevSnapshot.pending];
           
-          if (prevSnapshot.best && prevSnapshot.best.smiles && prevSnapshot.best.smiles !== currentSmiles) {
-            currentSmiles = prevSnapshot.best.smiles;
+          const bestSmiles = normalizeSmiles((prevSnapshot.best as any)?.smiles ?? (prevSnapshot.best as any)?.SMILES);
+          if (bestSmiles && bestSmiles !== currentSmiles) {
+            currentSmiles = bestSmiles;
           } else if (prevMolecules.length > 0) {
-            const firstPrev = prevMolecules.find((m) => m.smiles && m.smiles !== currentSmiles);
-            if (firstPrev && firstPrev.smiles) {
-              currentSmiles = firstPrev.smiles;
+            const firstPrev = prevMolecules.find((m) => {
+              const s = normalizeSmiles((m as any)?.smiles ?? (m as any)?.SMILES);
+              return s && s !== currentSmiles;
+            });
+            if (firstPrev) {
+              currentSmiles = normalizeSmiles((firstPrev as any)?.smiles ?? (firstPrev as any)?.SMILES);
             }
           }
         }
@@ -397,7 +412,7 @@ export function MoleculeOptimizationHistory({
   };
 
   // 构建演化链
-  moleculeHistory.push(...buildEvolutionChain(molecule.smiles));
+  moleculeHistory.push(...buildEvolutionChain(targetSmiles));
 
   if (moleculeHistory.length === 0) {
     return (

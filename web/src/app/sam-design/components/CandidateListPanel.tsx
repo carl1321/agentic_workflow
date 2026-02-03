@@ -12,13 +12,22 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "~/components/ui/collapsible";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Box } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "~/components/ui/dialog";
+import { Button } from "~/components/ui/button";
 import { getScoreColor, formatScore, extractDimScoresFromResolvedInputsPrompt } from "../utils/molecule";
 import { apiRequest } from "~/core/api/api-client";
 import { executeTool } from "~/core/api/tools";
 import type { Molecule, Constraint, DesignObjective } from "../types";
 import { ConstraintSatisfactionPanel } from "./ConstraintSatisfactionPanel";
 import { MoleculeOptimizationHistory } from "./MoleculeOptimizationHistory";
+import { Molecule3DViewer } from "./Molecule3DViewer";
 
 interface CandidateListPanelProps {
   molecules: Molecule[];
@@ -55,13 +64,22 @@ export function CandidateListPanel({
   const [selectedMolecule, setSelectedMolecule] = useState<Molecule | null>(null);
   const processedImagesRef = useRef<Set<string>>(new Set());
   const imageUrlMapRef = useRef<Map<string, string>>(new Map()); // SMILES -> imageUrl 缓存
-  const isProcessingRef = useRef(false);
+  const processingSeqRef = useRef(0); // 用于取消过期的异步处理（避免旧请求覆盖新列表）
 
   // 从迭代过程的评估节点输出中构建“最后一次出现时的三维评分”（按分子 id 对齐）
   // 这是确定数据源：resolved_inputs.prompt 里三段 JSON（critic_aspect + score）
-  const lastDimScoresById = useRef<Map<number | string, { surfaceAnchoring?: number; energyLevel?: number; packingDensity?: number }>>(new Map());
+  type DimScores = {
+    surfaceAnchoring?: number;
+    // 不同工作流/版本里字段可能不同，这里做兼容保留
+    energyLevel?: number;
+    packingDensity?: number;
+    chemistryValidity?: number;
+    defectPassivation?: number;
+    [k: string]: number | undefined;
+  };
+  const lastDimScoresById = useRef<Map<number | string, DimScores>>(new Map());
   useEffect(() => {
-    const m = new Map<number | string, { surfaceAnchoring?: number; energyLevel?: number; packingDensity?: number }>();
+    const m = new Map<number | string, DimScores>();
 
     // iterationNodeOutputs: Map<iter, Record<nodeId, outputs>>
     // 我们扫描每轮的 node outputs，找出含 iteration_outputs[].resolved_inputs.prompt 的节点，然后解析三段 JSON
@@ -76,7 +94,7 @@ export function CandidateListPanel({
         const promptText = entry?.resolved_inputs?.prompt;
         if (typeof promptText !== "string" || promptText.length === 0) continue;
 
-        const dimsById = extractDimScoresFromResolvedInputsPrompt(promptText);
+        const dimsById = extractDimScoresFromResolvedInputsPrompt(promptText) as Map<number | string, DimScores>;
         for (const [id, dims] of dimsById.entries()) {
           const prev = m.get(id) || {};
           // 以最新一轮为准覆盖（只覆盖有值的维度）
@@ -84,6 +102,8 @@ export function CandidateListPanel({
             surfaceAnchoring: dims.surfaceAnchoring ?? prev.surfaceAnchoring,
             energyLevel: dims.energyLevel ?? prev.energyLevel,
             packingDensity: dims.packingDensity ?? prev.packingDensity,
+            chemistryValidity: dims.chemistryValidity ?? prev.chemistryValidity,
+            defectPassivation: dims.defectPassivation ?? prev.defectPassivation,
           });
         }
       }
@@ -95,172 +115,231 @@ export function CandidateListPanel({
   // 处理分子：生成图片、评估等
   useEffect(() => {
     const processMolecules = async () => {
-      if (isProcessingRef.current) return;
-      isProcessingRef.current = true;
+      const seq = ++processingSeqRef.current;
+      const isStale = () => processingSeqRef.current !== seq;
 
       const sourceMolecules = molecules.length > 0 ? molecules : (initialMolecules || []);
       if (sourceMolecules.length === 0) {
         setProcessedMolecules([]);
-        isProcessingRef.current = false;
         return;
       }
 
       try {
-        const processed = await Promise.all(
-          sourceMolecules.map(async (mol, idx) => {
-            const molecule: Molecule = {
-              index: mol.index || idx + 1,
-              smiles: mol.smiles || "",
-              scaffoldCondition: mol.scaffoldCondition,
-              scaffoldSmiles: mol.scaffoldSmiles,
-              imageUrl: mol.imageUrl,
-              properties: mol.properties,
-              score: mol.score,
-              analysis: mol.analysis,
-            };
+        // 先“立刻”展示基础信息（SMILES/分数/约束等），图片和评估结果再逐个补齐
+        const baseList: Molecule[] = sourceMolecules.map((mol, idx) => {
+          const smiles = mol.smiles || "";
+          const cachedUrl = smiles ? imageUrlMapRef.current.get(smiles) : undefined;
+          return {
+            index: mol.index || idx + 1,
+            smiles,
+            scaffoldCondition: mol.scaffoldCondition,
+            scaffoldSmiles: mol.scaffoldSmiles,
+            imageUrl: mol.imageUrl || cachedUrl,
+            properties: mol.properties,
+            score: mol.score,
+            analysis: mol.analysis,
+          };
+        });
+        setProcessedMolecules(baseList);
 
-            // 生成图片（如果没有）
-            // 首先检查缓存
-            if (!molecule.imageUrl && molecule.smiles) {
-              const cachedUrl = imageUrlMapRef.current.get(molecule.smiles);
-              if (cachedUrl) {
-                molecule.imageUrl = cachedUrl;
-                console.log(`[CandidateListPanel] Using cached imageUrl for molecule ${molecule.index}: ${molecule.imageUrl}`);
-              } else if (!processedImagesRef.current.has(molecule.smiles)) {
-                try {
-                  processedImagesRef.current.add(molecule.smiles);
-                  console.log(`[CandidateListPanel] Generating image for molecule ${molecule.index}: ${molecule.smiles.substring(0, 30)}...`);
-                  const visResult = await executeTool("visualize_molecules_tool", {
-                    smiles_text: `${molecule.index}. SMILES: ${molecule.smiles}`,
-                  });
-                  console.log(`[CandidateListPanel] Tool result for molecule ${molecule.index} (first 500 chars):`, visResult.substring(0, 500));
-                  
-                  const imageIdMatch = visResult.match(/<!--\s*MOLECULAR_IMAGE_ID:([a-f0-9\-]+)\s*-->/i);
-                  if (imageIdMatch) {
-                    molecule.imageUrl = `/molecular_images/${imageIdMatch[1]}.svg`;
-                    imageUrlMapRef.current.set(molecule.smiles, molecule.imageUrl);
-                    console.log(`[CandidateListPanel] ✓ Set imageUrl for molecule ${molecule.index}: ${molecule.imageUrl}`);
-                  } else {
-                    const imageUrlMatch = visResult.match(/\/molecular_images\/[a-f0-9\-]+\.svg/i);
-                    if (imageUrlMatch) {
-                      molecule.imageUrl = imageUrlMatch[0];
-                      imageUrlMapRef.current.set(molecule.smiles, molecule.imageUrl);
-                      console.log(`[CandidateListPanel] ✓ Set imageUrl (format 2) for molecule ${molecule.index}: ${molecule.imageUrl}`);
-                    } else {
-                      console.warn(`[CandidateListPanel] ✗ Could not extract image URL from tool result for molecule ${molecule.index}`);
-                      console.warn(`[CandidateListPanel] Full tool result:`, visResult);
-                      // 如果生成失败，从processedImagesRef中移除，允许重试
-                      processedImagesRef.current.delete(molecule.smiles);
-                    }
-                  }
-                } catch (err) {
-                  console.error(`[CandidateListPanel] ✗ Failed to visualize molecule ${molecule.index}:`, err);
-                  // 如果生成失败，从processedImagesRef中移除，允许重试
-                  processedImagesRef.current.delete(molecule.smiles);
-                }
-              } else {
-                console.log(`[CandidateListPanel] Image generation already in progress for molecule ${molecule.index}, skipping...`);
-              }
-            }
+        const updateOne = (updated: Molecule) => {
+          if (isStale()) return;
+          setProcessedMolecules((prev) =>
+            prev.map((m) => (m.index === updated.index ? updated : m))
+          );
+        };
 
-            // 评估分子（如果没有评估结果）
-            if (!molecule.score && molecule.smiles && objective) {
+        const processOne = async (molecule: Molecule) => {
+          // 如果过程中列表已更新（新 seq），放弃更新
+          if (isStale()) return;
+
+          const next: Molecule = { ...molecule };
+
+          // 1) 图片：按需生成（不阻塞列表展示）
+          if (!next.imageUrl && next.smiles) {
+            const cachedUrl = imageUrlMapRef.current.get(next.smiles);
+            if (cachedUrl) {
+              next.imageUrl = cachedUrl;
+              updateOne(next);
+            } else if (!processedImagesRef.current.has(next.smiles)) {
               try {
-                const evalResult = await apiRequest<{
-                  success: boolean;
-                  score: {
-                    total: number;
-                    surfaceAnchoring?: number;
-                    energyLevel?: number;
-                    packingDensity?: number;
-                  };
-                  description: string;
-                  explanation: string;
-                  properties?: {
-                    HOMO?: number;
-                    LUMO?: number;
-                    DM?: number;
-                  };
-                }>("sam-design/evaluate-molecule", {
-                  method: "POST",
-                  body: JSON.stringify({
-                    model: evaluationModel,
-                    smiles: molecule.smiles,
-                    objective: objective.text,
-                    constraints: constraints.map((c) => ({
-                      name: c.name,
-                      value: c.value,
-                      enabled: c.enabled,
-                    })),
-                    properties: molecule.properties,
-                  }),
+                processedImagesRef.current.add(next.smiles);
+                const visResult = await executeTool("visualize_molecules_tool", {
+                  smiles_text: `${next.index}. SMILES: ${next.smiles}`,
                 });
-
-                if (evalResult.success) {
-                  molecule.score = {
-                    total: evalResult.score.total,
-                    surfaceAnchoring: evalResult.score.surfaceAnchoring,
-                    energyLevel: evalResult.score.energyLevel,
-                    packingDensity: evalResult.score.packingDensity,
-                  };
-                  molecule.analysis = {
-                    description: evalResult.description,
-                    explanation: evalResult.explanation,
-                  };
-                  if (evalResult.properties && !molecule.properties) {
-                    molecule.properties = evalResult.properties;
-                  }
+                const imageIdMatch = visResult.match(/<!--\s*MOLECULAR_IMAGE_ID:([a-f0-9\-]+)\s*-->/i);
+                if (imageIdMatch) {
+                  next.imageUrl = `/molecular_images/${imageIdMatch[1]}.svg`;
+                } else {
+                  const imageUrlMatch = visResult.match(/\/molecular_images\/[a-f0-9\-]+\.svg/i);
+                  if (imageUrlMatch) next.imageUrl = imageUrlMatch[0];
+                }
+                if (next.imageUrl) {
+                  imageUrlMapRef.current.set(next.smiles, next.imageUrl);
+                  updateOne(next);
+                } else {
+                  processedImagesRef.current.delete(next.smiles); // 允许重试
                 }
               } catch (err) {
-                console.error(`Failed to evaluate molecule ${molecule.index}:`, err);
+                console.error(`[CandidateListPanel] ✗ Failed to visualize molecule ${next.index}:`, err);
+                processedImagesRef.current.delete(next.smiles); // 允许重试
+              }
+            }
+          }
+
+          // 2) 评估：缺字段才补齐（不阻塞列表展示）
+          const needsEvaluation = (mol: Molecule, constraints: Constraint[]): boolean => {
+            if (!mol.smiles || !objective?.text) return false;
+
+            const enabledConstraints = constraints.filter((c) => c.enabled);
+            if (enabledConstraints.length === 0) return false;
+
+            const isMissing = (v: number | undefined) =>
+              v === undefined || v === null || Number.isNaN(v);
+
+            for (const constraint of enabledConstraints) {
+              switch (constraint.type) {
+                case "surface_anchoring":
+                  if (isMissing(mol.score?.surfaceAnchoring)) return true;
+                  break;
+                case "packing_density":
+                  if (isMissing(mol.score?.packingDensity)) return true;
+                  break;
+                case "energy_level":
+                  if (isMissing(mol.properties?.HOMO) || isMissing(mol.properties?.LUMO)) return true;
+                  break;
               }
             }
 
-            // 修正：维度评分缺失/被错误置 0 时，必须以迭代评估节点输出为准（按分子 id 对齐）
-            if (molecule.score) {
-              const moleculeId = molecule.index; // 当前项目内 index 实际承载了 workflow 的分子 id
-              const fallback = lastDimScoresById.current.get(moleculeId);
-              const isMissing = (v: number | undefined) => v === undefined || v === null || v <= 0;
-              molecule.score = {
-                ...molecule.score,
-                surfaceAnchoring: !isMissing(molecule.score.surfaceAnchoring)
-                  ? molecule.score.surfaceAnchoring
-                  : fallback?.surfaceAnchoring,
-                energyLevel: !isMissing(molecule.score.energyLevel)
-                  ? molecule.score.energyLevel
-                  : fallback?.energyLevel,
-                packingDensity: !isMissing(molecule.score.packingDensity)
-                  ? molecule.score.packingDensity
-                  : fallback?.packingDensity,
-              };
+            return false;
+          };
 
-              // 总分同样用三维均值计算（按你定义的规则），避免出现“维度有值但 total 不一致”
-              const sa = molecule.score.surfaceAnchoring;
-              const el = molecule.score.energyLevel;
-              const pd = molecule.score.packingDensity;
-              const dims = [sa, el, pd].filter((v) => typeof v === "number") as number[];
-              if (dims.length > 0) {
-                const computedTotal = Math.round((dims.reduce((a, b) => a + b, 0) / dims.length) * 10) / 10;
-                molecule.score.total = computedTotal;
+          // 重要：历史记录加载/已完成状态不应再触发大模型评估（应优先展示数据库中已有信息）。
+          // 仅在“运行中”才允许按需补齐缺失字段，避免每次打开历史都调用 LLM。
+          if (executionState === "running" && needsEvaluation(next, constraints) && objective?.text) {
+            try {
+              const evalResult = await apiRequest<{
+                success: boolean;
+                score: {
+                  total: number;
+                  surfaceAnchoring?: number;
+                  energyLevel?: number;
+                  packingDensity?: number;
+                };
+                description: string;
+                explanation: string;
+                properties?: {
+                  HOMO?: number;
+                  LUMO?: number;
+                  DM?: number;
+                };
+              }>("sam-design/evaluate-molecule", {
+                method: "POST",
+                body: JSON.stringify({
+                  model: evaluationModel,
+                  smiles: next.smiles,
+                  objective: objective.text,
+                  constraints: constraints.map((c) => ({
+                    name: c.name,
+                    value: c.value,
+                    enabled: c.enabled,
+                  })),
+                  properties: next.properties,
+                }),
+              });
+
+              if (evalResult.success) {
+                const isMissing = (v: number | undefined) =>
+                  v === undefined || v === null || Number.isNaN(v);
+
+                next.score = {
+                  total: !isMissing(next.score?.total) ? next.score!.total : evalResult.score.total,
+                  surfaceAnchoring: !isMissing(next.score?.surfaceAnchoring)
+                    ? next.score!.surfaceAnchoring
+                    : evalResult.score.surfaceAnchoring,
+                  energyLevel: !isMissing(next.score?.energyLevel)
+                    ? next.score!.energyLevel
+                    : evalResult.score.energyLevel,
+                  packingDensity: !isMissing(next.score?.packingDensity)
+                    ? next.score!.packingDensity
+                    : evalResult.score.packingDensity,
+                };
+
+                next.analysis = next.analysis || {
+                  description: evalResult.description,
+                  explanation: evalResult.explanation,
+                };
+
+                if (evalResult.properties) {
+                  next.properties = {
+                    HOMO: !isMissing(next.properties?.HOMO) ? next.properties!.HOMO : evalResult.properties.HOMO,
+                    LUMO: !isMissing(next.properties?.LUMO) ? next.properties!.LUMO : evalResult.properties.LUMO,
+                    DM: !isMissing(next.properties?.DM) ? next.properties!.DM : evalResult.properties.DM,
+                  };
+                }
+                updateOne(next);
               }
+            } catch (err) {
+              console.error(`Failed to evaluate molecule ${next.index}:`, err);
             }
+          }
 
-            return molecule;
-          })
-        );
+          // 3) 维度评分兜底：用迭代评估节点输出补齐缺失维度（按分子 id 对齐）
+          if (next.score) {
+            const moleculeId = next.index; // 当前项目内 index 实际承载了 workflow 的分子 id
+            const fallback = lastDimScoresById.current.get(moleculeId);
+            const isMissing = (v: number | undefined) =>
+              v === undefined || v === null || Number.isNaN(v);
 
-        setProcessedMolecules(processed);
-        console.log(`[CandidateListPanel] Processed ${processed.length} molecules, images:`, 
-          processed.map(m => ({ index: m.index, smiles: m.smiles?.substring(0, 30), imageUrl: m.imageUrl })));
+            next.score = {
+              ...next.score,
+              surfaceAnchoring: !isMissing(next.score.surfaceAnchoring)
+                ? next.score.surfaceAnchoring
+                : fallback?.surfaceAnchoring,
+              energyLevel: !isMissing(next.score.energyLevel)
+                ? next.score.energyLevel
+                : fallback?.energyLevel,
+              packingDensity: !isMissing(next.score.packingDensity)
+                ? next.score.packingDensity
+                : fallback?.packingDensity,
+            };
+
+            const sa = next.score.surfaceAnchoring;
+            const el = next.score.energyLevel;
+            const pd = next.score.packingDensity;
+            const dims = [sa, el, pd].filter((v) => typeof v === "number") as number[];
+            const totalMissing =
+              next.score.total === undefined || next.score.total === null || Number.isNaN(next.score.total);
+            if (totalMissing && dims.length > 0) {
+              next.score.total = Math.round((dims.reduce((a, b) => a + b, 0) / dims.length) * 10) / 10;
+            }
+            updateOne(next);
+          }
+        };
+
+        // 控制并发，避免同时触发过多图片/评估请求
+        const CONCURRENCY = 3;
+        const queue = [...baseList];
+        const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+          while (queue.length > 0 && !isStale()) {
+            const item = queue.shift();
+            if (!item) break;
+            await processOne(item);
+          }
+        });
+        await Promise.all(workers);
       } catch (err) {
         console.error("[CandidateListPanel] Failed to process molecules:", err);
+        // 失败时也至少展示原始列表
         setProcessedMolecules(sourceMolecules);
-      } finally {
-        isProcessingRef.current = false;
       }
     };
 
     processMolecules();
+    return () => {
+      // 使当前批次处理过期，避免异步回调覆盖新列表
+      processingSeqRef.current += 1;
+    };
   }, [molecules, initialMolecules, objective, constraints, evaluationModel]);
 
   // 按总分排序
@@ -305,34 +384,78 @@ export function CandidateListPanel({
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {/* SMILES 图片 */}
+              {/* SMILES 图片 + 3D 查看入口 */}
               {molecule.imageUrl ? (
-                <div className="flex justify-center rounded border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
-                  <img
-                    src={molecule.imageUrl}
-                    alt={`Molecule ${molecule.index}`}
-                    className="max-h-32 max-w-full"
-                    onError={(e) => {
-                      console.error(`[CandidateListPanel] Failed to load image for molecule ${molecule.index}: ${molecule.imageUrl}`);
-                      // 图片加载失败时，清除imageUrl以显示SMILES文本
-                      const target = e.target as HTMLImageElement;
-                      target.style.display = 'none';
-                      const parent = target.parentElement;
-                      if (parent) {
-                        const fallback = document.createElement('div');
-                        fallback.className = 'flex items-center justify-center text-xs text-slate-500';
-                        fallback.textContent = molecule.smiles;
-                        parent.appendChild(fallback);
-                      }
-                    }}
-                    onLoad={() => {
-                      console.log(`[CandidateListPanel] Successfully loaded image for molecule ${molecule.index}: ${molecule.imageUrl}`);
-                    }}
-                  />
+                <div className="space-y-2">
+                  <div className="flex justify-center rounded border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+                    <img
+                      src={molecule.imageUrl}
+                      alt={`Molecule ${molecule.index}`}
+                      className="max-h-32 max-w-full"
+                      onError={(e) => {
+                        console.error(`[CandidateListPanel] Failed to load image for molecule ${molecule.index}: ${molecule.imageUrl}`);
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        const parent = target.parentElement;
+                        if (parent) {
+                          const fallback = document.createElement('div');
+                          fallback.className = 'flex items-center justify-center text-xs text-slate-500';
+                          fallback.textContent = molecule.smiles;
+                          parent.appendChild(fallback);
+                        }
+                      }}
+                      onLoad={() => {
+                        console.log(`[CandidateListPanel] Successfully loaded image for molecule ${molecule.index}: ${molecule.imageUrl}`);
+                      }}
+                    />
+                  </div>
+                  {/* 3D 结构：支持拖拽旋转、滚轮缩放 */}
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="w-full text-xs">
+                        <Box className="mr-1.5 h-3.5 w-3.5" />
+                        3D 结构（旋转/缩放）
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-2xl">
+                      <DialogHeader>
+                        <DialogTitle>分子 #{molecule.index} · 3D 结构</DialogTitle>
+                      </DialogHeader>
+                      <Molecule3DViewer
+                        smiles={molecule.smiles}
+                        width="100%"
+                        height={400}
+                        backgroundColor="white"
+                      />
+                    </DialogContent>
+                  </Dialog>
                 </div>
               ) : (
-                <div className="flex items-center justify-center rounded border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800">
-                  {molecule.smiles}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-center rounded border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800">
+                    {molecule.smiles}
+                  </div>
+                  {molecule.smiles && (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" className="w-full text-xs">
+                          <Box className="mr-1.5 h-3.5 w-3.5" />
+                          3D 结构（旋转/缩放）
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-2xl">
+                        <DialogHeader>
+                          <DialogTitle>分子 #{molecule.index} · 3D 结构</DialogTitle>
+                        </DialogHeader>
+                        <Molecule3DViewer
+                          smiles={molecule.smiles}
+                          width="100%"
+                          height={400}
+                          backgroundColor="white"
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  )}
                 </div>
               )}
 

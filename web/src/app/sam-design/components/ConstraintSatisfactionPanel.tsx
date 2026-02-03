@@ -32,7 +32,11 @@ export function ConstraintSatisfactionPanel({
 
     switch (constraint.type) {
       case "surface_anchoring": {
-        if (!score?.surfaceAnchoring) {
+        // 严格判断：只有 undefined/null/NaN 才算缺失，0 是合法值
+        const isMissing = score?.surfaceAnchoring === undefined || 
+                          score?.surfaceAnchoring === null || 
+                          Number.isNaN(score?.surfaceAnchoring);
+        if (isMissing) {
           return { status: "unknown", reason: "缺少表面锚定强度评分数据" };
         }
         // 默认阈值：>=60 视为满足
@@ -47,7 +51,14 @@ export function ConstraintSatisfactionPanel({
       }
 
       case "energy_level": {
-        if (!properties?.HOMO || !properties?.LUMO) {
+        // 严格判断：只有 undefined/null/NaN 才算缺失，0 是合法值
+        const homoMissing = properties?.HOMO === undefined || 
+                            properties?.HOMO === null || 
+                            Number.isNaN(properties?.HOMO);
+        const lumoMissing = properties?.LUMO === undefined || 
+                            properties?.LUMO === null || 
+                            Number.isNaN(properties?.LUMO);
+        if (homoMissing || lumoMissing) {
           return { status: "unknown", reason: "缺少能级数据（HOMO/LUMO）" };
         }
         // 能级匹配：计算 HOMO-LUMO gap 或与目标能级的差值
@@ -65,7 +76,11 @@ export function ConstraintSatisfactionPanel({
       }
 
       case "packing_density": {
-        if (!score?.packingDensity) {
+        // 严格判断：只有 undefined/null/NaN 才算缺失，0 是合法值
+        const isMissing = score?.packingDensity === undefined || 
+                          score?.packingDensity === null || 
+                          Number.isNaN(score?.packingDensity);
+        if (isMissing) {
           return { status: "unknown", reason: "缺少膜致密度评分数据" };
         }
         // 默认阈值：>=60 视为满足

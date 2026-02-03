@@ -186,9 +186,14 @@ export interface MoleculeScore {
   total: number;
   /** 表面锚定强度评分 (0-100) */
   surfaceAnchoring?: number;
-  /** 能级匹配评分 (0-100) */
+  /** 化学有效性评分 (0-100) */
+  chemistryValidity?: number;
+  /** 缺陷评估评分 (0-100) */
+  defectPassivation?: number;
+  // 兼容旧字段（用于向后兼容）
+  /** @deprecated 能级匹配评分，已替换为 chemistryValidity */
   energyLevel?: number;
-  /** 膜致密度和稳定性评分 (0-100) */
+  /** @deprecated 膜致密度和稳定性评分，已替换为 defectPassivation */
   packingDensity?: number;
 }
 
