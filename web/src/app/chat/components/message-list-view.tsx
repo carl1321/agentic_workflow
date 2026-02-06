@@ -212,6 +212,7 @@ function MessageListItem({
               <div className="flex w-full flex-col break-words">
                 <Markdown
                   className={cn(
+                    "[&_p]:leading-snug [&_li]:leading-snug",
                     message.role === "user" &&
                       "prose-invert not-dark:text-secondary dark:text-inherit",
                   )}
@@ -226,8 +227,8 @@ function MessageListItem({
       if (content) {
         return (
           <motion.li
-            className="mt-10"
-            initial={{ opacity: 0, y: 24 }}
+            className="mt-5"
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             style={{ transition: "all 0.2s ease-out" }}
             transition={{
@@ -256,9 +257,9 @@ function MessageBubble({
   return (
     <div
       className={cn(
-        "group flex w-auto max-w-[90vw] flex-col rounded-2xl px-4 py-3 break-words",
+        "group flex w-auto max-w-[90vw] flex-col rounded-2xl px-4 py-2.5 break-words text-[15px]",
         message.role === "user" && "bg-brand rounded-ee-none",
-        message.role === "assistant" && "bg-card rounded-es-none",
+        message.role === "assistant" && "bg-slate-50 dark:bg-slate-800/60 rounded-es-none border border-slate-100 dark:border-slate-700/80",
         className,
       )}
       style={{ wordBreak: "break-all" }}

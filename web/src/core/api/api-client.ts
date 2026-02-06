@@ -77,8 +77,14 @@ export async function apiRequest<T>(
     throw new Error(errorMessage);
   }
   
-  // 检查响应内容类型
+  // 处理空响应（如 204 No Content）
+  const contentLength = res.headers.get("content-length");
   const contentType = res.headers.get("content-type");
+  if (res.status === 204 || contentLength === "0") {
+    // @ts-expect-error: 让调用方自行断言
+    return undefined;
+  }
+  // 检查响应内容类型
   if (!contentType || !contentType.includes("application/json")) {
     const text = await res.text();
     // 如果是 HTML，说明路径可能错误

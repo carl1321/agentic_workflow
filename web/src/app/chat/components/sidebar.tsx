@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow, FlaskConical } from "lucide-react";
+import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow, FlaskConical, ListTodo } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState, useImperativeHandle, forwardRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
@@ -8,8 +8,21 @@ import Link from "next/link";
 
 import { Logo } from "~/components/ui/logo";
 import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
+import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { Textarea } from "~/components/ui/textarea";
+import { Badge } from "~/components/ui/badge";
+import { toast } from "sonner";
 import { cn } from "~/lib/utils";
 import { fetchConversations, deleteConversation, type ConversationSummary } from "~/core/api/conversations";
+import { createPlan, listPlans, deletePlan, type PlanSummary } from "~/core/api/plans";
 import { useAuthStore } from "~/core/store/auth-store";
 import type { MenuInfo } from "~/core/api/auth";
 
@@ -26,6 +39,9 @@ interface SidebarProps {
   onNewChat?: () => void;
   onSelectChat?: (id: string) => void;
   currentChatId?: string | null;
+  onSelectPlan?: (planId: string) => void;
+  currentPlanId?: string | null;
+  onPlanDeleted?: (planId: string) => void;
   onOpenToolbox?: () => void;
   onOpenKnowledgeBase?: () => void;
   onOpenWorkflow?: () => void;
@@ -48,6 +64,9 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   onNewChat,
   onSelectChat,
   currentChatId,
+  onSelectPlan,
+  currentPlanId,
+  onPlanDeleted,
   onOpenToolbox,
   onOpenKnowledgeBase,
   onOpenWorkflow,
@@ -56,9 +75,16 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   const pathname = usePathname();
   const { token, user } = useAuthStore();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingPlanId, setDeletingPlanId] = useState<string | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planTitle, setPlanTitle] = useState("");
+  const [planGoal, setPlanGoal] = useState("");
+  const [planCreating, setPlanCreating] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   // 硬编码的菜单路径和代码（这些已经有专门的按钮，不需要从数据库加载）
   const hardcodedMenuPaths = new Set([
@@ -151,14 +177,31 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
     }
   };
 
+  const loadPlans = async () => {
+    try {
+      if (!token) {
+        setPlans([]);
+        return;
+      }
+      const res = await listPlans(50, 0);
+      setPlans(res.plans || []);
+    } catch (e) {
+      // 计划列表失败不应影响聊天功能
+      console.error("Failed to load plans:", e);
+    }
+  };
+
   // Expose refresh function via ref
   useImperativeHandle(ref, () => ({
-    refresh: loadConversations,
+    refresh: async () => {
+      await Promise.all([loadConversations(), loadPlans()]);
+    },
   }));
 
   useEffect(() => {
     // Initial load only - no polling
     loadConversations();
+    loadPlans();
   }, []);
 
   // map to old ChatSession shape for rendering
@@ -225,6 +268,24 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
       alert("删除对话失败，请稍后重试");
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDeletePlan = async (e: React.MouseEvent, planId: string) => {
+    e.stopPropagation();
+    if (!confirm("确定要删除该长期计划吗？删除后无法恢复。")) {
+      return;
+    }
+    try {
+      setDeletingPlanId(planId);
+      await deletePlan(planId);
+      setPlans((prev) => prev.filter((p) => p.id !== planId));
+      onPlanDeleted?.(planId);
+    } catch (err) {
+      console.error("Failed to delete plan:", err);
+      alert("删除计划失败，请稍后重试");
+    } finally {
+      setDeletingPlanId(null);
     }
   };
 
@@ -317,6 +378,72 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
 
       {/* Chat History */}
       <div className="flex-1 overflow-y-auto py-2">
+        {/* Long-term plans */}
+        <div className="px-2 mb-4">
+          <div className="flex items-center justify-between px-4 mb-2">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
+              <ListTodo className="h-3.5 w-3.5" />
+              长期计划
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => {
+                setPlanOpen(true);
+                setPlanTitle("");
+                setPlanGoal("");
+                setPlanError(null);
+              }}
+              title="新建长期计划"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+          {plans.length === 0 ? (
+            <div className="px-4 py-2 text-xs text-slate-500">暂无计划</div>
+          ) : (
+            <div className="space-y-1">
+              {plans.map((p) => {
+                const active = currentPlanId === p.id;
+                return (
+                  <div key={p.id} className="group relative">
+                    <button
+                      onClick={() => onSelectPlan?.(p.id)}
+                      className={cn(
+                        "w-full text-left px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-3",
+                        active
+                          ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300"
+                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                      )}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{p.title || "未命名计划"}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                          {p.updatedAt ? `更新：${p.updatedAt}` : ""}
+                        </div>
+                      </div>
+                      <Badge variant="secondary" className="shrink-0">{p.status}</Badge>
+                    </button>
+                    <button
+                      onClick={(e) => handleDeletePlan(e, p.id)}
+                      disabled={deletingPlanId === p.id}
+                      className={cn(
+                        "absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+                        "text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30",
+                        "disabled:opacity-50 disabled:cursor-not-allowed"
+                      )}
+                      title="删除计划"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {loading && (
           <div className="px-4 py-2 text-xs text-slate-500">加载中...</div>
         )}
@@ -389,6 +516,78 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
       <div className="border-t border-slate-200 dark:border-slate-700 px-4 py-3">
         <div className="text-xs text-slate-500 dark:text-slate-400">AgenticWorkflow</div>
       </div>
+
+      {/* Create plan dialog */}
+      <Dialog open={planOpen} onOpenChange={setPlanOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>新建长期计划</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="planTitle">计划标题（可选）</Label>
+              <Input
+                id="planTitle"
+                value={planTitle}
+                onChange={(e) => setPlanTitle(e.target.value)}
+                placeholder="例如：设备对接接口文档生成"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="planGoal">目标（必填）</Label>
+              <Textarea
+                id="planGoal"
+                value={planGoal}
+                onChange={(e) => setPlanGoal(e.target.value)}
+                placeholder="你想长期持续做的事情是什么？可以很模糊。"
+                rows={4}
+              />
+            </div>
+            {planError && (
+              <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-300">
+                {planError}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 px-3 text-xs"
+              onClick={() => setPlanOpen(false)}
+              disabled={planCreating}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="h-8 px-3 text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+              disabled={planCreating || planGoal.trim().length === 0}
+              onClick={async () => {
+                const goal = planGoal.trim();
+                if (!goal) return;
+                setPlanCreating(true);
+                setPlanError(null);
+                try {
+                  const res = await createPlan(goal, planTitle.trim() || undefined);
+                  setPlanOpen(false);
+                  onSelectPlan?.(res.planId);
+                  await loadPlans();
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : String(e);
+                  setPlanError(msg);
+                  setPlanOpen(false);
+                  toast.error(`创建计划失败：${msg}`);
+                } finally {
+                  setPlanCreating(false);
+                }
+              }}
+            >
+              {planCreating ? "创建中..." : "创建并打开"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 });

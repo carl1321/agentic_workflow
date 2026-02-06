@@ -18,7 +18,7 @@ export async function* fetchStream(
   };
   
   const response = await fetch(url, {
-    method: "POST",
+    method: init.method ?? "POST",
     headers: mergedHeaders,
     ...init,
     // 确保 headers 不会被覆盖

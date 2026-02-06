@@ -103,20 +103,40 @@ from src.server.workflow_storage import get_workflow_storage
 from src.tools import (
     VolcengineTTS,
     crawl_tool,
+    create_file_tool,
+    edit_file_tool,
     data_extraction_tool,
+    ffmpeg_tool,
     generate_sam_molecules,
     molecular_analysis_tool,
     predict_molecular_properties,
     prompt_optimizer_tool,
+    ppt_generate_tool,
     python_repl_tool,
     tts_tool,
+    video_generation_tool,
     visualize_molecules,
     search_literature,
     fetch_pdf_text,
 )
+from src.tools.search import get_web_search_tool
 from src.utils.json_utils import sanitize_args
 
 logger = logging.getLogger(__name__)
+
+
+def _get_web_search_tool_or_stub():
+    """若未配置 TAVILY_API_KEY 等，get_web_search_tool 会抛错，返回占位工具以保证应用能启动。"""
+    try:
+        return get_web_search_tool(5)
+    except Exception as e:
+        logger.warning("web_search 未就绪，使用占位工具: %s", e)
+        from langchain_core.tools import tool
+        @tool
+        def web_search_stub(query: str) -> str:
+            """网页搜索未配置或不可用。请在环境变量中设置 TAVILY_API_KEY，或在 conf.yaml 中配置 SEARCH_ENGINE。"""
+            return "网页搜索暂不可用：请配置 TAVILY_API_KEY 或 conf.yaml 中的 SEARCH_ENGINE。"
+        return web_search_stub
 
 # Configure Windows event loop policy for PostgreSQL compatibility
 # On Windows, psycopg requires a selector-based event loop, not the default ProactorEventLoop
@@ -128,6 +148,7 @@ INTERNAL_SERVER_ERROR_DETAIL = "Internal Server Error"
 # Tool registry: map tool names to tool instances
 # Note: Some tools have explicit names via @tool decorator, others use function name
 # This registry supports both frontend toolName and actual tool.name for compatibility
+# 视频动画全链路工具见 docs/video_animation_tool_chain.md
 TOOL_REGISTRY = {
     # Frontend toolName mappings
     "generate_sam_molecules": generate_sam_molecules,
@@ -141,6 +162,13 @@ TOOL_REGISTRY = {
     "molecular_analysis_tool": molecular_analysis_tool,
     "tts_tool": tts_tool,
     "data_extraction_tool": data_extraction_tool,
+    # 视频动画全链路（未配置搜索 API 时使用占位工具，避免启动失败）
+    "web_search": _get_web_search_tool_or_stub(),
+    "create_file_tool": create_file_tool,
+    "edit_file_tool": edit_file_tool,
+    "ppt_generate_tool": ppt_generate_tool,
+    "video_generation_tool": video_generation_tool,
+    "ffmpeg_tool": ffmpeg_tool,
     # Actual tool.name mappings (for compatibility)
     "predict_molecular_properties": predict_molecular_properties,
     "visualize_molecules": visualize_molecules,
@@ -244,6 +272,14 @@ try:
 except Exception as e:
     logger.warning(f"Failed to register department management routes: {e}. Department management features may not be available.")
 
+# Register long-term plans routes (Coze-like MVP)
+try:
+    from src.server.plan.routes import router as plans_router
+    app.include_router(plans_router)
+    logger.info("Plans routes registered at /api/plans")
+except Exception as e:
+    logger.warning(f"Failed to register plans routes: {e}. Plans features may not be available.")
+
 # Mount workflow Flask application
 # Dify workflow API已被移除，改用新的ReactFlow工作流系统
 # try:
@@ -279,6 +315,15 @@ async def setup_checkpoint_tables():
     except Exception as e:
         logger.warning(f"Failed to start workflow worker: {e}")
 
+    # Start plan scheduler (Coze-like MVP)
+    try:
+        from src.server.plan.worker import get_plan_scheduler
+        plan_scheduler = get_plan_scheduler()
+        await plan_scheduler.start()
+        logger.info("Plan scheduler started")
+    except Exception as e:
+        logger.warning(f"Failed to start plan scheduler: {e}")
+
 
 @app.on_event("shutdown")
 async def shutdown_worker():
@@ -290,6 +335,14 @@ async def shutdown_worker():
         logger.info("Workflow worker stopped")
     except Exception as e:
         logger.warning(f"Failed to stop workflow worker: {e}")
+
+    try:
+        from src.server.plan.worker import get_plan_scheduler
+        plan_scheduler = get_plan_scheduler()
+        await plan_scheduler.stop()
+        logger.info("Plan scheduler stopped")
+    except Exception as e:
+        logger.warning(f"Failed to stop plan scheduler: {e}")
 
 
 @app.post("/api/chat/stream")

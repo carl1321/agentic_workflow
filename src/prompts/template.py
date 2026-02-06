@@ -36,6 +36,22 @@ def get_prompt_template(prompt_name: str) -> str:
         raise ValueError(f"Error loading template {prompt_name}: {e}")
 
 
+def render_prompt_with_vars(prompt_name: str, **kwargs) -> str:
+    """
+    Render a prompt template with the given variables (e.g. for long_plan).
+    Injects CURRENT_TIME if not provided.
+    """
+    vars_ = {
+        "CURRENT_TIME": datetime.now().strftime("%a %b %d %Y %H:%M:%S %z"),
+        **kwargs,
+    }
+    try:
+        template = env.get_template(f"{prompt_name}.md")
+        return template.render(**vars_)
+    except Exception as e:
+        raise ValueError(f"Error rendering template {prompt_name}: {e}")
+
+
 def apply_prompt_template(
     prompt_name: str, state: AgentState, configurable: Configuration = None
 ) -> list:

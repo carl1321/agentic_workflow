@@ -22,10 +22,11 @@ import { KnowledgeBaseDetail } from "./components/knowledge-base-detail";
 import { ToolExecutor } from "./components/tool-executor";
 import { WorkflowList } from "./components/workflow-list";
 import { WorkflowsPage } from "./components/workflows-page";
+import { PlanWorkspace } from "./components/plan-workspace";
 import type { ToolConfig } from "~/core/config/tools";
 import type { Resource } from "~/core/messages";
 
-type ViewMode = "chat" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor" | "workflow";
+type ViewMode = "chat" | "plan" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor" | "workflow";
 
 export default function Main() {
   const searchParams = useSearchParams();
@@ -34,6 +35,7 @@ export default function Main() {
   const threadId = useStore((state) => state.threadId);
   const responding = useStore((state) => state.responding);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [selectedTool, setSelectedTool] = useState<ToolConfig | null>(null);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
@@ -43,9 +45,9 @@ export default function Main() {
   
   const doubleColumnMode = useMemo(
     () => {
-      return openResearchId !== null;
+      return openResearchId !== null || viewMode === "plan";
     },
-    [openResearchId],
+    [openResearchId, viewMode],
   );
   
   // 从 URL 参数中读取 view 参数，设置初始视图模式
@@ -61,12 +63,13 @@ export default function Main() {
   // Also refresh sidebar when threadId changes from "__default__" to actual ID
   useEffect(() => {
     const prevThreadId = prevThreadIdRef.current;
+    const isPlanThread = typeof threadId === "string" && threadId.startsWith("plan:");
     
     // If we have a threadId and it's not "__default__", update currentChatId
     // This happens when:
     // 1. A new conversation is created (backend generates new UUID)
     // 2. A historical conversation is loaded (threadId is set explicitly)
-    if (threadId && threadId !== "__default__") {
+    if (threadId && threadId !== "__default__" && !isPlanThread) {
       // Refresh sidebar if threadId changed from "__default__" to actual ID (new conversation created)
       if (prevThreadId === "__default__" && threadId !== "__default__") {
         // New conversation created - refresh sidebar to show it
@@ -98,7 +101,8 @@ export default function Main() {
   useEffect(() => {
     const prevResponding = prevRespondingRef.current;
     // When responding changes from true to false (stream completed)
-    if (prevResponding === true && responding === false && threadId && threadId !== "__default__") {
+    const isPlanThread = typeof threadId === "string" && threadId.startsWith("plan:");
+    if (prevResponding === true && responding === false && threadId && threadId !== "__default__" && !isPlanThread) {
       // Small delay to allow backend to update title
       const timeoutId = setTimeout(() => {
         sidebarRef.current?.refresh();
@@ -111,6 +115,7 @@ export default function Main() {
 
   const handleNewChat = () => {
     setCurrentChatId(null);
+    setCurrentPlanId(null);
     setViewMode("chat");
     setSelectedTool(null);
     setSelectedResource(null);
@@ -122,6 +127,7 @@ export default function Main() {
 
   const handleSelectChat = async (id: string) => {
     setCurrentChatId(id);
+    setCurrentPlanId(null);
     setViewMode("chat");
     setSelectedTool(null);
     setSelectedResource(null);
@@ -484,18 +490,32 @@ export default function Main() {
     }
   };
 
+  const handleSelectPlan = (planId: string) => {
+    setCurrentPlanId(planId);
+    setCurrentChatId(null);
+    setViewMode("plan");
+    setSelectedTool(null);
+    setSelectedResource(null);
+    // 清理聊天对话状态，PlanMessagesBlock 会负责拉取该计划的对话消息
+    useStore.getState().resetConversation();
+    useStore.getState().setThreadId(`plan:${planId}`);
+  };
+
   const handleOpenToolbox = () => {
+    setCurrentPlanId(null);
     setViewMode("toolbox");
     setSelectedTool(null);
   };
 
   const handleOpenKnowledgeBase = () => {
+    setCurrentPlanId(null);
     setViewMode("knowledge");
     setSelectedTool(null);
     setSelectedResource(null);
   };
 
   const handleOpenWorkflow = () => {
+    setCurrentPlanId(null);
     setViewMode("workflow");
     setSelectedTool(null);
     setSelectedResource(null);
@@ -539,8 +559,16 @@ export default function Main() {
       <Sidebar
         ref={sidebarRef}
         currentChatId={currentChatId}
+        currentPlanId={currentPlanId}
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
+        onSelectPlan={handleSelectPlan}
+        onPlanDeleted={(planId) => {
+          if (planId === currentPlanId) {
+            setCurrentPlanId(null);
+            setViewMode("chat");
+          }
+        }}
         onOpenToolbox={handleOpenToolbox}
         onOpenKnowledgeBase={handleOpenKnowledgeBase}
         onOpenWorkflow={handleOpenWorkflow}
@@ -579,6 +607,12 @@ export default function Main() {
             />
             )}
             {/* Dify workflow removed - using ReactFlow workflow system instead */}
+          </div>
+        )}
+
+        {viewMode === "plan" && currentPlanId && (
+          <div className="flex flex-1 justify-center">
+            <PlanWorkspace planId={currentPlanId} />
           </div>
         )}
 

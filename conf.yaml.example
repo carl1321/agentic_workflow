@@ -72,3 +72,13 @@ BASIC_MODEL:
 #   enable_synthesis: true
 #   literature_focus: true  # 优先使用scholar工具
 #   context_compression: true
+
+# 视频动画全链路：视频生成 API（通义万相 / H20 等），见 docs/video_animation_tool_chain.md
+# VIDEO_GENERATION:
+#   url: "http://your-video-api/v1/video/generations"
+#   api_key: "sk-xxx"
+#   size: "1280*720"
+#   timeout: 120
+#   poll_interval: 5
+#   max_wait: 600
+#   status_url: "http://your-video-api/v1/video/tasks"  # 可选，轮询任务状态地址，否则用 url + "/" + task_id

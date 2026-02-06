@@ -1,0 +1,72 @@
+由于没有 `outputs/plans/b502c6b3-3d84-4ebb-82fb-bfffcfff4a7f/ep01_script.md` 的具体内容，我无法直接为你完成转换。不过，我可以提供一个示例代码（使用 Python），假设你已经将分镜内容从 Markdown 文件中提取出来，并且格式符合一定规范，以下是示例代码：
+
+```python
+import re
+import json
+
+# 假设这是从 Markdown 文件中读取的分镜内容
+markdown_content = """
+|镜号|时长（秒）|场景|景别|台词|音效|提示词|
+|----|----|----|----|----|----|----|
+|1|5|客厅|全景|你好呀|轻松的背景音乐|A living room in a modern style, full shot, a person saying hello|
+|2|3|厨房|中景|我在做饭|厨房的炊具声音|A kitchen, medium shot, a person cooking|
+"""
+
+# 解析 Markdown 表格
+lines = markdown_content.strip().split('\n')
+headers = re.findall(r'\|([^|]+)', lines[0])
+data = []
+for line in lines[2:]:
+    values = re.findall(r'\|([^|]+)', line)
+    shot = int(values[0])
+    durationSec = int(values[1])
+    scene = values[2]
+    camera = values[3]
+    subtitle = values[4]
+    sfx = values[5]
+    prompt = values[6]
+    data.append({
+        "shot": shot,
+        "durationSec": durationSec,
+        "scene": scene,
+        "camera": camera,
+        "subtitle": subtitle,
+        "sfx": sfx,
+        "prompt": prompt
+    })
+
+# 转换为 JSON 数组
+json_output = json.dumps(data, indent=4)
+print(json_output)
+```
+
+### 使用步骤
+1. 将上述代码保存为一个 Python 文件，例如 `convert.py`。
+2. 将 `markdown_content` 替换为你从 `outputs/plans/b502c6b3-3d84-4ebb-82fb-bfffcfff4a7f/ep01_script.md` 文件中读取的实际内容。
+3. 运行该 Python 文件：`python convert.py`。
+
+### 输出示例
+```json
+[
+    {
+        "shot": 1,
+        "durationSec": 5,
+        "scene": "客厅",
+        "camera": "全景",
+        "subtitle": "你好呀",
+        "sfx": "轻松的背景音乐",
+        "prompt": "A living room in a modern style, full shot, a person saying hello"
+    },
+    {
+        "shot": 2,
+        "durationSec": 3,
+        "scene": "厨房",
+        "camera": "中景",
+        "subtitle": "我在做饭",
+        "sfx": "厨房的炊具声音",
+        "prompt": "A kitchen, medium shot, a person cooking"
+    }
+]
+```
+
+请根据实际的 Markdown 文件内容进行调整。

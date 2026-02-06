@@ -1,0 +1,575 @@
+# Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
+# SPDX-License-Identifier: MIT
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
+
+import psycopg
+from psycopg.rows import dict_row
+
+from src.config.loader import get_str_env
+
+logger = logging.getLogger(__name__)
+
+
+def get_db_connection() -> psycopg.Connection:
+  """获取数据库连接（复用 conf.yaml/ENV 约定）。"""
+  db_url = (
+    get_str_env("DATABASE_URL")
+    or get_str_env("SQLALCHEMY_DATABASE_URI")
+    or get_str_env("LANGGRAPH_CHECKPOINT_DB_URL", "postgresql://localhost:5432/agenticworkflow")
+  )
+  if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgres://", 1)
+  return psycopg.connect(db_url, row_factory=dict_row)
+
+
+def _as_uuid(value: Any) -> Optional[UUID]:
+  if value is None:
+    return None
+  return UUID(str(value))
+
+
+def create_plan(
+  conn: psycopg.Connection,
+  user_id: Optional[UUID],
+  title: Optional[str],
+  raw_goal: str,
+) -> UUID:
+  plan_id = uuid4()
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      INSERT INTO agent_plans (id, user_id, title, status, raw_goal, clarify, ora_spec, spec_version)
+      VALUES (%s, %s, %s, 'draft', %s, %s, NULL, 1)
+      """,
+      (
+        plan_id,
+        user_id,
+        title,
+        raw_goal,
+        json.dumps({"round": 0, "qa": []}, ensure_ascii=False),
+      ),
+    )
+  conn.commit()
+  return plan_id
+
+
+def list_plans(
+  conn: psycopg.Connection,
+  user_id: Optional[UUID],
+  limit: int = 50,
+  offset: int = 0,
+) -> List[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    if user_id is None:
+      cursor.execute(
+        """
+        SELECT id, title, status, created_at, updated_at
+        FROM agent_plans
+        ORDER BY updated_at DESC
+        LIMIT %s OFFSET %s
+        """,
+        (limit, offset),
+      )
+    else:
+      cursor.execute(
+        """
+        SELECT id, title, status, created_at, updated_at
+        FROM agent_plans
+        WHERE user_id = %s
+        ORDER BY updated_at DESC
+        LIMIT %s OFFSET %s
+        """,
+        (user_id, limit, offset),
+      )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def get_plan(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  user_id: Optional[UUID],
+) -> Optional[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    if user_id is None:
+      cursor.execute("SELECT * FROM agent_plans WHERE id = %s", (plan_id,))
+    else:
+      cursor.execute("SELECT * FROM agent_plans WHERE id = %s AND user_id = %s", (plan_id, user_id))
+    row = cursor.fetchone()
+    return dict(row) if row else None
+
+
+def delete_plan(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  user_id: Optional[UUID],
+) -> bool:
+  """删除计划（关联的 tasks/artifacts/logs/messages 由外键 ON DELETE CASCADE 自动删除）。"""
+  with conn.cursor() as cursor:
+    if user_id is None:
+      cursor.execute("DELETE FROM agent_plans WHERE id = %s", (plan_id,))
+    else:
+      cursor.execute("DELETE FROM agent_plans WHERE id = %s AND user_id = %s", (plan_id, user_id))
+    deleted = cursor.rowcount > 0
+  conn.commit()
+  return deleted
+
+
+def update_plan(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  user_id: Optional[UUID],
+  *,
+  status: Optional[str] = None,
+  title: Optional[str] = None,
+  raw_goal: Optional[str] = None,
+  ora_spec: Optional[Dict[str, Any]] = None,
+  clarify: Optional[Dict[str, Any]] = None,
+  spec_version_inc: bool = False,
+) -> bool:
+  updates: List[str] = ["updated_at = NOW()"]
+  params: List[Any] = []
+
+  if status is not None:
+    updates.append("status = %s")
+    params.append(status)
+  if title is not None:
+    updates.append("title = %s")
+    params.append(title)
+  if raw_goal is not None:
+    updates.append("raw_goal = %s")
+    params.append(raw_goal)
+  if ora_spec is not None:
+    updates.append("ora_spec = %s")
+    params.append(json.dumps(ora_spec, ensure_ascii=False))
+  if clarify is not None:
+    updates.append("clarify = %s")
+    params.append(json.dumps(clarify, ensure_ascii=False))
+  if spec_version_inc:
+    updates.append("spec_version = spec_version + 1")
+
+  if len(updates) == 1:
+    return True
+
+  params.append(plan_id)
+  if user_id is None:
+    where = "WHERE id = %s"
+  else:
+    where = "WHERE id = %s AND user_id = %s"
+    params.append(user_id)
+
+  with conn.cursor() as cursor:
+    cursor.execute(f"UPDATE agent_plans SET {', '.join(updates)} {where}", tuple(params))
+    updated = cursor.rowcount > 0
+  conn.commit()
+  return updated
+
+
+def create_tasks(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  tasks: List[Dict[str, Any]],
+) -> int:
+  if not tasks:
+    return 0
+  with conn.cursor() as cursor:
+    for t in tasks:
+      task_id = _as_uuid(t.get("id")) or uuid4()
+      cursor.execute(
+        """
+        INSERT INTO agent_plan_tasks (
+          id, plan_id, name, description, acceptance_criteria,
+          status, depends_on, scheduled_at,
+          executor_type, executor_args, idempotency_key,
+          max_retries
+        )
+        VALUES (%s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s)
+        """,
+        (
+          task_id,
+          plan_id,
+          t.get("name"),
+          t.get("description"),
+          t.get("acceptance_criteria"),
+          t.get("status", "pending"),
+          json.dumps(t.get("depends_on") or [], ensure_ascii=False),
+          t.get("scheduled_at"),
+          t.get("executor_type"),
+          json.dumps(t.get("executor_args") or {}, ensure_ascii=False),
+          t.get("idempotency_key"),
+          int(t.get("max_retries") or 0),
+        ),
+      )
+  conn.commit()
+  return len(tasks)
+
+
+def list_tasks(conn: psycopg.Connection, plan_id: UUID) -> List[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_tasks
+      WHERE plan_id = %s
+      ORDER BY created_at ASC
+      """,
+      (plan_id,),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def list_artifacts(conn: psycopg.Connection, plan_id: UUID) -> List[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_artifacts
+      WHERE plan_id = %s
+      ORDER BY created_at ASC
+      """,
+      (plan_id,),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def get_artifact(conn: psycopg.Connection, plan_id: UUID, artifact_id: UUID) -> Optional[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_artifacts
+      WHERE plan_id = %s AND id = %s
+      LIMIT 1
+      """,
+      (plan_id, artifact_id),
+    )
+    row = cursor.fetchone()
+  return dict(row) if row else None
+
+
+def list_logs(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  limit: int = 200,
+  offset: int = 0,
+) -> List[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_logs
+      WHERE plan_id = %s
+      ORDER BY created_at ASC
+      LIMIT %s OFFSET %s
+      """,
+      (plan_id, limit, offset),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def list_logs_since(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  since: datetime,
+  limit: int = 500,
+) -> List[Dict[str, Any]]:
+  """
+  增量拉取日志：created_at > since。
+  """
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_logs
+      WHERE plan_id = %s AND created_at > %s
+      ORDER BY created_at ASC
+      LIMIT %s
+      """,
+      (plan_id, since, limit),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def has_plan_work(conn: psycopg.Connection) -> bool:
+  """是否存在待推进或待执行的任务（pending/ready），用于调度器在无任务时快速返回。"""
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT 1 FROM agent_plan_tasks
+      WHERE status IN ('pending', 'ready')
+      LIMIT 1
+      """
+    )
+    return cursor.fetchone() is not None
+
+
+def get_task_by_idempotency_key(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  idempotency_key: str,
+) -> Optional[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_tasks
+      WHERE plan_id = %s AND idempotency_key = %s
+      LIMIT 1
+      """,
+      (plan_id, idempotency_key),
+    )
+    row = cursor.fetchone()
+  return dict(row) if row else None
+
+
+def update_task_status(
+  conn: psycopg.Connection,
+  task_id: UUID,
+  *,
+  status: str,
+  started_at: Optional[datetime] = None,
+  finished_at: Optional[datetime] = None,
+  error: Optional[Dict[str, Any]] = None,
+) -> bool:
+  updates: List[str] = ["status = %s", "updated_at = NOW()"]
+  params: List[Any] = [status]
+  if started_at is not None:
+    updates.append("started_at = %s")
+    params.append(started_at)
+  if finished_at is not None:
+    updates.append("finished_at = %s")
+    params.append(finished_at)
+  if error is not None:
+    updates.append("error = %s")
+    params.append(json.dumps(error, ensure_ascii=False))
+  params.append(task_id)
+  with conn.cursor() as cursor:
+    cursor.execute(f"UPDATE agent_plan_tasks SET {', '.join(updates)} WHERE id = %s", tuple(params))
+    ok = cursor.rowcount > 0
+  conn.commit()
+  return ok
+
+
+def increment_task_attempt(conn: psycopg.Connection, task_id: UUID) -> None:
+  with conn.cursor() as cursor:
+    cursor.execute(
+      "UPDATE agent_plan_tasks SET attempt = attempt + 1, updated_at = NOW() WHERE id = %s",
+      (task_id,),
+    )
+  conn.commit()
+
+
+def create_artifact(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  task_id: UUID,
+  *,
+  type: str,
+  file_path: str,
+  meta: Optional[Dict[str, Any]] = None,
+) -> UUID:
+  artifact_id = uuid4()
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      INSERT INTO agent_plan_artifacts (id, plan_id, task_id, type, file_path, meta, created_at)
+      VALUES (%s, %s, %s, %s, %s, %s, NOW())
+      """,
+      (
+        artifact_id,
+        plan_id,
+        task_id,
+        type,
+        file_path,
+        json.dumps(meta or {}, ensure_ascii=False),
+      ),
+    )
+  conn.commit()
+  return artifact_id
+
+
+def acquire_next_task(conn: psycopg.Connection) -> Optional[Dict[str, Any]]:
+  """
+  获取一个可执行的 task，并使用 SKIP LOCKED 避免并发冲突。
+  约束：
+  - 仅领取 status='ready' 且 scheduled_at 已到期（或为空）的任务
+  - 同一个 plan 仅允许同时运行一个 task（串行）
+  """
+  with conn.transaction():
+    with conn.cursor() as cursor:
+      cursor.execute(
+        """
+        SELECT t.*
+        FROM agent_plan_tasks t
+        WHERE t.status = 'ready'
+          AND (t.scheduled_at IS NULL OR t.scheduled_at <= NOW())
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_plan_tasks r
+            WHERE r.plan_id = t.plan_id AND r.status = 'running'
+          )
+        ORDER BY t.created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+        """
+      )
+      row = cursor.fetchone()
+      if not row:
+        return None
+      task = dict(row)
+      cursor.execute(
+        """
+        UPDATE agent_plan_tasks
+        SET status = 'running', started_at = COALESCE(started_at, NOW()), attempt = attempt + 1, updated_at = NOW()
+        WHERE id = %s
+        """,
+        (task["id"],),
+      )
+      return task
+
+
+def append_plan_log(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  level: str,
+  event: str,
+  payload: Optional[Dict[str, Any]] = None,
+  task_id: Optional[UUID] = None,
+) -> UUID:
+  log_id = uuid4()
+  try:
+    with conn.cursor() as cursor:
+      cursor.execute(
+        """
+        INSERT INTO agent_plan_logs (id, plan_id, task_id, level, event, payload, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+        """,
+        (
+          log_id,
+          plan_id,
+          task_id,
+          level,
+          event,
+          json.dumps(payload or {}, ensure_ascii=False),
+        ),
+      )
+    conn.commit()
+  except Exception as e:
+    # MVP：日志写入失败不应阻断主流程（避免前端“无响应”）
+    try:
+      conn.rollback()
+    except Exception:
+      pass
+    logger.warning("append_plan_log failed: plan=%s event=%s err=%s", plan_id, event, e)
+  return log_id
+
+
+def ensure_plan_message_tables(conn: psycopg.Connection) -> None:
+  """
+  确保 plan messages 表存在（MVP：按需创建，避免首次未执行 init 脚本导致接口不可用）。
+  """
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      CREATE TABLE IF NOT EXISTS agent_plan_messages (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          plan_id UUID NOT NULL,
+          role VARCHAR(20) NOT NULL,
+          content TEXT NOT NULL,
+          meta JSONB,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+          FOREIGN KEY (plan_id) REFERENCES agent_plans(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_plan_messages_plan_id ON agent_plan_messages(plan_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_plan_messages_created_at ON agent_plan_messages(created_at);
+      """
+    )
+  conn.commit()
+
+
+def append_plan_message(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  role: str,
+  content: str,
+  meta: Optional[Dict[str, Any]] = None,
+) -> UUID:
+  ensure_plan_message_tables(conn)
+  msg_id = uuid4()
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      INSERT INTO agent_plan_messages (id, plan_id, role, content, meta, created_at)
+      VALUES (%s, %s, %s, %s, %s, NOW())
+      """,
+      (msg_id, plan_id, role, content, json.dumps(meta or {}, ensure_ascii=False)),
+    )
+  conn.commit()
+  return msg_id
+
+
+def list_plan_messages(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  limit: int = 200,
+  offset: int = 0,
+) -> List[Dict[str, Any]]:
+  ensure_plan_message_tables(conn)
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_messages
+      WHERE plan_id = %s
+      ORDER BY created_at ASC
+      LIMIT %s OFFSET %s
+      """,
+      (plan_id, limit, offset),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def list_plan_messages_since(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  *,
+  since: datetime,
+  limit: int = 500,
+) -> List[Dict[str, Any]]:
+  """
+  增量拉取消息：created_at > since。
+  """
+  ensure_plan_message_tables(conn)
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT *
+      FROM agent_plan_messages
+      WHERE plan_id = %s AND created_at > %s
+      ORDER BY created_at ASC
+      LIMIT %s
+      """,
+      (plan_id, since, limit),
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
