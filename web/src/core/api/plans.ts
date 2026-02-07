@@ -21,7 +21,8 @@ export type TaskStatus =
   | "succeeded"
   | "failed"
   | "skipped"
-  | "canceled";
+  | "canceled"
+  | "awaiting_download";
 
 export interface PlanSummary {
   id: string;

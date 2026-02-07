@@ -73,12 +73,28 @@ BASIC_MODEL:
 #   literature_focus: true  # 优先使用scholar工具
 #   context_compression: true
 
-# 视频动画全链路：视频生成 API（通义万相 / H20 等），见 docs/video_animation_tool_chain.md
+# 文生视频 API（异步：POST 提交 -> 202 返回 file_id -> 轮询 GET 状态 -> GET 下载）
 # VIDEO_GENERATION:
-#   url: "http://your-video-api/v1/video/generations"
+#   base_url: "http://localhost:8890"
 #   api_key: "sk-xxx"
+#   submit_path: "/v1/video/generations"
+#   status_path: "/v1/video/files/{file_id}"
+#   download_path: "/v1/video/files/{file_id}/download"
 #   size: "1280*720"
-#   timeout: 120
 #   poll_interval: 5
 #   max_wait: 600
-#   status_url: "http://your-video-api/v1/video/tasks"  # 可选，轮询任务状态地址，否则用 url + "/" + task_id
+#   timeout: 60
+#   output_dir: "temp/video_generations"
+#   deferred_download_minutes: 30  # 提交后延迟 N 分钟再检查并下载（0 表示立即轮询）
+# 兼容旧配置：也可用 url + status_url（完整 URL）
+
+# 文生图 API（供 image_generation_tool 调用），请求 POST {base_url}/v1/images/generations，响应为 PNG 二进制
+# IMAGE_GENERATION:
+#   base_url: "http://localhost:8889"
+#   api_key: "sk-xxx"
+#   height: 1024
+#   width: 1024
+#   num_inference_steps: 9
+#   seed: 42
+#   output_dir: "temp/image_generations"
+#   timeout: 120

@@ -16,6 +16,7 @@ from .search import get_web_search_tool
 from .tts import VolcengineTTS
 from .tts_tool import tts_tool
 from .video_generation_tool import video_generation_tool
+from .image_generation_tool import image_generation_tool
 from .visualize_molecules_tool import visualize_molecules
 from .literature_search_tool import search_literature
 from .pdf_crawler_tool import fetch_pdf_text
@@ -37,6 +38,7 @@ __all__ = [
     "VolcengineTTS",
     "tts_tool",
     "video_generation_tool",
+    "image_generation_tool",
     "visualize_molecules",
     "search_literature",
     "fetch_pdf_text",

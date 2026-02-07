@@ -158,6 +158,28 @@ def init_agent_plan_tables(conn: psycopg.Connection):
             """
         )
 
+        # 6) 待下载视频（文生视频提交 202 后延迟 N 分钟再检查并下载）
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS agent_plan_pending_video_downloads (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                plan_id UUID NOT NULL,
+                task_id UUID NOT NULL,
+                file_id TEXT NOT NULL,
+                output_path_abs TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                status_path TEXT NOT NULL,
+                download_path TEXT NOT NULL,
+                submitted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                delay_minutes INTEGER NOT NULL DEFAULT 30,
+                FOREIGN KEY (plan_id) REFERENCES agent_plans(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_id) REFERENCES agent_plan_tasks(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_plan_pending_video_plan_id ON agent_plan_pending_video_downloads(plan_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_plan_pending_video_submitted_at ON agent_plan_pending_video_downloads(submitted_at);
+            """
+        )
+
     conn.commit()
 
 

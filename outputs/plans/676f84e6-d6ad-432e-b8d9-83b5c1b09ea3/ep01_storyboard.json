@@ -1,0 +1,47 @@
+[
+    {
+        "shot": 1,
+        "durationSec": 5,
+        "scene": "云雾缭绕的修仙世界，山峦起伏，小菜鸟站在山脚下，眼神坚定地望向天空。",
+        "camera": "全景",
+        "subtitle": "在这奇幻修仙世界，有个小菜鸟，一心想逆天改命。",
+        "sfx": "仙侠风格的激昂背景音乐起",
+        "prompt": "Xianxia style, a panoramic shot of a fog - covered xianxia world with rolling mountains. A young novice stands at the foot of the mountain, looking firmly at the sky."
+    },
+    {
+        "shot": 2,
+        "durationSec": 7,
+        "scene": "小菜鸟进入门派，师傅白发苍苍但表情搞怪，手把手教小菜鸟基础仙法，小菜鸟学得手忙脚乱。",
+        "camera": "中景",
+        "subtitle": "看他初入门派，拜那古怪师傅，学那基础仙法，状况百出。",
+        "sfx": "轻松诙谐的仙侠音效，如仙法光芒闪烁声",
+        "prompt": "Xianxia style, a medium - shot of a young novice entering a sect. An old master with white hair and a funny expression is teaching the novice basic xian techniques hand - in - hand. The novice is struggling clumsily."
+    },
+    {
+        "shot": 3,
+        "durationSec": 7,
+        "scene": "小菜鸟练剑时，剑突然失控追着他跑，他在门派广场上四处逃窜，其他弟子指着他大笑。",
+        "camera": "近景",
+        "subtitle": "嘿，练剑时，竟被剑追着跑，成了门派笑柄。",
+        "sfx": "夸张的追逐音效，众人的哄笑声",
+        "prompt": "Xianxia style, a close - up shot of a young novice being chased by an out - of - control sword in the sect square. Other disciples are pointing at him and laughing."
+    },
+    {
+        "shot": 4,
+        "durationSec": 7,
+        "scene": "夜晚，小菜鸟独自在山洞中修炼，额头冒汗但眼神坚毅，身上仙力光芒逐渐变强。",
+        "camera": "特写",
+        "subtitle": "但他不服输，日夜苦练，仙力竟有了突破迹象。",
+        "sfx": "舒缓而激昂的修仙音效，仙力流动声",
+        "prompt": "Xianxia style, a close - up shot of a young novice practicing alone in a cave at night. He is sweating on the forehead but with a determined look, and the light of his spiritual power is gradually getting stronger."
+    },
+    {
+        "shot": 5,
+        "durationSec": 4,
+        "scene": "小菜鸟站在山峰上，背后是绚丽的朝霞，他握紧拳头展望未来。",
+        "camera": "全景",
+        "subtitle": "小菜鸟能否逆袭？且看后续精彩！",
+        "sfx": "激昂的仙侠背景音乐高潮部分",
+        "prompt": "Xianxia style, a panoramic shot of a young novice standing on a mountain peak with a gorgeous dawn behind him. He clenches his fists and looks forward to the future."
+    }
+]

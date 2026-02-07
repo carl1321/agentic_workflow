@@ -21,6 +21,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 # Disable urllib3 debug logs
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+# 降低 APScheduler 日志：避免 plan 调度器每秒 tick 刷屏
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 import os
 from pathlib import Path
 from typing import Annotated, Any, List, Optional, cast
@@ -115,6 +117,7 @@ from src.tools import (
     python_repl_tool,
     tts_tool,
     video_generation_tool,
+    image_generation_tool,
     visualize_molecules,
     search_literature,
     fetch_pdf_text,
@@ -168,6 +171,7 @@ TOOL_REGISTRY = {
     "edit_file_tool": edit_file_tool,
     "ppt_generate_tool": ppt_generate_tool,
     "video_generation_tool": video_generation_tool,
+    "image_generation_tool": image_generation_tool,
     "ffmpeg_tool": ffmpeg_tool,
     # Actual tool.name mappings (for compatibility)
     "predict_molecular_properties": predict_molecular_properties,

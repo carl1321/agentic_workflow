@@ -5,6 +5,8 @@ import logging
 import os
 from typing import List, Optional
 
+from pydantic import SecretStr
+
 from langchain_community.tools import (
     BraveSearch,
     DuckDuckGoSearchResults,
@@ -20,7 +22,9 @@ from langchain_community.utilities import (
 )
 
 from src.config import SELECTED_SEARCH_ENGINE, SearchEngine, load_yaml_config
+from src.config.loader import get_str_env
 from src.tools.decorators import create_logged_tool
+from src.tools.tavily_search.tavily_search_api_wrapper import EnhancedTavilySearchAPIWrapper
 from src.tools.tavily_search.tavily_search_results_with_images import (
     TavilySearchWithImages,
 )
@@ -47,28 +51,31 @@ def get_web_search_tool(max_search_results: int):
     search_config = get_search_config()
 
     if SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value:
-        # Only get and apply include/exclude domains for Tavily
-        include_domains: Optional[List[str]] = search_config.get("include_domains", [])
-        exclude_domains: Optional[List[str]] = search_config.get("exclude_domains", [])
-        include_raw_content = search_config.get("include_raw_content", True)
-        include_images: Optional[bool] = search_config.get("include_images", True)
-        include_image_descriptions: Optional[bool] = (
-            include_images and search_config.get("include_image_descriptions", True)
-        )
+        # API key：优先从 conf.yaml ENV.TAVILY_API_KEY 读取，否则用环境变量（LangChain 默认行为）
+        tavily_key = get_str_env("TAVILY_API_KEY", "").strip() or os.getenv("TAVILY_API_KEY", "")
+        kwargs: dict = {
+            "name": "web_search",
+            "max_results": max_search_results,
+            "include_raw_content": search_config.get("include_raw_content", True),
+            "include_images": search_config.get("include_images", True),
+            "include_image_descriptions": (
+                search_config.get("include_images", True)
+                and search_config.get("include_image_descriptions", True)
+            ),
+            "include_domains": search_config.get("include_domains", []),
+            "exclude_domains": search_config.get("exclude_domains", []),
+        }
+        if tavily_key:
+            kwargs["api_wrapper"] = EnhancedTavilySearchAPIWrapper(tavily_api_key=SecretStr(tavily_key))
 
+        include_domains = kwargs["include_domains"]
+        exclude_domains = kwargs["exclude_domains"]
         logger.info(
-            f"Tavily search configuration loaded: include_domains={include_domains}, exclude_domains={exclude_domains}"
+            "Tavily search configuration loaded: include_domains=%s, exclude_domains=%s",
+            include_domains,
+            exclude_domains,
         )
-
-        return LoggedTavilySearch(
-            name="web_search",
-            max_results=max_search_results,
-            include_raw_content=include_raw_content,
-            include_images=include_images,
-            include_image_descriptions=include_image_descriptions,
-            include_domains=include_domains,
-            exclude_domains=exclude_domains,
-        )
+        return LoggedTavilySearch(**kwargs)
     elif SELECTED_SEARCH_ENGINE == SearchEngine.DUCKDUCKGO.value:
         return LoggedDuckDuckGoSearch(
             name="web_search",

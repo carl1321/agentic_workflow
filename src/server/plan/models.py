@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 
 PlanStatus = Literal["draft", "active", "running", "succeeded", "failed", "cancelled", "terminated"]
-TaskStatus = Literal["pending", "ready", "running", "succeeded", "failed", "skipped", "canceled"]
+TaskStatus = Literal["pending", "ready", "running", "succeeded", "failed", "skipped", "canceled", "awaiting_download"]
 ExecutorType = Literal["llm", "tool", "file"]
 PlanMessageRole = Literal["user", "assistant", "system"]
 

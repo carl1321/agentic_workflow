@@ -319,6 +319,13 @@ def has_plan_work(conn: psycopg.Connection) -> bool:
     return cursor.fetchone() is not None
 
 
+def get_task(conn: psycopg.Connection, task_id: UUID) -> Optional[Dict[str, Any]]:
+  with conn.cursor() as cursor:
+    cursor.execute("SELECT * FROM agent_plan_tasks WHERE id = %s LIMIT 1", (task_id,))
+    row = cursor.fetchone()
+  return dict(row) if row else None
+
+
 def get_task_by_idempotency_key(
   conn: psycopg.Connection,
   plan_id: UUID,
@@ -478,6 +485,52 @@ def append_plan_log(
       pass
     logger.warning("append_plan_log failed: plan=%s event=%s err=%s", plan_id, event, e)
   return log_id
+
+
+def insert_pending_video_download(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  task_id: UUID,
+  *,
+  file_id: str,
+  output_path_abs: str,
+  base_url: str,
+  status_path: str,
+  download_path: str,
+  delay_minutes: int = 30,
+) -> None:
+  """记录待延迟下载的视频任务（文生视频 202 提交后由调度器在 delay_minutes 后检查并下载）。"""
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      INSERT INTO agent_plan_pending_video_downloads
+        (plan_id, task_id, file_id, output_path_abs, base_url, status_path, download_path, delay_minutes)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+      """,
+      (plan_id, task_id, file_id, output_path_abs, base_url, status_path, download_path, delay_minutes),
+    )
+  conn.commit()
+
+
+def list_pending_video_downloads_ready(conn: psycopg.Connection) -> List[Dict[str, Any]]:
+  """列出已到期的待下载视频（submitted_at + delay_minutes 分钟 <= now）。"""
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT id, plan_id, task_id, file_id, output_path_abs, base_url, status_path, download_path
+      FROM agent_plan_pending_video_downloads
+      WHERE submitted_at + (delay_minutes || ' minutes')::interval <= NOW()
+      ORDER BY submitted_at ASC
+      """
+    )
+    rows = cursor.fetchall() or []
+  return [dict(r) for r in rows]
+
+
+def delete_pending_video_download(conn: psycopg.Connection, pending_id: UUID) -> None:
+  with conn.cursor() as cursor:
+    cursor.execute("DELETE FROM agent_plan_pending_video_downloads WHERE id = %s", (pending_id,))
+  conn.commit()
 
 
 def ensure_plan_message_tables(conn: psycopg.Connection) -> None:

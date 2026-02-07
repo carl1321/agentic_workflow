@@ -120,11 +120,13 @@ async def _auto_finalize_and_run(
   existing_tasks = list_tasks(conn, plan_uuid)
   created = 0
   if not existing_tasks:
-    tasks = planner.build_tasks_for_xianxia_animation_account(
+    tasks = await planner.build_tasks_from_goal(
       plan_id=str(plan_uuid),
       ora_spec=ora_spec,
       use_llm=True,
       model_name=model,
+      plan_type=clarify.get("plan_type") if clarify else None,
+      sub_type=clarify.get("sub_type") if clarify else None,
     )
     tasks = planner.make_ready_status(tasks)
     created = create_tasks(conn, plan_uuid, tasks)
@@ -157,9 +159,12 @@ async def _run_initial_clarify(
   conn = get_db_connection()
   try:
     clarify_state: Dict[str, Any] = {"round": 0, "qa": []}
-    done, question = await coordinator.get_next_question_llm(goal or "", clarify_state)
+    done, question, extra = await coordinator.get_next_question_llm(goal or "", clarify_state)
     clarify_state["done"] = done
     clarify_state["last_question"] = question
+    if extra:
+      clarify_state["plan_type"] = extra.get("plan_type", "simple")
+      clarify_state["sub_type"] = extra.get("sub_type")
     update_plan(conn, plan_id, user_id=user_id, clarify=clarify_state)
 
     if done:
@@ -432,9 +437,12 @@ async def clarify_plan_endpoint(
 
     clarify = _json_or_obj(p.get("clarify")) or {"round": 0, "qa": []}
     clarify2 = coordinator.apply_answer(clarify, request.answer)
-    done, q = await coordinator.get_next_question_llm(p.get("raw_goal") or "", clarify2)
+    done, q, extra = await coordinator.get_next_question_llm(p.get("raw_goal") or "", clarify2)
     clarify2["done"] = done
     clarify2["last_question"] = q
+    if extra:
+      clarify2["plan_type"] = extra.get("plan_type", "simple")
+      clarify2["sub_type"] = extra.get("sub_type")
     ora_draft = coordinator.build_ora_spec(p.get("raw_goal") or "", clarify2)
 
     update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, clarify=clarify2)
@@ -515,11 +523,13 @@ async def finalize_plan_endpoint(
     clarify = _json_or_obj(p.get("clarify")) or {"round": 0, "qa": []}
     ora_spec = coordinator.build_ora_spec(p.get("raw_goal") or "", clarify)
 
-    tasks = planner.build_tasks_for_xianxia_animation_account(
+    tasks = await planner.build_tasks_from_goal(
       plan_id=str(plan_uuid),
       ora_spec=ora_spec,
       use_llm=True,
       model_name=request.model,
+      plan_type=clarify.get("plan_type"),
+      sub_type=clarify.get("sub_type"),
     )
     tasks = planner.make_ready_status(tasks)
 
@@ -708,9 +718,12 @@ async def send_plan_message_endpoint(
     assistant_content: str
     if in_clarify:
       clarify2 = coordinator.apply_answer(clarify, user_content)
-      done, next_q = await coordinator.get_next_question_llm(raw_goal, clarify2)
+      done, next_q, extra = await coordinator.get_next_question_llm(raw_goal, clarify2)
       clarify2["done"] = done
       clarify2["last_question"] = next_q
+      if extra:
+        clarify2["plan_type"] = extra.get("plan_type", "simple")
+        clarify2["sub_type"] = extra.get("sub_type")
       ora_spec = coordinator.build_ora_spec(raw_goal, clarify2)
 
       update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, clarify=clarify2)
@@ -719,12 +732,14 @@ async def send_plan_message_endpoint(
       if not done and next_q:
         assistant_content = next_q
       else:
-        # 澄清结束：生成任务并开始执行
-        tasks = planner.build_tasks_for_xianxia_animation_account(
+        # 澄清结束：由大模型根据用户目标规划任务并开始执行
+        tasks = await planner.build_tasks_from_goal(
           plan_id=str(plan_uuid),
           ora_spec=ora_spec,
           use_llm=True,
           model_name=None,
+          plan_type=clarify2.get("plan_type"),
+          sub_type=clarify2.get("sub_type"),
         )
         tasks = planner.make_ready_status(tasks)
         created = create_tasks(conn, plan_uuid, tasks)

@@ -43,11 +43,25 @@ def get_next_question(clarify: Dict[str, Any]) -> Optional[str]:
   return DEFAULT_QUESTIONS[r]
 
 
-async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+def _parse_plan_type_from_data(data: Dict[str, Any]) -> Dict[str, Any]:
+  """从 long_plan LLM 返回的 data 中解析 plan_type、sub_type，供 planner 使用。"""
+  plan_type = (data.get("plan_type") or "simple").strip().lower()
+  if plan_type not in ("simple", "professional"):
+    plan_type = "simple"
+  sub_type = data.get("sub_type")
+  if sub_type is not None and isinstance(sub_type, str):
+    sub_type = sub_type.strip().lower() or None
+  else:
+    sub_type = None
+  return {"plan_type": plan_type, "sub_type": sub_type}
+
+
+async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
   """
   由 LLM 根据当前目标与澄清历史，判断目标是否已清晰；
   若未清晰则生成下一个澄清问题。
-  返回 (done, next_question)：done=True 表示无需再澄清，next_question 为 None 或下一问。
+  返回 (done, next_question, extra)：done=True 表示无需再澄清，next_question 为 None 或下一问；
+  extra 仅当 done=True 时有效，为 {"plan_type": "simple"|"professional", "sub_type": "video_creation"|None}，供 planner 选择提示词。
   """
   qa = clarify.get("qa") or []
   qa_text = "\n".join(
@@ -76,11 +90,10 @@ async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple
 {qa_text}
 
 请判断：仅凭以上信息，是否已经足够生成可执行的任务计划？
-- 若已足够（目标、平台/受众、风格、资源等关键信息已明确或可合理推断），则返回 done=true，question=null。
-- 若仍不足，请返回 done=false，并在 question 里写一句简短、具体的追问（只问最关键的 1 个点，不要一次问多问）。
+- 若已足够（目标、平台/受众、风格、资源等关键信息已明确或可合理推断），则返回 done=true，question=null，并填写 plan_type（simple 或 professional）与 sub_type（仅 professional 时填，如 video_creation）。
+- 若仍不足，请返回 done=false，并在 question 里写一句简短、具体的追问。
 
-只输出一个 JSON 对象，不要其他文字，格式如下：
-{{"done": true或false, "question": "下一个澄清问题或null"}}
+只输出一个 JSON 对象，不要其他文字。done=true 时格式：{{"done": true, "question": null, "plan_type": "simple或professional", "sub_type": "video_creation或null"}}；done=false 时：{{"done": false, "question": "追问内容"}}
 """
 
   try:
@@ -106,11 +119,11 @@ async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple
     next_question = str(q).strip() if q else None
     if next_question == "null" or next_question == "":
       next_question = None
-    return (done, next_question)
+    extra = _parse_plan_type_from_data(data) if done else None
+    return (done, next_question, extra)
   except Exception as e:
     logger.warning("get_next_question_llm failed, fallback to done=True: %s", e)
-    # 失败时避免卡在澄清环，直接视为可生成任务
-    return (True, None)
+    return (True, None, {"plan_type": "simple", "sub_type": None})
 
 
 def apply_answer(clarify: Dict[str, Any], answer: str) -> Dict[str, Any]:
