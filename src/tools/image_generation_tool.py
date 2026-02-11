@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Annotated, Any, Dict, Optional, Tuple
 
@@ -19,6 +20,9 @@ from src.config.loader import load_yaml_config
 logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE_OUTPUT_DIR = "temp/image_generations"
+# 服务端 5xx / 连接/超时 时的重试次数与间隔（秒）
+IMAGE_API_MAX_RETRIES = 3
+IMAGE_API_RETRY_BACKOFF = [1, 2, 3]  # 第 1、2、3 次重试前的等待秒数
 
 
 def _get_image_config() -> Dict[str, Any]:
@@ -49,6 +53,7 @@ def _call_image_api(
 ) -> Tuple[bool, Optional[bytes], Optional[str]]:
     """
     同步请求文生图 API，返回 (成功, 图片二进制, 错误信息)。
+    对 5xx 及连接/超时错误进行最多 3 次重试，重试前有退避等待。
     API 响应为 PNG 二进制（Content-Type: image/png）。
     """
     import requests
@@ -66,13 +71,31 @@ def _call_image_api(
         "num_inference_steps": num_inference_steps,
         "seed": seed,
     }
-    try:
-        r = requests.post(url, headers=headers, json=data, timeout=timeout)
-        r.raise_for_status()
-        return (True, r.content, None)
-    except requests.exceptions.RequestException as e:
-        logger.warning("image generation API request failed: %s", e)
-        return (False, None, str(e))
+    last_error: Optional[str] = None
+    for attempt in range(IMAGE_API_MAX_RETRIES):
+        try:
+            r = requests.post(url, headers=headers, json=data, timeout=timeout)
+            if r.status_code >= 500:
+                last_error = f"{r.status_code} Server Error: {r.reason or 'Internal Server Error'} for url: {r.url}"
+                if attempt < IMAGE_API_MAX_RETRIES - 1:
+                    backoff = IMAGE_API_RETRY_BACKOFF[attempt] if attempt < len(IMAGE_API_RETRY_BACKOFF) else (attempt + 1)
+                    logger.warning("image generation API 5xx (attempt %s/%s), retry in %ss: %s", attempt + 1, IMAGE_API_MAX_RETRIES, backoff, last_error)
+                    time.sleep(backoff)
+                    continue
+                logger.warning("image generation API request failed after %s attempts: %s", IMAGE_API_MAX_RETRIES, last_error)
+                return (False, None, last_error)
+            r.raise_for_status()
+            return (True, r.content, None)
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            if attempt < IMAGE_API_MAX_RETRIES - 1:
+                backoff = IMAGE_API_RETRY_BACKOFF[attempt] if attempt < len(IMAGE_API_RETRY_BACKOFF) else (attempt + 1)
+                logger.warning("image generation API request failed (attempt %s/%s), retry in %ss: %s", attempt + 1, IMAGE_API_MAX_RETRIES, backoff, e)
+                time.sleep(backoff)
+                continue
+            logger.warning("image generation API request failed after %s attempts: %s", IMAGE_API_MAX_RETRIES, e)
+            return (False, None, last_error)
+    return (False, None, last_error or "unknown error")
 
 
 @tool

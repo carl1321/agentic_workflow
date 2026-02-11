@@ -35,6 +35,7 @@ from src.server.plan.db import (
   list_plans,
   list_tasks,
   reset_plan_tasks_for_restart,
+  reset_plan_tasks_by_ids,
   update_plan,
   update_task_status,
 )
@@ -729,49 +730,6 @@ async def list_plan_messages_endpoint(
     conn.close()
 
 
-def _maybe_trigger_continue(
-  conn, plan_uuid: UUID, user_content: str, plan: Dict[str, Any], current_user: Optional[CurrentUser] = None
-) -> Optional[int]:
-  """
-  若用户说「继续」/「继续执行」且有未完成/失败任务，自动触发 restart(uncompleted_only)，
-  只重跑失败/未完成任务，不重新生成全量任务，避免「把执行任务都跑了一遍」。
-  返回被重置的任务数量，未触发则返回 None。
-  """
-  content_lower = (user_content or "").strip().lower()
-  if content_lower not in ("继续", "继续执行", "继续跑"):
-    return None
-  try:
-    tasks = list_tasks(conn, plan_uuid)
-  except Exception:
-    return None
-  to_do_statuses = {"pending", "ready", "running", "failed", "canceled", "skipped", "awaiting_download"}
-  has_to_do = any((t.get("status") or "").lower() in to_do_statuses for t in tasks)
-  if not has_to_do:
-    return None
-  try:
-    count = reset_plan_tasks_for_restart(conn, plan_uuid, mode="uncompleted_only")
-    if count > 0:
-      status = (plan.get("status") or "").lower()
-      if status in ("failed", "cancelled", "canceled", "terminated"):
-        update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, status="running")
-      append_plan_log(
-        conn,
-        plan_uuid,
-        level="info",
-        event="plan_restart",
-        payload={
-          "tasksReset": count,
-          "trigger": "user_continue",
-          "title": "已触发继续执行",
-          "bullets": [f"将重跑 {count} 个未完成/失败的任务，调度器会按依赖顺序执行。"],
-        },
-      )
-      return count
-  except Exception as e:
-    logger.warning("_maybe_trigger_continue failed: %s", e)
-  return None
-
-
 def _build_plan_continuation_reply(conn, plan_uuid: UUID, user_content: str) -> str:
   """
   非澄清阶段用户继续输入时：只根据记忆文件与任务状态回复「待继续/已完成」摘要，
@@ -882,12 +840,71 @@ async def send_plan_message_endpoint(
         )
         assistant_content = f"澄清完成：我已经为你生成了 {created} 个任务，并已开始自动执行。你可以在右侧查看实时日志与产物。"
     else:
-      # 已非澄清阶段：先查看记忆与任务状态，只回复「待继续/已完成」摘要，不重新罗列已完成内容
+      # 非澄清阶段：先由大模型读用户消息并判断意图，再决定是否变更任务（重跑指定任务、继续未完成、或仅记录）
       append_plan_log(conn, plan_uuid, level="info", event="plan_message", payload={"content": user_content})
-      # 若用户说「继续」/「继续执行」且有未完成/失败任务，自动触发 restart(uncompleted_only)，只重跑失败任务，不重新生成全量任务
-      triggered_count = _maybe_trigger_continue(conn, plan_uuid, user_content, p, current_user)
-      if triggered_count and triggered_count > 0:
-        assistant_content = f"已触发继续执行，将重跑 {triggered_count} 个未完成/失败的任务；调度器会按依赖顺序执行，你可以在右侧查看实时日志与产物。"
+      tasks = list_tasks(conn, plan_uuid)
+      plan_summary = (p.get("raw_goal") or p.get("title") or "").strip() or "（无）"
+      intent = await coordinator.classify_user_message_intent(user_content, plan_summary, tasks)
+      action = (intent.get("action") or "just_note").strip().lower()
+      task_ids_raw = intent.get("task_ids") or []
+
+      if action == "retry_tasks" and task_ids_raw:
+        try:
+          uuids = [UUID(tid) for tid in task_ids_raw]
+          count = reset_plan_tasks_by_ids(conn, plan_uuid, uuids)
+          if count > 0:
+            status = (p.get("status") or "").lower()
+            if status in ("failed", "cancelled", "canceled", "terminated"):
+              update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, status="running")
+            append_plan_log(
+              conn,
+              plan_uuid,
+              level="info",
+              event="plan_restart",
+              payload={
+                "tasksReset": count,
+                "trigger": "user_retry_tasks",
+                "task_ids": task_ids_raw,
+                "title": "已按用户要求安排重跑",
+                "bullets": [f"将重跑 {count} 个任务（含下游依赖），调度器会按顺序执行。"],
+              },
+            )
+            assistant_content = f"已按你的要求安排重跑（共 {count} 个任务），调度器将按顺序执行。你可以在右侧查看实时日志与产物。"
+          else:
+            assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
+        except Exception as e:
+          logger.warning("reset_plan_tasks_by_ids failed: %s", e)
+          assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
+      elif action == "continue_uncompleted":
+        to_do_statuses = {"pending", "ready", "running", "failed", "canceled", "skipped", "awaiting_download"}
+        has_to_do = any((t.get("status") or "").lower() in to_do_statuses for t in tasks)
+        if has_to_do:
+          try:
+            count = reset_plan_tasks_for_restart(conn, plan_uuid, mode="uncompleted_only")
+            if count > 0:
+              status = (p.get("status") or "").lower()
+              if status in ("failed", "cancelled", "canceled", "terminated"):
+                update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, status="running")
+              append_plan_log(
+                conn,
+                plan_uuid,
+                level="info",
+                event="plan_restart",
+                payload={
+                  "tasksReset": count,
+                  "trigger": "user_continue",
+                  "title": "已触发继续执行",
+                  "bullets": [f"将重跑 {count} 个未完成/失败的任务，调度器会按依赖顺序执行。"],
+                },
+              )
+              assistant_content = f"已触发继续执行，将重跑 {count} 个未完成/失败的任务；调度器会按顺序执行，你可以在右侧查看实时日志与产物。"
+            else:
+              assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
+          except Exception as e:
+            logger.warning("reset_plan_tasks_for_restart failed: %s", e)
+            assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
+        else:
+          assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
       else:
         assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
 

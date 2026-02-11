@@ -158,6 +158,71 @@ def build_ora_spec(raw_goal: str, clarify: Dict[str, Any]) -> Dict[str, Any]:
   }
 
 
+async def classify_user_message_intent(
+  user_content: str,
+  plan_summary: str,
+  tasks: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+  """
+  由大模型根据用户本条消息与当前计划/任务列表，判断用户意图：是否要重跑某些任务、继续未完成、仅记录、或新增/变更任务。
+  返回 {"action": "retry_tasks"|"continue_uncompleted"|"just_note"|"add_or_change", "task_ids": [...], "reason": "..."}
+  task_ids 仅当 action=retry_tasks 时可能非空，为要重跑的任务 id 列表（字符串 UUID）。
+  """
+  tasks_for_llm = []
+  for t in tasks:
+    tid = t.get("id")
+    if not tid:
+      continue
+    tasks_for_llm.append({
+      "id": str(tid),
+      "name": (t.get("name") or "未命名").strip(),
+      "status": (t.get("status") or "").strip().lower(),
+    })
+  tasks_json = json.dumps(tasks_for_llm, ensure_ascii=False, indent=2)
+
+  try:
+    from src.prompts.template import render_prompt_with_vars
+    prompt = render_prompt_with_vars(
+      "plan_message_intent",
+      user_content=(user_content or "").strip() or "（无）",
+      plan_summary=(plan_summary or "").strip() or "（无）",
+      tasks_json=tasks_json,
+    )
+  except Exception as e:
+    logger.warning("plan_message_intent prompt load failed, fallback just_note: %s", e)
+    return {"action": "just_note", "task_ids": [], "reason": "意图解析未加载，仅记录"}
+
+  try:
+    llm = get_llm_by_type("basic")
+    response = await llm.ainvoke([HumanMessage(content=prompt)])
+    text = (response.content if hasattr(response, "content") else str(response)) or "{}"
+    text = text.strip()
+    start = text.find("{")
+    if start >= 0:
+      depth = 0
+      for i in range(start, len(text)):
+        if text[i] == "{":
+          depth += 1
+        elif text[i] == "}":
+          depth -= 1
+          if depth == 0:
+            text = text[start : i + 1]
+            break
+    data = json.loads(text)
+    action = (data.get("action") or "just_note").strip().lower()
+    if action not in ("retry_tasks", "continue_uncompleted", "just_note", "add_or_change"):
+      action = "just_note"
+    task_ids = data.get("task_ids")
+    if not isinstance(task_ids, list):
+      task_ids = []
+    task_ids = [str(x).strip() for x in task_ids if x]
+    reason = str(data.get("reason") or "").strip() or ""
+    return {"action": action, "task_ids": task_ids, "reason": reason}
+  except Exception as e:
+    logger.warning("classify_user_message_intent llm failed, fallback just_note: %s", e)
+    return {"action": "just_note", "task_ids": [], "reason": "意图解析异常，仅记录"}
+
+
 async def evaluate_task_output(
   task: Dict[str, Any],
   output_path: str,

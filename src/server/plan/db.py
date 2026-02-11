@@ -417,6 +417,63 @@ def reset_plan_tasks_for_restart(
   return count
 
 
+def reset_plan_tasks_by_ids(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  task_ids: List[UUID],
+  include_downstream: bool = True,
+) -> int:
+  """
+  将指定任务（及可选地其下游依赖）重置为 pending。
+  当大模型判断用户要求「重跑某类任务」时，由 routes 传入匹配的 task_ids，此处负责重置。
+  include_downstream=True 时，会递归把依赖这些任务产出的下游任务一并重置。
+  返回被重置的任务数量。
+  """
+  if not task_ids:
+    return 0
+  tasks = list_tasks(conn, plan_id)
+  id_to_key = {t.get("id"): str(t.get("idempotency_key") or "") for t in tasks if t.get("id")}
+  keys_of_selected = {id_to_key.get(tid) for tid in task_ids if id_to_key.get(tid)}
+  keys_of_selected.discard("")
+  ids_to_reset = set(task_ids)
+  if include_downstream:
+    while True:
+      added = False
+      for t in tasks:
+        tid = t.get("id")
+        if tid in ids_to_reset:
+          continue
+        deps = t.get("depends_on")
+        if deps is None:
+          continue
+        if isinstance(deps, str):
+          try:
+            deps = json.loads(deps) if (deps or "").strip().startswith("[") else []
+          except Exception:
+            deps = []
+        for d in (deps or []):
+          if str(d).strip() in keys_of_selected:
+            ids_to_reset.add(tid)
+            keys_of_selected.add(str(t.get("idempotency_key") or ""))
+            added = True
+            break
+      if not added:
+        break
+  ids_list = list(ids_to_reset)
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      UPDATE agent_plan_tasks
+      SET status = 'pending', finished_at = NULL, error = NULL, updated_at = NOW()
+      WHERE plan_id = %s AND id = ANY(%s)
+      """,
+      (plan_id, ids_list),
+    )
+    count = cursor.rowcount
+  conn.commit()
+  return count
+
+
 def create_artifact(
   conn: psycopg.Connection,
   plan_id: UUID,
