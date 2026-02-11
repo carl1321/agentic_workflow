@@ -104,8 +104,20 @@ async def _plan_tasks_with_llm(
   return raw
 
 
-def _executor_prompt_set(plan_type: Optional[str], sub_type: Optional[str]) -> str:
-  """执行单元使用的 prompt 集合：video_creation 或 simple。"""
+def _executor_prompt_set(
+  plan_type: Optional[str],
+  sub_type: Optional[str],
+  output_relpath: Optional[str] = None,
+) -> str:
+  """执行单元使用的 prompt 集合：video_creation 或 simple。
+  产出为 .mp4/.wav/.pptx 等时强制用 video_creation（含对应工具）。
+  注意：历史上有模型会输出 .ppt（旧格式），我们会在任务规范化时改为 .pptx，但这里也兼容识别 .ppt。
+  """
+  ext = (output_relpath or "").strip().lower()
+  if ext:
+    ext = "." + ext.split(".")[-1] if "." in ext else ""
+  if ext in {".mp4", ".wav", ".mp3", ".pptx", ".ppt"}:
+    return "video_creation"
   if plan_type == "professional" and sub_type == "video_creation":
     return "video_creation"
   return "simple"
@@ -122,13 +134,21 @@ def _task_spec_to_full_task(
   """将规划器返回的一条任务描述转为 create_tasks 所需的完整 task 字典。"""
   name = spec.get("name") or "未命名任务"
   output_rel = (spec.get("output_relpath") or "").strip() or "output.md"
+  # 规范化：PPT 统一使用 .pptx。若模型误给 .ppt，则自动更正，确保执行器会绑定 ppt_generate_tool 并正确验收。
+  try:
+    from pathlib import Path
+    p = Path(output_rel)
+    if p.suffix.lower() == ".ppt":
+      output_rel = str(p.with_suffix(".pptx"))
+  except Exception:
+    pass
   prompt = spec.get("prompt") or ""
   depends_on = spec.get("depends_on")
   if isinstance(depends_on, list):
     depends_on = [str(x).strip() for x in depends_on if x]
   else:
     depends_on = []
-  executor_prompt_set = _executor_prompt_set(plan_type, sub_type)
+  executor_prompt_set = _executor_prompt_set(plan_type, sub_type, output_relpath=output_rel)
   return {
     "name": name,
     "description": f"生成文件：{output_rel}",

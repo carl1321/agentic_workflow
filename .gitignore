@@ -104,6 +104,7 @@ workflows/**/*.json
 # Data directories
 data/
 logs/
+outputs/
 *.log
 *.log.*
 

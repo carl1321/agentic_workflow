@@ -12,8 +12,8 @@ from .prompt_optimizer_tool import prompt_optimizer_tool
 from .ppt_tool import ppt_generate_tool
 from .python_repl import python_repl_tool
 from .retriever import get_retriever_tool
-from .search import get_web_search_tool
-from .tts import VolcengineTTS
+from .search import get_general_web_search_tool, get_web_search_tool
+from .tts import EdgeTTS, VolcengineTTS
 from .tts_tool import tts_tool
 from .video_generation_tool import video_generation_tool
 from .image_generation_tool import image_generation_tool
@@ -33,8 +33,10 @@ __all__ = [
     "prompt_optimizer_tool",
     "ppt_generate_tool",
     "python_repl_tool",
+    "get_general_web_search_tool",
     "get_web_search_tool",
     "get_retriever_tool",
+    "EdgeTTS",
     "VolcengineTTS",
     "tts_tool",
     "video_generation_tool",

@@ -102,12 +102,14 @@ if __name__ == "__main__":
 
     try:
         logger.info(f"Starting AgenticWorkflow API server on {args.host}:{args.port}")
+        # timeout_graceful_shutdown：reload 时若浏览器保持 SSE 长连接不关闭，会卡在 "Waiting for connections to close"；设 5 秒后强制结束，避免卡死
         uvicorn.run(
             "src.server.app:app",
             host=args.host,
             port=args.port,
             reload=reload,
             log_level=args.log_level,
+            timeout_graceful_shutdown=5,
         )
     except Exception as e:
         logger.error(f"Failed to start server: {str(e)}")

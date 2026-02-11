@@ -149,7 +149,9 @@ def _poll_and_download_via_download_url(
 @tool
 def video_generation_tool(
     prompt: Annotated[str, "视频描述提示词，如：一位剑修在竹林间御剑飞行，动漫风格"],
-    size: Annotated[str, "分辨率，如 1280*720"] = "1280*720",
+    # 重要：模型的 tool call 可能会传 size=null；因此这里必须允许 None，
+    # 否则 pydantic 会在工具入参校验阶段直接报错，导致任务失败。
+    size: Annotated[Optional[str], "分辨率，如 1280*720；可选，不传或为 null 时使用配置/默认值"] = None,
     image_base64: Annotated[Optional[str], "可选，图生视频时的 base64 图片"] = None,
     save_relative_path: Annotated[Optional[str], "保存到 temp/video_generations 下的相对路径，如 episode01/clip1.mp4"] = None,
     url: Annotated[Optional[str], "覆盖配置的 API 地址"] = None,
@@ -163,6 +165,8 @@ def video_generation_tool(
     if not key:
         return "未配置 VIDEO_GENERATION（api_key），请在 conf.yaml 中配置或传入 api_key 参数。"
 
+    chosen_size = (size or cfg.get("size") or "1280*720")
+
     base_url = cfg.get("base_url", "").rstrip("/")
     submit_path = cfg.get("submit_path", "").strip()
     # 新异步接口：base_url + submit_path（POST 返回 202 + file_id）
@@ -174,7 +178,7 @@ def video_generation_tool(
             api_key=key,
             prompt=prompt,
             image_base64=image_base64,
-            size=size or cfg.get("size", "1280*720"),
+            size=chosen_size,
             timeout=timeout,
             accept_202=True,
         )
@@ -218,7 +222,7 @@ def video_generation_tool(
         api_key=key,
         prompt=prompt,
         image_base64=image_base64,
-        size=size or cfg.get("size", "1280*720"),
+        size=chosen_size,
         timeout=timeout,
     )
     if resp.get("error"):

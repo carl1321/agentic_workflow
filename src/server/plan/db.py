@@ -382,6 +382,41 @@ def increment_task_attempt(conn: psycopg.Connection, task_id: UUID) -> None:
   conn.commit()
 
 
+def reset_plan_tasks_for_restart(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  mode: str = "uncompleted_only",
+) -> int:
+  """
+  重启计划时重置任务状态：将未完成/失败的任务设为 pending，便于调度器重新推进为 ready 并执行。
+  - uncompleted_only: 仅重置 failed、canceled、running；succeeded、pending、ready、awaiting_download 不变。
+  - all: 将所有非 succeeded 的任务重置为 pending（全量重跑）。
+  返回被重置的任务数量。
+  """
+  with conn.cursor() as cursor:
+    if mode == "all":
+      cursor.execute(
+        """
+        UPDATE agent_plan_tasks
+        SET status = 'pending', finished_at = NULL, error = NULL, updated_at = NOW()
+        WHERE plan_id = %s AND status != 'succeeded'
+        """,
+        (plan_id,),
+      )
+    else:
+      cursor.execute(
+        """
+        UPDATE agent_plan_tasks
+        SET status = 'pending', finished_at = NULL, error = NULL, updated_at = NOW()
+        WHERE plan_id = %s AND status IN ('failed', 'canceled', 'running')
+        """,
+        (plan_id,),
+      )
+    count = cursor.rowcount
+  conn.commit()
+  return count
+
+
 def create_artifact(
   conn: psycopg.Connection,
   plan_id: UUID,

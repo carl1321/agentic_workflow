@@ -11,18 +11,34 @@ class SearchEngine(enum.Enum):
     TAVILY = "tavily"
     DUCKDUCKGO = "duckduckgo"
     BRAVE_SEARCH = "brave_search"
+    BING = "bing"
     ARXIV = "arxiv"
     SEARX = "searx"
     WIKIPEDIA = "wikipedia"
 
 
-# Tool configuration - load from YAML config first, then fall back to env var
+# 学术/默认搜索：SEARCH_ENGINE（可配置 include_domains 限制学术站）
 def _get_search_engine():
     config = load_yaml_config("conf.yaml")
     env_config = config.get("ENV", {})
     return env_config.get("SEARCH_API") or os.getenv("SEARCH_API", SearchEngine.TAVILY.value)
 
+
 SELECTED_SEARCH_ENGINE = _get_search_engine()
+
+
+# 通用搜索：GENERAL_SEARCH_ENGINE（选题、热点、失败补救等，不限制学术站；可选 bing、tavily、duckduckgo、brave_search）
+def _get_general_search_engine():
+    config = load_yaml_config("conf.yaml")
+    gen = config.get("GENERAL_SEARCH_ENGINE", {})
+    engine = (gen.get("engine") or "").strip() or os.getenv("GENERAL_SEARCH_API", "")
+    if engine:
+        return engine.lower()
+    # 未配置时回退到 ENV.SEARCH_API，避免破坏现有部署
+    return _get_search_engine()
+
+
+SELECTED_GENERAL_SEARCH_ENGINE = _get_general_search_engine()
 
 
 class RAGProvider(enum.Enum):

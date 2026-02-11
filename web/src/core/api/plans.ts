@@ -157,6 +157,24 @@ export async function runPlan(planId: string) {
   });
 }
 
+export type RestartMode = "uncompleted_only" | "all";
+
+export async function restartPlan(
+  planId: string,
+  mode: RestartMode = "uncompleted_only"
+) {
+  return apiRequest<{
+    success: boolean;
+    planId: string;
+    status: PlanStatus;
+    tasksReset: number;
+    message?: string;
+  }>(`plans/${planId}/restart`, {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+}
+
 export async function listPlanLogs(planId: string, limit = 200, offset = 0) {
   return apiRequest<{ success: boolean; logs: PlanLogItem[] }>(
     `plans/${planId}/logs?limit=${limit}&offset=${offset}`

@@ -64,13 +64,18 @@ async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple
   extra 仅当 done=True 时有效，为 {"plan_type": "simple"|"professional", "sub_type": "video_creation"|None}，供 planner 选择提示词。
   """
   qa = clarify.get("qa") or []
-  qa_text = "\n".join(
-    f"Q{i}: [用户回答] {x.get('answer', '')}"
-    for i, x in enumerate(qa, 1)
-    if isinstance(x, dict) and x.get("answer")
-  )
-  if not qa_text:
-    qa_text = "（尚未有问答记录）"
+  # 必须带上「问题+回答」，否则 LLM 只看到「否」等回答，会重复问同一类问题（如旁白/背景音乐）
+  parts = []
+  for i, x in enumerate(qa, 1):
+    if not isinstance(x, dict) or not x.get("answer"):
+      continue
+    q = (x.get("question") or "").strip()
+    a = (x.get("answer") or "").strip()
+    if q:
+      parts.append(f"Q{i}: {q} → [用户回答] {a}")
+    else:
+      parts.append(f"Q{i}: [用户回答] {a}")
+  qa_text = "\n".join(parts) if parts else "（尚未有问答记录）"
 
   try:
     from src.prompts.template import render_prompt_with_vars
@@ -91,7 +96,7 @@ async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple
 
 请判断：仅凭以上信息，是否已经足够生成可执行的任务计划？
 - 若已足够（目标、平台/受众、风格、资源等关键信息已明确或可合理推断），则返回 done=true，question=null，并填写 plan_type（simple 或 professional）与 sub_type（仅 professional 时填，如 video_creation）。
-- 若仍不足，请返回 done=false，并在 question 里写一句简短、具体的追问。
+- 若仍不足，请返回 done=false，并在 question 里写一句简短、具体的追问。禁止对「已有澄清问答」里已出现过的主题重复追问（包括换说法问同一件事）；应问其他未覆盖的维度或直接 done=true。
 
 只输出一个 JSON 对象，不要其他文字。done=true 时格式：{{"done": true, "question": null, "plan_type": "simple或professional", "sub_type": "video_creation或null"}}；done=false 时：{{"done": false, "question": "追问内容"}}
 """
@@ -127,9 +132,11 @@ async def get_next_question_llm(raw_goal: str, clarify: Dict[str, Any]) -> Tuple
 
 
 def apply_answer(clarify: Dict[str, Any], answer: str) -> Dict[str, Any]:
+  """将用户回答追加到 qa，并保存本轮问题（last_question），供下一轮 LLM 判断时避免重复追问。"""
   r = get_round(clarify)
   qa = list(clarify.get("qa") or [])
-  qa.append({"round": r + 1, "answer": answer})
+  last_q = (clarify.get("last_question") or "").strip() or None
+  qa.append({"round": r + 1, "question": last_q, "answer": answer})
   return {"round": r + 1, "qa": qa}
 
 

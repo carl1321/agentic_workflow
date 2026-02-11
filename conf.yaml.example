@@ -51,19 +51,24 @@ BASIC_MODEL:
 
 
 # OTHER SETTINGS:
-# Search engine configuration (Only supports Tavily currently)
+# 搜索引擎配置：区分学术搜索与通用搜索
+# SEARCH_ENGINE：学术/默认搜索（可配置 include_domains 限制为学术站）
 # SEARCH_ENGINE:
 #   engine: tavily
-#   # Only include results from these domains
 #   include_domains:
+#     - arxiv.org
+#     - scholar.google.com
 #     - example.com
-#     - trusted-news.com
-#     - reliable-source.org
-#     - gov.cn
-#     - edu.cn
-#   # Exclude results from these domains
 #   exclude_domains:
-#     - example.com
+#     - reddit.com
+#
+# GENERAL_SEARCH_ENGINE：通用搜索（计划执行、选题/热点、失败补救等），不限制学术站
+# 可选引擎：bing, tavily, duckduckgo, brave_search
+# 使用 Bing 时需在 ENV 中配置 BING_SUBSCRIPTION_KEY；可选 BING_SEARCH_URL
+# GENERAL_SEARCH_ENGINE:
+#   engine: bing
+# GENERAL_SEARCH_ENGINE:
+#   engine: tavily
 
 # Deep Research Mode Configuration
 # RESEARCH_MODE:
@@ -87,6 +92,13 @@ BASIC_MODEL:
 #   output_dir: "temp/video_generations"
 #   deferred_download_minutes: 30  # 提交后延迟 N 分钟再检查并下载（0 表示立即轮询）
 # 兼容旧配置：也可用 url + status_url（完整 URL）
+
+# 文本转语音 TTS 配置
+# provider: edge_tts（开源，免 API key）| volcengine（火山引擎，需配置 ENV）
+# TTS:
+#   provider: edge_tts
+#   edge_tts:
+#     voice: "zh-CN-XiaoxiaoNeural"  # 中文女声；zh-CN-YunxiNeural 男声
 
 # 文生图 API（供 image_generation_tool 调用），请求 POST {base_url}/v1/images/generations，响应为 PNG 二进制
 # IMAGE_GENERATION:

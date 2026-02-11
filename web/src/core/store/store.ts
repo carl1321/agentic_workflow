@@ -31,6 +31,7 @@ export const useStore = create<{
   selectedModel: string | null;
 
   appendMessage: (message: Message) => void;
+  removeMessage: (id: string) => void;
   updateMessage: (message: Message) => void;
   updateMessages: (messages: Message[]) => void;
   resetConversation: () => void;
@@ -65,6 +66,15 @@ export const useStore = create<{
         messageIds: [...state.messageIds, message.id],
         messages: new Map(state.messages).set(message.id, message),
       };
+    });
+  },
+  removeMessage(id: string) {
+    set((state) => {
+      if (!state.messageIds.includes(id)) return state;
+      const nextIds = state.messageIds.filter((x) => x !== id);
+      const nextMessages = new Map(state.messages);
+      nextMessages.delete(id);
+      return { messageIds: nextIds, messages: nextMessages };
     });
   },
   updateMessage(message: Message) {

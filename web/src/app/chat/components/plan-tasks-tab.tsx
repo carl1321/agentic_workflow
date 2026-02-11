@@ -47,6 +47,11 @@ export function PlanTasksTab({ plan }: { plan: PlanDetail | null }) {
                 依赖：{t.dependsOn.join(", ")}
               </div>
             ) : null}
+            {t.status === "failed" && (
+              <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                失败任务可点击顶部「仅重跑未完成/失败的任务」重试；日志中有失败原因与解决方案摘要。
+              </div>
+            )}
           </div>
         ))}
       </CardContent>

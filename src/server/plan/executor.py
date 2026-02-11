@@ -38,6 +38,22 @@ EXECUTOR_PROMPT_MAP = {
 # 最大 Agent 步数（LLM + 工具调用轮数）
 EXECUTOR_AGENT_MAX_STEPS = 20
 
+# 产出为这些后缀时，必须通过对应工具落盘，不能仅靠 LLM 文字回复；执行后若文件不存在则视为未完成
+# 注意：.ppt 为历史/模型误输出的旧后缀，系统会在执行时规范化为 .pptx
+OUTPUT_EXTENSIONS_REQUIRING_TOOL = {".mp4", ".png", ".jpg", ".jpeg", ".wav", ".mp3", ".pptx", ".ppt"}
+
+# 产出后缀 → 必须调用的工具名
+OUTPUT_EXT_TOOL_MAP = {
+  ".mp4": "video_generation_tool",
+  ".png": "image_generation_tool",
+  ".jpg": "image_generation_tool",
+  ".jpeg": "image_generation_tool",
+  ".wav": "tts_tool",
+  ".mp3": "tts_tool",
+  ".pptx": "ppt_generate_tool",
+  ".ppt": "ppt_generate_tool",
+}
+
 
 def _outputs_root() -> Path:
   return Path(__file__).resolve().parents[3] / "outputs" / "plans"
@@ -103,8 +119,8 @@ def _get_executor_tools(prompt_set: str) -> List[Any]:
     video_generation_tool,
   )
   try:
-    from src.tools.search import get_web_search_tool
-    web_search = get_web_search_tool(5)
+    from src.tools.search import get_general_web_search_tool
+    web_search = get_general_web_search_tool(5)
   except Exception:
     from langchain_core.tools import tool
     @tool
@@ -152,6 +168,19 @@ def _sanitize_tool_args(args: Dict[str, Any], max_value_len: int = 200) -> Dict[
     else:
       out[k] = v
   return out
+
+
+def _is_unrecoverable_tool_error(tool_result: str) -> bool:
+  """工具返回内容是否为「不可恢复」错误（缺依赖/未配置等），重试无意义，应直接失败并提示用户。"""
+  if not (tool_result and isinstance(tool_result, str)):
+    return False
+  s = tool_result.strip().lower()
+  unrecoverable = (
+    "请安装" in tool_result or "pip install" in s or "not installed" in s
+    or "未配置" in tool_result or "environment variable" in s or "is not set" in s
+    or "未设置" in tool_result or "not set" in s
+  )
+  return bool(unrecoverable)
 
 
 async def _analyze_tool_failure(
@@ -232,6 +261,12 @@ async def _run_executor_agent(
   messages: List[Any] = [HumanMessage(content=prompt_text)]
   tool_map = {t.name: t for t in tools}
   result_preview_len = 400
+  # 产出必须由某工具落盘时，若该工具已返回「不可恢复」错误（如缺依赖、未配置），则不再强制重试，直接失败并提示用户
+  _ext = (output_relpath or "").strip().lower()
+  _ext = "." + _ext.rsplit(".", 1)[-1] if _ext and "." in _ext else ""
+  _required_tool = OUTPUT_EXT_TOOL_MAP.get(_ext) if _ext else None
+  required_tool_unrecoverable = False
+  already_forced_for_required_tool = False  # 已强制过一次仍无 tool_calls 时不再重复强制，直接失败
 
   for step in range(EXECUTOR_AGENT_MAX_STEPS):
     if hasattr(bound_llm, "ainvoke"):
@@ -244,6 +279,47 @@ async def _run_executor_agent(
       response = AIMessage(content=str(response))
     tool_calls = getattr(response, "tool_calls", None) or []
     if not tool_calls:
+      # 若产出必须由工具落盘，且文件尚未生成，则强制要求 LLM 再试一轮（必须发起工具调用）
+      out_path = _outputs_root() / str(plan_id) / (output_relpath or "")
+      if _required_tool and (not out_path.exists() or not out_path.is_file()):
+        if required_tool_unrecoverable:
+          raise RuntimeError(
+            f"本任务产出为 {_ext}，需调用 {_required_tool}，但该工具因环境/配置问题无法完成（如未安装依赖或未配置）。请根据上方日志安装依赖或配置后重试。"
+          )
+        if already_forced_for_required_tool:
+          raise RuntimeError(
+            f"本任务产出为 {_ext}，需调用 {_required_tool}，但模型在收到强制提示后仍未发起工具调用。请确认当前模型支持 function calling（工具调用），或更换模型后重试。"
+          )
+        already_forced_for_required_tool = True
+        messages.append(response)
+        path_hint = f"outputs/plans/{plan_id}/{output_relpath}"
+        if _required_tool in ("ppt_generate_tool", "tts_tool"):
+          force_msg = (
+            f"重要：本任务产出必须为 {_ext} 文件，你必须立即调用 {_required_tool}，"
+            f"传 base_dir=\"outputs\"、relative_path=\"plans/{plan_id}/{output_relpath}\"，将产物落盘到 {path_hint}。"
+            "不要只回复文字，必须发起工具调用。"
+          )
+        else:
+          force_msg = (
+            f"重要：本任务产出必须为 {_ext} 文件，你必须立即调用 {_required_tool} 生成并落盘到 {path_hint}。"
+            "不要只回复文字，必须发起工具调用。"
+          )
+        messages.append(HumanMessage(content=force_msg))
+        append_plan_log(
+          conn,
+          plan_id,
+          level="info",
+          event="tool_call",
+          payload={
+            "tool": _required_tool,
+            "status": "required",
+            "taskId": str(task_id),
+            "title": "要求调用工具",
+            "bullets": [f"LLM 未发起工具调用，已强制要求调用 {_required_tool}"],
+          },
+          task_id=task_id,
+        )
+        continue
       break
     messages.append(response)
     for tc in tool_calls:
@@ -270,6 +346,51 @@ async def _run_executor_agent(
         )
         continue
       try:
+        if name == "video_generation_tool":
+          append_plan_log(
+            conn,
+            plan_id,
+            level="info",
+            event="tool_call",
+            payload={
+              "tool": name,
+              "status": "running",
+              "taskId": str(task_id),
+              "title": "正在调用视频生成工具",
+              "bullets": ["视频生成通常需要数分钟，请稍候"],
+            },
+            task_id=task_id,
+          )
+        elif name == "ppt_generate_tool":
+          append_plan_log(
+            conn,
+            plan_id,
+            level="info",
+            event="tool_call",
+            payload={
+              "tool": name,
+              "status": "running",
+              "taskId": str(task_id),
+              "title": "正在调用 PPT 生成工具",
+              "bullets": ["生成 PPT 中，请稍候"],
+            },
+            task_id=task_id,
+          )
+        elif name == "tts_tool":
+          append_plan_log(
+            conn,
+            plan_id,
+            level="info",
+            event="tool_call",
+            payload={
+              "tool": name,
+              "status": "running",
+              "taskId": str(task_id),
+              "title": "正在调用 TTS 文本转语音",
+              "bullets": ["生成音频中，请稍候"],
+            },
+            task_id=task_id,
+          )
         if hasattr(tool_obj, "ainvoke"):
           result = await tool_obj.ainvoke(args)
         else:
@@ -308,11 +429,15 @@ async def _run_executor_agent(
               delay_minutes=int(parts[6]),
             )
             raise DeferredVideoDownload(plan_id, task_id)
+        if name == _required_tool and _is_unrecoverable_tool_error(result_str):
+          required_tool_unrecoverable = True
       except DeferredVideoDownload:
         raise
       except Exception as e:
         logger.warning("Executor tool %s failed: %s", name, e)
         err_msg = str(e)
+        if name == _required_tool and _is_unrecoverable_tool_error(err_msg):
+          required_tool_unrecoverable = True
         args_preview = _sanitize_tool_args(args)
         append_plan_log(
           conn,
@@ -571,6 +696,28 @@ class PlanTaskExecutor:
         return
       if not output_rel:
         raise ValueError("executor_args.output_relpath is required")
+
+      # 规范化：若规划器/模型给出 .ppt（旧后缀），统一改为 .pptx 执行与验收
+      try:
+        p = Path(str(output_rel))
+        if p.suffix.lower() == ".ppt":
+          normalized = str(p.with_suffix(".pptx"))
+          append_plan_log(
+            conn,
+            plan_id,
+            level="warning",
+            event="output_normalized",
+            payload={
+              "taskId": str(task_id),
+              "title": "已规范化产出后缀",
+              "bullets": [f"{output_rel} → {normalized}（PPT 统一使用 .pptx）"],
+            },
+            task_id=task_id,
+          )
+          output_rel = normalized
+      except Exception:
+        pass
+
       out_path = _outputs_root() / str(plan_id) / str(output_rel)
       _ensure_parent(out_path)
 
@@ -599,8 +746,18 @@ class PlanTaskExecutor:
               dependency_content=dependency_prefix,
               model_name=model,
             )
-            # 产物由 Agent 通过 create_file_tool 写入，此处不再写文件
+            # 产出为 .mp4/.png/.wav 等时，必须由对应工具落盘；若文件不存在说明未调用工具，视为未完成
+            out_path = _outputs_root() / str(plan_id) / str(output_rel)
+            ext = (Path(output_rel).suffix or "").lower()
+            if ext in OUTPUT_EXTENSIONS_REQUIRING_TOOL and (not out_path.exists() or not out_path.is_file()):
+              tool_hint = OUTPUT_EXT_TOOL_MAP.get(ext, "对应工具")
+              raise RuntimeError(
+                f"本任务产出为 {ext}，必须调用 {tool_hint} 并落盘到指定路径；当前未生成文件，验收将不通过。请确保在对话中实际调用该工具。"
+              )
           except Exception as e:
+            # 产出为 .mp4/.png 等时不允许用 LLM 文本落盘，直接失败
+            if "必须调用" in str(e) and "并落盘" in str(e):
+              raise
             logger.warning("Executor agent failed, fallback to single LLM write: %s", e)
             prompt = (dependency_prefix + base_prompt) if dependency_prefix else base_prompt
             content = await _run_llm(prompt, model_name=model)
@@ -631,7 +788,10 @@ class PlanTaskExecutor:
       raise
     except Exception as e:
       logger.exception(f"Task execution failed: plan={plan_id} task={task_id}: {e}")
-      update_task_status(conn, task_id, status="failed", finished_at=datetime.now(), error={"error": str(e)})
+      err_msg = str(e)
+      update_task_status(conn, task_id, status="failed", finished_at=datetime.now(), error={"error": err_msg})
+      exec_args = task.get("executor_args") or {}
+      output_rel = exec_args.get("output_relpath") or ""
       append_plan_log(
         conn,
         plan_id,
@@ -639,12 +799,52 @@ class PlanTaskExecutor:
         event="task_failed",
         payload={
           "taskId": str(task_id),
-          "error": str(e),
+          "error": err_msg,
+          "taskName": task_name,
+          "outputRelpath": output_rel,
           "title": f"任务失败：{task_name}",
           "icon": "error",
-          "bullets": [str(e)],
+          "bullets": [err_msg],
         },
         task_id=task_id,
       )
+      # 失败分析：若建议搜索解决方案，则调用 web_search 并将结果写入 plan_log 供用户或重试参考
+      try:
+        action, search_query = await _analyze_tool_failure(
+          "task_execution",
+          err_msg,
+          {"task_name": task_name, "output_relpath": output_rel},
+          model_name=(task.get("executor_args") or {}).get("model"),
+        )
+        if action == "search" and search_query:
+          try:
+            from src.tools.search import get_general_web_search_tool
+            web_search = get_general_web_search_tool(5)
+            if hasattr(web_search, "ainvoke"):
+              search_result = await web_search.ainvoke({"query": search_query})
+            else:
+              search_result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: web_search.invoke({"query": search_query})
+              )
+            search_str = str(search_result)[:2000]
+            append_plan_log(
+              conn,
+              plan_id,
+              level="info",
+              event="failure_recovery_search",
+              payload={
+                "taskId": str(task_id),
+                "searchQuery": search_query,
+                "resultPreview": search_str[:500],
+                "title": "已根据失败原因搜索解决方案",
+                "icon": "info",
+                "bullets": [f"关键词：{search_query}", search_str.split("\n")[0][:200] if search_str else ""],
+              },
+              task_id=task_id,
+            )
+          except Exception as search_err:
+            logger.warning("Task-level failure_recovery_search failed: %s", search_err)
+      except Exception as analyze_err:
+        logger.warning("Task-level failure analysis failed: %s", analyze_err)
       raise
 

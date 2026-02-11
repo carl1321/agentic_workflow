@@ -146,7 +146,9 @@ export function PlanPanel({ planId }: { planId: string }) {
   }
 
   // 过滤掉“澄清提问”类日志，澄清对话交给聊天区展示
-  const displayLogs = logs.filter((l) => l.event !== "clarify_question");
+  const displayLogs = logs.filter(
+    (l) => l.event !== "clarify_question" && l.event !== "plan_message"
+  );
 
   return (
     <div className="w-full h-full pb-4 overflow-y-auto">

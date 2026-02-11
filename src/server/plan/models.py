@@ -46,6 +46,13 @@ class RunRequest(BaseModel):
   dryRun: bool = False
 
 
+class RestartRequest(BaseModel):
+  """重启计划时的策略。"""
+  mode: Literal["uncompleted_only", "all"] = "uncompleted_only"
+  # uncompleted_only: 仅重跑未完成/失败的任务，已完成的不重复执行
+  # all: 除 succeeded 外全部重置为 pending，全量重跑
+
+
 class PlanSummary(BaseModel):
   id: str
   title: Optional[str] = None
@@ -152,6 +159,14 @@ class RunResponse(BaseModel):
   success: bool = True
   planId: str
   status: PlanStatus
+
+
+class RestartResponse(BaseModel):
+  success: bool = True
+  planId: str
+  status: PlanStatus = "running"
+  tasksReset: int = 0
+  message: Optional[str] = None
 
 
 class TerminateRequest(BaseModel):

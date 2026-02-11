@@ -3,12 +3,13 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileText, ListChecks, MessageCircle } from "lucide-react";
 
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { getPlan, streamPlanEvents, type PlanDetail } from "~/core/api/plans";
+import { getPlan, restartPlan, streamPlanEvents, type PlanDetail } from "~/core/api/plans";
 
 import { PlanMessagesBlock } from "./plan-messages-block";
 import { PlanOutputsTab } from "./plan-outputs-tab";
@@ -79,6 +80,25 @@ export function PlanWorkspace({ planId }: { planId: string }) {
   }, [planId]);
 
   const rawGoal = useMemo(() => plan?.rawGoal || "", [plan?.rawGoal]);
+  const [restarting, setRestarting] = useState(false);
+  const showRestartButton = status === "running" || status === "failed";
+  const onRestart = useCallback(async () => {
+    setRestarting(true);
+    try {
+      await restartPlan(planId, "uncompleted_only");
+      const res = await getPlan(planId);
+      setPlan(res.plan);
+    } catch (e) {
+      console.error("Restart plan failed:", e);
+    } finally {
+      setRestarting(false);
+    }
+  }, [planId]);
+
+  /** 发送计划消息后刷新计划详情，使任务/状态等即时更新无需手动刷新页面 */
+  const refreshPlan = useCallback(() => {
+    getPlan(planId).then((res) => setPlan(res.plan)).catch(() => {});
+  }, [planId]);
 
   return (
     <div className="flex w-full max-w-5xl flex-1 flex-col px-4 pt-4 pb-4">
@@ -94,6 +114,11 @@ export function PlanWorkspace({ planId }: { planId: string }) {
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-slate-500 dark:text-slate-400">当前阶段：{phaseLabel}</span>
           <Badge variant="secondary">{status}</Badge>
+          {showRestartButton && (
+            <Button variant="outline" size="sm" onClick={onRestart} disabled={restarting}>
+              {restarting ? "重启中…" : "仅重跑未完成/失败的任务"}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -115,7 +140,12 @@ export function PlanWorkspace({ planId }: { planId: string }) {
 
         <TabsContent value="chat" className="mt-2 flex-1">
           <div className="h-[calc(100vh-190px)] min-h-[520px]">
-            <PlanMessagesBlock planId={planId} planStatus={status} className="h-full" />
+            <PlanMessagesBlock
+              planId={planId}
+              planStatus={status}
+              onPlanShouldRefresh={refreshPlan}
+              className="h-full"
+            />
           </div>
         </TabsContent>
 

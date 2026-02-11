@@ -29,6 +29,14 @@ def _get_image_config() -> Dict[str, Any]:
         return {}
 
 
+def _normalize_base_url(url: str) -> str:
+    """修正 base_url 中常见的 host/:port 为 host:port，避免请求发到 port=80、路径 /:port/..."""
+    if not url or "/:" not in url:
+        return (url or "").rstrip("/")
+    # 例如 "http://122.193.22.114/:8889" -> "http://122.193.22.114:8889"
+    return url.replace("/:", ":").rstrip("/")
+
+
 def _call_image_api(
     base_url: str,
     api_key: str,
@@ -45,7 +53,8 @@ def _call_image_api(
     """
     import requests
 
-    url = f"{base_url.rstrip('/')}/v1/images/generations"
+    base = _normalize_base_url(base_url)
+    url = f"{base}/v1/images/generations"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -90,7 +99,7 @@ def image_generation_tool(
 ) -> str:
     """调用配置的文生图 API，根据 prompt 生成图片并保存为 PNG。若传 base_dir+relative_path 则写入该路径（供计划任务验收）；否则写入 temp/image_generations。"""
     cfg = _get_image_config()
-    api_base = base_url or cfg.get("base_url")
+    api_base = _normalize_base_url(base_url or cfg.get("base_url") or "")
     key = api_key or cfg.get("api_key") or ""
     if not api_base or not key:
         return "未配置 IMAGE_GENERATION（base_url / api_key），请在 conf.yaml 中配置或传入 base_url、api_key 参数。"

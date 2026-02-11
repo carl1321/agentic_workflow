@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -44,7 +45,69 @@ logger = logging.getLogger(__name__)
 
 # 按扩展名区分：文本类读内容预览，二进制类只给大小与路径
 TEXT_PREVIEW_EXTENSIONS = {".md", ".json", ".srt", ".txt", ".csv", ".xml", ".html", ".yaml", ".yml"}
-BINARY_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".wav", ".mp3", ".webm", ".avi", ".mov"}
+# 注意：PPT 产物为二进制（zip container），必须按二进制预览，否则验收模型可能误判“内容不像 PPT”
+BINARY_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".wav", ".mp3", ".webm", ".avi", ".mov", ".pptx", ".ppt"}
+
+def _required_tool_for_output(output_relpath: str) -> Optional[str]:
+  """根据产出后缀推断必须调用的工具名（用于根因提示/精确检索关键词）。"""
+  ext = (Path(output_relpath).suffix or "").lower()
+  return {
+    ".mp4": "video_generation_tool",
+    ".png": "image_generation_tool",
+    ".jpg": "image_generation_tool",
+    ".jpeg": "image_generation_tool",
+    ".wav": "tts_tool",
+    ".mp3": "tts_tool",
+    ".pptx": "ppt_generate_tool",
+    ".ppt": "ppt_generate_tool",  # 历史/模型误输出
+  }.get(ext)
+
+
+def _root_cause_hint(
+  *,
+  reason: str,
+  output_rel: str,
+  output_path: str,
+  content_preview: str,
+) -> Optional[str]:
+  """对常见验收失败做本地归因提示，能判断就不做网页搜索。"""
+  r = (reason or "").strip()
+  out = (output_rel or "").strip()
+  ext = (Path(out).suffix or "").lower()
+  tool = _required_tool_for_output(out) or "对应工具"
+
+  # 1) 产物文件缺失/未落盘
+  if ("产物文件缺失" in r) or ("未在指定路径生成文件" in r) or ("未生成文件" in r):
+    bullets: List[str] = []
+    if ext in {".ppt", ".pptx"}:
+      bullets.append("如果任务写的是 .ppt（旧后缀），而工具只能生成 .pptx，会导致“期望路径/文件名不一致”从而验收失败；建议统一使用 .pptx。")
+    bullets.append(f"检查日志里是否出现过「工具调用：{tool}」且 status=ok；没有的话通常是模型没调用到工具，或该任务没绑定到包含该工具的执行器。")
+    bullets.append("检查 output_relpath 是否正确（不要带错目录/后缀），验收只认 `outputs/plans/{plan_id}/{output_relpath}`。")
+    bullets.append("如果你刚重启过后端/模型超时，可能出现流程中断；点一次“继续/重试”触发自愈重跑。")
+    return "根因定位（本地判断）：产物未落盘到指定路径。\n- " + "\n- ".join(bullets[:4])
+
+  # 2) 伪二进制/内容不符合
+  if ("并非二进制" in r) or ("内容明显不符" in r):
+    return (
+      "根因定位（本地判断）：产物疑似被当作文本写入或生成了“伪文件”。\n"
+      f"- 该类型（{ext or '未知后缀'}）必须由 `{tool}` 生成真实二进制文件，不能用 create_file_tool 写文本冒充。\n"
+      "- 请确认工具确实被调用，且工具返回的输出路径与验收路径一致。"
+    )
+
+  # 3) 模型未调用工具
+  if ("仍未发起工具调用" in r) or ("必须调用" in r and "并落盘" in r):
+    return (
+      "根因定位（本地判断）：模型没有发起必要的工具调用。\n"
+      f"- 该任务产物为 `{ext}`，必须调用 `{tool}` 并落盘到指定路径。\n"
+      "- 请确认当前所用模型支持 function calling（工具调用），或切换到支持工具调用的模型后重试。"
+    )
+
+  # 4) 配置/依赖问题
+  s = (r + "\n" + (content_preview or "")).lower()
+  if ("pip install" in s) or ("未配置" in r) or ("is not set" in s) or ("not installed" in s):
+    return "根因定位（本地判断）：工具依赖或配置缺失。请按日志提示安装依赖/配置环境变量后再重试。"
+
+  return None
 
 
 def _content_preview_for_path(fp: Path) -> str:
@@ -167,7 +230,7 @@ async def _process_pending_video_downloads(conn) -> None:
             task_id,
             status="failed",
             finished_at=datetime.now(),
-            error=json.dumps({"rejected": True, "reason": reason}, ensure_ascii=False),
+            error={"rejected": True, "reason": reason},
           )
           append_plan_log(
             conn,
@@ -222,7 +285,7 @@ async def _process_pending_video_downloads(conn) -> None:
           task_id,
           status="failed",
           finished_at=datetime.now(),
-          error=json.dumps({"error": str(err)}, ensure_ascii=False),
+          error={"error": str(err)},
         )
         append_plan_log(
           conn,
@@ -291,6 +354,30 @@ class PlanScheduler:
           update_plan(conn, plan_id, user_id=None, status="running")
         except Exception:
           pass
+
+        # 超过最大重试次数则不再执行，标记失败并提示用户
+        attempt = int(task.get("attempt") or 0)
+        max_retries = int(task.get("max_retries") or 1)
+        if attempt > max_retries + 1:
+          task_name = task.get("name") or "未命名任务"
+          update_task_status(
+            conn,
+            task_id,
+            status="failed",
+            finished_at=datetime.now(),
+            error={"error": "超过最大重试次数，请检查失败原因或手动处理", "attempt": attempt, "max_retries": max_retries},
+          )
+          append_plan_log(
+            conn, plan_id, level="warning", event="task_failed",
+            payload={
+              "taskId": str(task_id),
+              "title": f"任务跳过（超过重试次数）：{task_name}",
+              "icon": "error",
+              "bullets": [f"已执行 {attempt} 次，超过最大重试次数 {max_retries}，请查看日志或重新启动计划后重试。"],
+            },
+            task_id=task_id,
+          )
+          return
 
         # 3) 执行任务
         try:
@@ -368,9 +455,7 @@ class PlanScheduler:
                       t.get("id"),
                       status="canceled",
                       finished_at=datetime.now(),
-                      error=json.dumps(
-                        {"canceled": True, "reason": f"上游任务「{task_name}」验收失败"}, ensure_ascii=False
-                      ),
+                      error={"canceled": True, "reason": f"上游任务「{task_name}」验收失败"},
                     )
                     canceled_scope.append(t_name)
             except Exception:
@@ -379,7 +464,7 @@ class PlanScheduler:
 
           update_task_status(
             conn, task_id, status="failed", finished_at=datetime.now(),
-            error=json.dumps({"rejected": True, "reason": reason}, ensure_ascii=False),
+            error={"rejected": True, "reason": reason},
           )
           append_plan_log(
             conn, plan_id, level="warning", event="task_rejected",
@@ -414,6 +499,59 @@ class PlanScheduler:
               f"因任务「{task_name}」验收失败，取消下游任务：{', '.join(canceled_scope)}",
             )
           append_spec_milestone(plan_id, f"任务「{task_name}」验收不通过，原因：{reason}")
+          # 验收失败后：优先给出“本地根因提示”，能解释就不做网页搜索（避免搜到无关页面）
+          try:
+            hint = _root_cause_hint(
+              reason=reason or "",
+              output_rel=output_rel or "",
+              output_path=output_path or "",
+              content_preview=content_preview or "",
+            )
+            if hint:
+              append_plan_log(
+                conn,
+                plan_id,
+                level="warning",
+                event="root_cause_hint",
+                payload={
+                  "taskId": str(task_id),
+                  "title": "根因提示（无需网页搜索）",
+                  "icon": "info",
+                  "bullets": [x for x in hint.split("\n") if x.strip()][:8],
+                },
+                task_id=task_id,
+              )
+            else:
+              # 仅在显式开启时才做网页搜索（默认关闭）
+              if str(os.getenv("PLAN_WEB_SEARCH_ON_REJECTED", "")).lower() in ("1", "true", "yes", "on"):
+                from src.tools.search import get_general_web_search_tool
+                tool = _required_tool_for_output(output_rel or "") or ""
+                ext = (Path(output_rel or "").suffix or "").lower()
+                reason_short = (reason or "").split("\n")[0].strip()[:120]
+                query = " ".join([x for x in [tool, ext, "验收不通过", reason_short] if x]).strip() or "任务验收不通过 原因定位"
+                ws = get_general_web_search_tool(5)
+                if hasattr(ws, "ainvoke"):
+                  res = await ws.ainvoke({"query": query})
+                else:
+                  res = await asyncio.get_event_loop().run_in_executor(None, lambda: ws.invoke({"query": query}))
+                search_str = str(res)[:2000]
+                append_plan_log(
+                  conn,
+                  plan_id,
+                  level="info",
+                  event="failure_recovery_search",
+                  payload={
+                    "taskId": str(task_id),
+                    "searchQuery": query,
+                    "resultPreview": search_str[:500],
+                    "title": "已根据验收失败原因搜索解决方案",
+                    "icon": "info",
+                    "bullets": [f"关键词：{query}", search_str.split("\n")[0][:200] if search_str else ""],
+                  },
+                  task_id=task_id,
+                )
+          except Exception as e:
+            logger.warning("Acceptance root_cause_hint/search failed: %s", e)
           return
         append_plan_log(
           conn, plan_id, level="info", event="task_accepted",

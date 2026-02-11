@@ -17,6 +17,7 @@ import {
   getClarify,
   getPlan,
   listPlanLogs,
+  restartPlan,
   runPlan,
   type PlanDetail,
   type PlanLogItem,
@@ -40,6 +41,11 @@ export default function PlanDetailPage() {
   const canFinalize = useMemo(() => {
     return !!plan && !question && clarifyDone && (plan.status === "draft" || plan.status === "active");
   }, [plan, question, clarifyDone]);
+
+  const displayLogs = useMemo(
+    () => logs.filter((l) => l.event !== "plan_message"),
+    [logs]
+  );
 
   const refresh = async () => {
     setLoading(true);
@@ -106,7 +112,11 @@ export default function PlanDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      await runPlan(planId);
+      if (plan?.status === "running" || plan?.status === "failed") {
+        await restartPlan(planId, "uncompleted_only");
+      } else {
+        await runPlan(planId);
+      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -114,6 +124,9 @@ export default function PlanDetailPage() {
       setLoading(false);
     }
   };
+
+  const showRestartLabel = plan?.status === "running" || plan?.status === "failed";
+  const hasFailedTasks = plan?.tasks?.some((t) => t.status === "failed") ?? false;
 
   const onPreviewArtifact = async (artifactId: string, title: string) => {
     setLoading(true);
@@ -162,8 +175,15 @@ export default function PlanDetailPage() {
             <Button onClick={onFinalize} disabled={loading || !canFinalize}>
               生成任务（Finalize）
             </Button>
-            <Button onClick={onRun} disabled={loading || !plan || (plan.status !== "active" && plan.status !== "running")}>
-              运行计划
+            <Button
+              onClick={onRun}
+              disabled={
+                loading ||
+                !plan ||
+                (plan.status !== "active" && plan.status !== "running" && plan.status !== "failed")
+              }
+            >
+              {showRestartLabel ? "仅重跑未完成/失败的任务" : "运行计划"}
             </Button>
           </div>
         </CardContent>
@@ -223,9 +243,19 @@ export default function PlanDetailPage() {
                       验收：{t.acceptanceCriteria}
                     </div>
                   )}
+                  {t.status === "failed" && (
+                    <div className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      失败任务将在点击「仅重跑未完成/失败的任务」后重试；可查看下方日志中的失败原因与解决方案摘要。
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
+          )}
+          {hasFailedTasks && (
+            <p className="text-xs text-slate-500 mt-2">
+              日志中的「已根据失败原因搜索解决方案」或「已根据验收失败原因搜索解决方案」可提供处理建议。
+            </p>
           )}
         </CardContent>
       </Card>
@@ -271,11 +301,11 @@ export default function PlanDetailPage() {
           <CardTitle className="text-base">日志</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {logs.length === 0 ? (
+          {displayLogs.length === 0 ? (
             <div className="text-sm text-slate-500">暂无日志</div>
           ) : (
             <div className="max-h-80 overflow-y-auto space-y-1 text-xs font-mono">
-              {logs.map((l) => (
+              {displayLogs.map((l) => (
                 <div key={l.id} className="text-slate-600 dark:text-slate-400">
                   [{l.createdAt || ""}] {l.level} {l.event} {l.taskId ? `task=${l.taskId}` : ""}{" "}
                   {Object.keys(l.payload || {}).length ? JSON.stringify(l.payload) : ""}

@@ -13,7 +13,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 **按产物类型选择工具（必须执行，否则验收不通过）：**
 - **产出为文本文件**（.md、.json、.srt、.txt 等）：**直接调用 create_file_tool**，参数为 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`、`content=文件文本内容`。不要为写文档/剧本等先调用 web_search，大模型应直接撰写并落盘。
-- **产出为图片文件**（.png、.jpg 等）：必须直接调用 **image_generation_tool**，禁止为「生成图片」调用 web_search。
+- **产出为图片文件**（.png、.jpg 等）：**凡是 output_relpath 以 .png / .jpg 结尾的任务，你必须至少调用一次 image_generation_tool 完成生成，绝对不能仅用文字描述来“替代图片”。** 调用时必须使用 **image_generation_tool**，禁止为「生成图片」调用 web_search。
 
 **web_search 使用时机**：仅在以下两种情况下调用——（1）**不知道如何完成**当前任务、需要查找解决方案或参考资料；（2）**当前信息量不足**，需要补充素材、背景或数据后再撰写/生成。已知类型且信息已足够时直接用 create_file_tool 或 image_generation_tool，不要先搜索。
 
@@ -23,7 +23,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 - **edit_file_tool**：追加或覆盖文件。
 - **web_search**：网页搜索。**仅在**（1）不清楚如何完成、需查解决方案，或（2）信息量不足、需补充素材后再产出时使用；已知任务且信息已足时直接用 create_file_tool 或 image_generation_tool。
 - **crawl_tool**：爬取 URL 获取正文 Markdown，参数 url。
-- **image_generation_tool**：根据 prompt 调用文生图 API 生成 PNG。计划任务产出图片时必须传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，使图片写入验收路径。
+- **image_generation_tool**：根据 prompt 调用文生图 API 生成 PNG。**对于任何 output_relpath 为 .png/.jpg 的任务，你若尚未调用过 image_generation_tool，不得结束任务，必须补充调用本工具一次。** 计划任务产出图片时必须传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，使图片写入验收路径。
 
 根据任务需要选用上述工具；文本产物用 create_file_tool，**图片产物（.png/.jpg）必须用 image_generation_tool，不要用 web_search**。
 
@@ -42,4 +42,4 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 - **任务名称**：{{ task_name }}
 - **任务要求**：{{ task_prompt }}
 
-请根据任务要求选用工具并执行：文本产物在信息足够时直接用 create_file_tool，图片产物用 image_generation_tool。仅在不知道如何完成、或信息量不足需补充素材时再调用 web_search。必须实际发起工具调用，不要只输出描述。
+请根据任务要求选用工具并执行：文本产物在信息足够时直接用 create_file_tool，**只要任务产物是 .png/.jpg，务必在对话中至少调用一次 image_generation_tool 完成图片生成，不得只用文字描述代替图片文件。** 仅在不知道如何完成、或信息量不足需补充素材时再调用 web_search。必须实际发起工具调用，不要只输出描述。

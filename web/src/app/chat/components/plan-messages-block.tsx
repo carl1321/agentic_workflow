@@ -18,11 +18,14 @@ export function PlanMessagesBlock({
   className,
   planId,
   planStatus,
+  onPlanShouldRefresh,
 }: {
   className?: string;
   planId: string;
   /** 用于空状态提示：区分澄清阶段与执行阶段 */
   planStatus?: string;
+  /** 发送消息成功后调用，用于刷新计划详情（任务、状态）避免用户手动刷新页面 */
+  onPlanShouldRefresh?: () => void;
 }) {
   const responding = useStore((s) => s.responding);
   const messageIds = useStore((s) => s.messageIds);
@@ -30,6 +33,7 @@ export function PlanMessagesBlock({
   const streamAbortRef = useRef<AbortController | null>(null);
   const [feedback, setFeedback] = useState<{ option: Option } | null>(null);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const [updateTrigger, setUpdateTrigger] = useState(0);
 
   function hasRecentSameMessage(role: string, content: string): boolean {
     const ids = useStore.getState().messageIds;
@@ -134,6 +138,8 @@ export function PlanMessagesBlock({
             if (l.event === "plan_created") continue;
             // 澄清回答仅用于后端状态，不在对话流中展示 info clarify_answer 气泡
             if (l.event === "clarify_answer") continue;
+            // 用户补充信息仅记录日志，不展示为 info plan_message 气泡
+            if (l.event === "plan_message") continue;
             let content: string;
             if (l.event === "clarify_question") {
               // 澄清问题：用 payload.question 显示；若对话里已有同内容（来自 message 事件）则去重
@@ -199,10 +205,11 @@ export function PlanMessagesBlock({
         }
 
         const res = await sendPlanMessage(planId, content);
-        // 追加服务端返回的新增消息（包含 user + assistant）
+        // 发送成功后刷新计划详情（任务列表、状态等），页面无需手动刷新
+        onPlanShouldRefresh?.();
+        // 先追加本次响应中的 assistant 消息（与 Coze 类似：发消息后立即用服务端数据更新气泡）
         for (const m of res.messages || []) {
           const id = m.id;
-          // user 消息已在本地回显，避免重复
           if (m.role === "user") continue;
           if (!id || useStore.getState().messageIds.includes(id)) continue;
           const role = m.role === "system" ? "assistant" : (m.role as any);
@@ -219,7 +226,42 @@ export function PlanMessagesBlock({
             agent: agentForRole(role),
           });
         }
+        // 再拉取全量消息并合并，保证退出澄清阶段后发送也能即时更新（不依赖 SSE 轮询延迟，与 Coze 的「发消息后拉取全量」思路一致）
+        try {
+          const full = await listPlanMessages(planId, 2000, 0);
+          for (const m of full.messages || []) {
+            const id = m.id;
+            if (!id) continue;
+            if (useStore.getState().messageIds.includes(id)) continue;
+            const role = m.role === "system" ? "assistant" : (m.role as any);
+            const content = m.content || "";
+            // 若已有同内容的气泡（含「已查看记忆」等重复回复），跳过，避免用户连续发「继续」时重复显示
+            if (hasRecentSameMessage(role, content)) continue;
+            const ids = useStore.getState().messageIds;
+            const msgs = useStore.getState().messages;
+            // 若已有同内容的气泡（来自 log 的临时 id），去掉 log 气泡再追加 API 消息，避免重复
+            const toRemove = ids.find((mid) => {
+              const existing = msgs.get(mid);
+              if (!existing || !String(mid).startsWith("log:")) return false;
+              return (existing.role as string) === role && String(existing.content || "") === content;
+            });
+            if (toRemove) useStore.getState().removeMessage(toRemove);
+            useStore.getState().appendMessage({
+              id,
+              threadId: `plan:${planId}`,
+              role,
+              content,
+              contentChunks: [content],
+              isStreaming: false,
+              // @ts-expect-error: 兼容 store 的扩展字段（用于 MessageListView 过滤）
+              agent: agentForRole(role),
+            });
+          }
+        } catch (_e) {
+          // 拉取失败仅依赖上面 res.messages 已追加的内容
+        }
         setFeedback(null);
+        setUpdateTrigger((t) => t + 1);
       } catch (e) {
         console.error("Failed to send plan message:", e);
         const errText = e instanceof Error ? e.message : String(e);
@@ -241,7 +283,7 @@ export function PlanMessagesBlock({
         useStore.setState({ responding: false });
       }
     },
-    [planId]
+    [planId, onPlanShouldRefresh]
   );
 
   const handleCancel = useCallback(() => {
