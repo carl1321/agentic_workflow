@@ -10,6 +10,23 @@ from langgraph.prebuilt.chat_agent_executor import AgentState
 
 from src.config.configuration import Configuration
 
+
+def _get_available_skills_xml() -> str:
+    """Build XML fragment of available Agent Skills for system prompt (agentskills.io style)."""
+    try:
+        from src.skills import get_skill_registry
+        reg = get_skill_registry()
+        skills = reg.get_all_metadata()
+        if not skills:
+            return ""
+        parts = []
+        for m in skills:
+            desc = (m.description or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+            parts.append(f'  <skill name="{m.name}" description="{desc}"/>')
+        return "<available_skills>\n" + "\n".join(parts) + "\n</available_skills>"
+    except Exception:
+        return ""
+
 # Initialize Jinja2 environment
 env = Environment(
     loader=FileSystemLoader(os.path.dirname(__file__)),
@@ -52,6 +69,7 @@ def apply_prompt_template(
     # Convert state to dict for template rendering
     state_vars = {
         "CURRENT_TIME": datetime.now().strftime("%a %b %d %Y %H:%M:%S %z"),
+        "AVAILABLE_SKILLS_XML": _get_available_skills_xml(),
         **state,
     }
 

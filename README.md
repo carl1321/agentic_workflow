@@ -8,6 +8,7 @@
 - 💬 **智能对话** - 支持深度思考、背景调研、多轮澄清的智能对话系统
 - 📚 **知识库管理** - 集成 RAGFlow、Milvus、MCP 等多种 RAG 提供者
 - 🛠️ **工具箱** - 丰富的工具集，包括搜索引擎、网络爬虫、Python 执行、MCP 服务等
+- 📦 **Agent Skills** - 集成 [Agent Skills](https://agentskills.io) 标准，新工具可通过技能目录（SKILL.md + 可选 tools.py）无缝接入，详见 [Agent Skills 说明](docs/agent_skills.md)
 - 👥 **用户管理系统** - 完整的 RBAC 权限控制系统，支持用户、角色、权限、菜单、单位、部门管理
 - 🎙️ **播客生成** - 从研究报告自动生成播客音频
 - 🔄 **工作流支持** - 可视化工作流编辑器（基于 ReactFlow）
@@ -172,6 +173,7 @@ pnpm start
 - Python 代码执行
 - MCP 服务集成
 - 数据提取工具
+- **Agent Skills**：以技能目录（SKILL.md + 可选 tools.py）方式扩展工具，无需改代码即可接入新能力，见 [docs/agent_skills.md](docs/agent_skills.md)
 
 ### 知识库
 - 支持多种 RAG 提供者（RAGFlow, Milvus, MCP）
@@ -202,6 +204,7 @@ AgenticWorkflow/
 │   ├── server/            # FastAPI 服务器
 │   │   ├── auth/          # 认证和授权
 │   │   └── ...
+│   ├── skills/             # Agent Skills 发现、注册与加载
 │   └── tools/              # 工具集
 ├── web/                    # 前端源代码
 │   └── src/

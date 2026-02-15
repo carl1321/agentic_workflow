@@ -266,7 +266,18 @@ async def setup_checkpoint_tables():
             logger.info("PostgreSQL checkpoint tables initialized successfully")
     except Exception as e:
         logger.warning(f"Failed to initialize checkpoint tables: {e}")
-    
+
+    # Register tools from Agent Skills directories (skills/*/tools.py)
+    try:
+        from src.skills import get_skill_registry
+        reg = get_skill_registry()
+        extra_tools = reg.load_dynamic_tools()
+        if extra_tools:
+            TOOL_REGISTRY.update(extra_tools)
+            logger.info("Registered %d tools from skills", len(extra_tools))
+    except Exception as e:
+        logger.warning("Failed to load tools from skills: %s", e)
+
     # Start workflow worker
     try:
         from src.server.workflow.worker import get_workflow_worker
@@ -1625,6 +1636,54 @@ async def config_compat():
     某些前端或调试工具可能直接请求 /config。
     """
     return await config()
+
+
+@app.get("/api/skills")
+async def get_skills(include_tools: bool = Query(False, description="Include tool names for each skill")):
+    """List all Agent Skills (metadata only). Use ?include_tools=1 to attach tool names per skill."""
+    try:
+        from src.skills import get_skill_registry
+        from src.skills.schemas import SkillMetadataResponse
+
+        reg = get_skill_registry()
+        out = []
+        for m in reg.get_all_metadata():
+            item = SkillMetadataResponse(
+                name=m.name,
+                description=m.description,
+                path=m.path,
+                license=m.license,
+                compatibility=m.compatibility,
+                metadata=m.metadata,
+                tools=reg.get_skill_tools(m.name) if include_tools else None,
+            )
+            out.append(item)
+        return out
+    except Exception as e:
+        logger.exception("Error listing skills: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/skills/{skill_name}/content")
+async def get_skill_content(skill_name: str):
+    """Get full SKILL.md content for a skill (for prompt injection)."""
+    import re
+    if not re.match(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$", skill_name):
+        raise HTTPException(status_code=400, detail="Invalid skill name")
+    try:
+        from src.skills import get_skill_registry
+        from src.skills.schemas import SkillContent
+
+        reg = get_skill_registry()
+        content = reg.load_content(skill_name)
+        if content is None:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        return content
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error loading skill content: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/conversations")

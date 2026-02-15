@@ -1,0 +1,42 @@
+要生成一个5秒的古风美女剑仙御剑飞行的动画视频，由于我无法直接生成视频，但可以为你提供一个较为详细的操作步骤指南，你可以按照这些步骤来完成视频的制作。
+
+### 1. 生成静态图片
+依据 `role_scene.png` 中提供的提示词，使用AI绘画工具生成古风美女剑仙御剑飞行的静态图片。
+
+#### Midjourney
+- 打开Midjourney平台，在输入框中粘贴以下提示词：
+```
+Ancient Chinese style, a beautiful female sword fairy flying on a flying sword. The background is a mountain range surrounded by swirling clouds and mist. The fairy is wearing a long ancient - style dress, looking ethereal. She holds a long sword in her hand and steps on a flying sword, flying rapidly in the air. Her clothes flutter in the wind, and the mist surrounds her. In the style of traditional Chinese ink painting, high - definition, 8k resolution.
+```
+- 等待Midjourney生成图片，选择你满意的图片并下载。
+
+#### StableDiffusion
+- 如果你使用本地部署的StableDiffusion，打开相应的Web UI界面（如Automatic1111）。
+- 在提示词输入框中输入：“古风风格，云雾缭绕的山间，一位身着古风长裙、仙气飘飘的美女剑仙手持长剑，脚踏飞剑在空中快速飞行。她的衣袂随风飘动，周围雾气弥漫，画面呈现传统中国水墨画风格，高清，8k分辨率”。
+- 设置好相关参数（如采样步数、采样方法等），点击生成按钮，生成图片后保存。
+
+### 2. 制作动画
+有多种工具可以将静态图片制作成动画，以下以Adobe After Effects为例：
+
+#### 导入图片
+- 打开Adobe After Effects软件，创建一个新的合成项目。
+- 在项目面板中，右键点击空白处，选择“导入” - “文件”，选择之前生成的静态图片导入。
+
+#### 制作动画
+- 将导入的图片拖到时间轴面板中，调整图片的大小和位置，使其适合合成窗口。
+- 为了模拟剑仙飞行的效果，可以在时间轴上设置关键帧来实现图片的移动和缩放。
+    - 在第0秒处，设置图片的初始位置和大小。
+    - 在第5秒处，移动图片的位置，模拟剑仙飞行的路径，同时可以适当调整图片的缩放比例，增强飞行的动感。
+    - 软件会自动在两个关键帧之间创建过渡动画。
+
+#### 添加特效
+- 为了让画面更具古风氛围和飞行的真实感，可以添加一些特效。
+    - 例如，添加“发光”特效，让剑仙和飞剑周围有光芒闪烁。
+    - 添加“云雾”特效，模拟山间的云雾缭绕效果。
+
+### 3. 导出视频
+- 完成动画制作后，选择“合成” - “添加到渲染队列”。
+- 在渲染队列面板中，设置输出格式（如MP4）、分辨率（8K）等参数。
+- 点击“渲染”按钮，等待视频导出完成。
+
+如果你不熟悉Adobe After Effects，也可以使用一些简单的动画制作软件，如剪映。在剪映中导入静态图片，通过添加关键帧来实现图片的移动和缩放，同样可以制作出简单的动画视频。 

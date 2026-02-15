@@ -72,3 +72,9 @@ BASIC_MODEL:
 #   enable_synthesis: true
 #   literature_focus: true  # 优先使用scholar工具
 #   context_compression: true
+
+# Agent Skills (agentskills.io): skill discovery and tool registration from skill directories
+# skills:
+#   enabled: true
+#   directories:
+#     - skills

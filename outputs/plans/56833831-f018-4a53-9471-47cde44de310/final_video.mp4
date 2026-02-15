@@ -1,0 +1,41 @@
+以下是使用 `ffmpeg` 进行音画合成的步骤及命令：
+
+### 1. 安装 `ffmpeg`
+如果你还没有安装 `ffmpeg`，可以根据你的操作系统进行安装：
+- **Windows**：可以从 [ffmpeg 官方网站](https://ffmpeg.org/download.html) 下载 Windows 版本的 `ffmpeg`，解压后将其 `bin` 目录添加到系统环境变量中。
+- **Linux**：在 Ubuntu 或 Debian 系统中，可以使用以下命令安装：
+```bash
+sudo apt-get install ffmpeg
+```
+在 CentOS 或 RHEL 系统中，可以使用以下命令安装：
+```bash
+sudo yum install ffmpeg
+```
+- **macOS**：可以使用 Homebrew 进行安装：
+```bash
+brew install ffmpeg
+```
+
+### 2. 执行 `ffmpeg` 命令进行音画合成
+打开终端或命令提示符，进入包含 `animation.mp4`、`audio.mp3` 和 `subtitle.srt` 文件的目录，然后执行以下 `ffmpeg` 命令：
+
+```bash
+ffmpeg -i animation.mp4 -i audio.mp3 -i subtitle.srt -c:v copy -c:a aac -c:s mov_text -map 0:v -map 1:a -map 2:s -t 5 -s 1920x1080 output.mp4
+```
+
+### 命令解释：
+- `-i animation.mp4`：指定输入的视频文件为 `animation.mp4`。
+- `-i audio.mp3`：指定输入的音频文件为 `audio.mp3`。
+- `-i subtitle.srt`：指定输入的字幕文件为 `subtitle.srt`。
+- `-c:v copy`：视频流使用复制的方式，不进行重新编码，以保持原视频的画质和编码格式。
+- `-c:a aac`：音频流使用 AAC 编码。
+- `-c:s mov_text`：字幕流使用 `mov_text` 编码。
+- `-map 0:v`：选择第一个输入文件（`animation.mp4`）的视频流。
+- `-map 1:a`：选择第二个输入文件（`audio.mp3`）的音频流。
+- `-map 2:s`：选择第三个输入文件（`subtitle.srt`）的字幕流。
+- `-t 5`：指定输出视频的时长为 5 秒。
+- `-s 1920x1080`：指定输出视频的分辨率为 1920x1080（即 1080p）。
+- `output.mp4`：指定输出的文件名。
+
+### 3. 等待合成完成
+执行命令后，`ffmpeg` 会开始进行音画合成，等待合成完成后，你将在当前目录下得到一个名为 `output.mp4` 的最终视频文件，该视频为 5 秒、1080 分辨率、写实风格的美女剑仙御剑飞行视频。
