@@ -267,6 +267,7 @@ async def _run_executor_agent(
   _required_tool = OUTPUT_EXT_TOOL_MAP.get(_ext) if _ext else None
   required_tool_unrecoverable = False
   already_forced_for_required_tool = False  # 已强制过一次仍无 tool_calls 时不再重复强制，直接失败
+  video_generation_already_called = False  # 每个任务仅允许调用一次视频生成接口，避免多次请求导致服务端内存溢出
 
   for step in range(EXECUTOR_AGENT_MAX_STEPS):
     if hasattr(bound_llm, "ainvoke"):
@@ -345,8 +346,29 @@ async def _run_executor_agent(
           task_id=task_id,
         )
         continue
+      # 每个任务仅允许调用一次视频生成接口，避免多次请求导致服务端内存溢出
+      if name == "video_generation_tool" and video_generation_already_called:
+        skip_msg = "本任务仅允许调用一次视频生成接口，已跳过重复调用。请根据首次调用结果继续，勿再次调用视频生成。"
+        messages.append(ToolMessage(tool_call_id=tid, content=skip_msg))
+        append_plan_log(
+          conn,
+          plan_id,
+          level="warning",
+          event="tool_call",
+          payload={
+            "tool": name,
+            "status": "skipped",
+            "reason": "重复调用",
+            "taskId": str(task_id),
+            "title": "已跳过重复视频生成调用",
+            "bullets": [skip_msg],
+          },
+          task_id=task_id,
+        )
+        continue
       try:
         if name == "video_generation_tool":
+          video_generation_already_called = True
           append_plan_log(
             conn,
             plan_id,
@@ -417,16 +439,19 @@ async def _run_executor_agent(
         if name == "video_generation_tool" and result_str.strip().startswith("DEFERRED_VIDEO_DOWNLOAD|"):
           parts = result_str.strip().split("|")
           if len(parts) >= 7:
+            delay_minutes = int(parts[6])
+            # 延迟下载必须落到计划验收路径 outputs/plans/{plan_id}/{output_relpath}，否则验收会判路径不一致
+            plan_output_path = str(_outputs_root() / str(plan_id) / (output_relpath or ""))
             insert_pending_video_download(
               conn,
               plan_id,
               task_id,
               file_id=parts[1],
-              output_path_abs=parts[2],
+              output_path_abs=plan_output_path,
               base_url=parts[3],
               status_path=parts[4],
               download_path=parts[5],
-              delay_minutes=int(parts[6]),
+              delay_minutes=delay_minutes,
             )
             raise DeferredVideoDownload(plan_id, task_id)
         if name == _required_tool and _is_unrecoverable_tool_error(result_str):
@@ -459,7 +484,8 @@ async def _run_executor_agent(
         action, search_query = await _analyze_tool_failure(name, err_msg, args_preview, model_name)
         content_for_agent = f"执行失败: {e}"
 
-        if action == "retry":
+        if action == "retry" and name != "video_generation_tool":
+          # 视频生成不重试，每个任务仅允许一次请求
           try:
             if hasattr(tool_obj, "ainvoke"):
               result = await tool_obj.ainvoke(args)
@@ -754,6 +780,9 @@ class PlanTaskExecutor:
               raise RuntimeError(
                 f"本任务产出为 {ext}，必须调用 {tool_hint} 并落盘到指定路径；当前未生成文件，验收将不通过。请确保在对话中实际调用该工具。"
               )
+          except DeferredVideoDownload:
+            # 视频已提交、等待延迟下载；必须原样抛出，由 worker 设为 awaiting_download，不得 fallback 成 LLM 写文件或标记任务完成
+            raise
           except Exception as e:
             # 产出为 .mp4/.png 等时不允许用 LLM 文本落盘，直接失败
             if "必须调用" in str(e) and "并落盘" in str(e):

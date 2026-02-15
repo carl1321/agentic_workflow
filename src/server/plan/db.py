@@ -319,6 +319,28 @@ def has_plan_work(conn: psycopg.Connection) -> bool:
     return cursor.fetchone() is not None
 
 
+def has_acquirable_work(conn: psycopg.Connection) -> bool:
+  """
+  是否存在本轮可执行的工作：到期的长耗时任务下载，或已到期的 ready 任务。
+  用于 tick 早退：仅有“等待中”任务（如 awaiting_download、scheduled_at 在未来）时直接返回，不执行。
+  """
+  try:
+    rows = list_pending_video_downloads_ready(conn)
+    if rows:
+      return True
+  except Exception:
+    pass
+  with conn.cursor() as cursor:
+    cursor.execute(
+      """
+      SELECT 1 FROM agent_plan_tasks
+      WHERE status = 'ready' AND (scheduled_at IS NULL OR scheduled_at <= NOW())
+      LIMIT 1
+      """
+    )
+    return cursor.fetchone() is not None
+
+
 def get_task(conn: psycopg.Connection, task_id: UUID) -> Optional[Dict[str, Any]]:
   with conn.cursor() as cursor:
     cursor.execute("SELECT * FROM agent_plan_tasks WHERE id = %s LIMIT 1", (task_id,))
@@ -345,6 +367,50 @@ def get_task_by_idempotency_key(
   return dict(row) if row else None
 
 
+# 常见产出后缀，用于「depends_on 写任务名（如 分镜可视化）时」匹配 idempotency_key（如 分镜可视化.pptx）
+_DEP_KEY_SUFFIXES = (".pptx", ".ppt", ".md", ".json", ".mp4", ".srt", ".txt")
+
+
+def get_succeeded_dep_task(
+  conn: psycopg.Connection,
+  plan_id: UUID,
+  key: str,
+) -> Optional[Dict[str, Any]]:
+  """
+  按依赖 key 查找已成功的任务。
+  - 先精确匹配 idempotency_key；
+  - 若无则尝试 key + 常见后缀（如 分镜可视化 -> 分镜可视化.pptx）；
+  - 若 key 本身带后缀（如 分镜可视化.ppt）而库里是 .pptx，则剥掉 key 的后缀再试各后缀（分镜可视化.ppt -> 分镜可视化 -> 分镜可视化.pptx）。
+  """
+  key = (key or "").strip()
+  if not key:
+    return None
+  t = get_task_by_idempotency_key(conn, plan_id, key)
+  if t and (t.get("status") or "").lower() == "succeeded":
+    return t
+  # key 无后缀或加后缀
+  for ext in _DEP_KEY_SUFFIXES:
+    if key.endswith(ext):
+      continue
+    t = get_task_by_idempotency_key(conn, plan_id, key + ext)
+    if t and (t.get("status") or "").lower() == "succeeded":
+      return t
+  # key 已带后缀但和库里不一致（如 depends_on 写 分镜可视化.ppt，库里是 分镜可视化.pptx）
+  for ext in _DEP_KEY_SUFFIXES:
+    if not key.endswith(ext):
+      continue
+    base = key[: -len(ext)]
+    if not base:
+      continue
+    for other in _DEP_KEY_SUFFIXES:
+      if other == ext:
+        continue
+      t = get_task_by_idempotency_key(conn, plan_id, base + other)
+      if t and (t.get("status") or "").lower() == "succeeded":
+        return t
+  return None
+
+
 def update_task_status(
   conn: psycopg.Connection,
   task_id: UUID,
@@ -353,6 +419,7 @@ def update_task_status(
   started_at: Optional[datetime] = None,
   finished_at: Optional[datetime] = None,
   error: Optional[Dict[str, Any]] = None,
+  scheduled_at: Optional[datetime] = None,
 ) -> bool:
   updates: List[str] = ["status = %s", "updated_at = NOW()"]
   params: List[Any] = [status]
@@ -365,9 +432,24 @@ def update_task_status(
   if error is not None:
     updates.append("error = %s")
     params.append(json.dumps(error, ensure_ascii=False))
+  if scheduled_at is not None:
+    updates.append("scheduled_at = %s")
+    params.append(scheduled_at)
   params.append(task_id)
   with conn.cursor() as cursor:
     cursor.execute(f"UPDATE agent_plan_tasks SET {', '.join(updates)} WHERE id = %s", tuple(params))
+    ok = cursor.rowcount > 0
+  conn.commit()
+  return ok
+
+
+def set_task_scheduled_at(conn: psycopg.Connection, task_id: UUID, scheduled_at: Optional[datetime]) -> bool:
+  """仅更新任务的 scheduled_at，用于「依赖视频任务的下游至少延迟 N 分钟执行」。"""
+  with conn.cursor() as cursor:
+    cursor.execute(
+      "UPDATE agent_plan_tasks SET scheduled_at = %s, updated_at = NOW() WHERE id = %s",
+      (scheduled_at, task_id),
+    )
     ok = cursor.rowcount > 0
   conn.commit()
   return ok
@@ -508,7 +590,7 @@ def acquire_next_task(conn: psycopg.Connection) -> Optional[Dict[str, Any]]:
   获取一个可执行的 task，并使用 SKIP LOCKED 避免并发冲突。
   约束：
   - 仅领取 status='ready' 且 scheduled_at 已到期（或为空）的任务
-  - 同一个 plan 仅允许同时运行一个 task（串行）
+  - 同一 plan 内仅当存在 status='running' 时阻塞该 plan 的其他任务；awaiting_download 不阻塞，故只有互相依赖的任务会受“等待视频”影响，其他任务可照常被领取
   """
   with conn.transaction():
     with conn.cursor() as cursor:
@@ -609,7 +691,8 @@ def list_pending_video_downloads_ready(conn: psycopg.Connection) -> List[Dict[st
   with conn.cursor() as cursor:
     cursor.execute(
       """
-      SELECT id, plan_id, task_id, file_id, output_path_abs, base_url, status_path, download_path
+      SELECT id, plan_id, task_id, file_id, output_path_abs, base_url, status_path, download_path,
+             submitted_at, delay_minutes
       FROM agent_plan_pending_video_downloads
       WHERE submitted_at + (delay_minutes || ' minutes')::interval <= NOW()
       ORDER BY submitted_at ASC

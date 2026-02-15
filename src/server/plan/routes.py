@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from src.server.auth.dependencies import CurrentUser, get_current_user_optional
 from src.server.plan import coordinator, planner
 from src.server.plan import spec as plan_spec
+from src.server.plan.worker import get_plan_scheduler
 from src.server.plan.db import (
   append_plan_log,
   append_plan_message,
@@ -152,6 +153,7 @@ async def _auto_finalize_and_run(
         "bullets": ["任务将按依赖顺序依次执行，请查看下方实时日志。"],
       },
     )
+    get_plan_scheduler().trigger_tick()
 
 
 async def _run_initial_clarify(
@@ -540,6 +542,7 @@ async def finalize_plan_endpoint(
     created = create_tasks(conn, plan_uuid, tasks)
     update_plan(conn, plan_uuid, user_id=current_user.id if current_user else None, status="active", ora_spec=ora_spec, spec_version_inc=True)
     append_plan_log(conn, plan_uuid, level="info", event="plan_finalized", payload={"tasksCreated": created})
+    get_plan_scheduler().trigger_tick()
 
     return FinalizeResponse(planId=plan_id, tasksCreated=created)
   finally:
@@ -572,8 +575,7 @@ async def run_plan_endpoint(
         "bullets": ["任务将按依赖顺序依次执行，请查看下方实时日志。"],
       },
     )
-
-    # 调度器在 executor-worker todo 中接入；这里先仅更新状态即可
+    get_plan_scheduler().trigger_tick()
     return RunResponse(planId=plan_id, status="running")
   finally:
     conn.close()
@@ -617,6 +619,7 @@ async def restart_plan_endpoint(
         "bullets": [message],
       },
     )
+    get_plan_scheduler().trigger_tick()
     return RestartResponse(
       planId=plan_id,
       status="running",
@@ -838,6 +841,7 @@ async def send_plan_message_endpoint(
             "bullets": [f"已创建 {created} 个任务，将按依赖顺序自动执行。", "你可以在下方查看实时日志与产物。"],
           },
         )
+        get_plan_scheduler().trigger_tick()
         assistant_content = f"澄清完成：我已经为你生成了 {created} 个任务，并已开始自动执行。你可以在右侧查看实时日志与产物。"
     else:
       # 非澄清阶段：先由大模型读用户消息并判断意图，再决定是否变更任务（重跑指定任务、继续未完成、或仅记录）
@@ -869,6 +873,7 @@ async def send_plan_message_endpoint(
                 "bullets": [f"将重跑 {count} 个任务（含下游依赖），调度器会按顺序执行。"],
               },
             )
+            get_plan_scheduler().trigger_tick()
             assistant_content = f"已按你的要求安排重跑（共 {count} 个任务），调度器将按顺序执行。你可以在右侧查看实时日志与产物。"
           else:
             assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)
@@ -897,6 +902,7 @@ async def send_plan_message_endpoint(
                   "bullets": [f"将重跑 {count} 个未完成/失败的任务，调度器会按依赖顺序执行。"],
                 },
               )
+              get_plan_scheduler().trigger_tick()
               assistant_content = f"已触发继续执行，将重跑 {count} 个未完成/失败的任务；调度器会按顺序执行，你可以在右侧查看实时日志与产物。"
             else:
               assistant_content = _build_plan_continuation_reply(conn, plan_uuid, user_content)

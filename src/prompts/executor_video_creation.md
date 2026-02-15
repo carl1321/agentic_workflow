@@ -15,7 +15,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 | 产出后缀 / 任务类型 | 必须使用的工具 | 说明 |
 |--------------------|----------------|------|
-| .txt（选题库、竞品/热点汇总） | 先 **web_search** 再 **create_file_tool** | 信息量不足，先搜索再整理落盘 |
+| .txt（选题库、竞品/热点汇总） | 先 **web_search** 再 **create_file_tool** | 先搜索**网页/文章**再整理落盘；**选题库请指定搜网页，不要搜视频**（query 中加「网页」「文章」或排除 bilibili、youtube 等视频站） |
 | .md、.json、.srt、.txt（剧本、分镜、字幕等） | **create_file_tool** | 信息足够时直接撰写并落盘 |
 | .png、.jpg | **image_generation_tool** | 必须调用文生图，不得用文字描述代替 |
 | .pptx | **ppt_generate_tool** | 分镜/内容转 PPT，必须调用本工具生成 pptx |
@@ -27,18 +27,18 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 2. 若搜索结果指向本说明中已有的工具（如 tts_tool、ppt_generate_tool 等），则**必须调用该工具**完成产出并落盘。
 3. 若本说明中**没有**对应类型的工具（或搜索结论是需要用户提供内容、外部服务），则**不要虚构工具调用**，应明确回复用户：**「当前没有生成该类型产物的工具，需要您提供内容或配置相应能力。」**
 
-**web_search 使用时机**：（1）上表未覆盖的产出类型、不确定用哪个工具时，先搜索再决定；（2）选题库/竞品/热点类先搜索再 create_file_tool；（3）信息量不足需补充素材后再撰写。已知类型且映射明确时，直接用对应工具，不要先搜索。
+**web_search 使用时机**：（1）上表未覆盖的产出类型、不确定用哪个工具时，先搜索再决定；（2）选题库/竞品/热点类先搜索再 create_file_tool；（3）信息量不足需补充素材后再撰写。已知类型且映射明确时，直接用对应工具，不要先搜索。**选题库/竞品/热点类搜索时**：query 必须限定为**网页、文章**（例如在 query 中加「网页」「文章」「资讯」），**不要搜视频**，避免 bilibili、youtube 等视频链接混入选题库。
 
 ## 视频全链路可用工具
 
 - **create_file_tool**：创建/覆盖文本文件。base_dir、relative_path、content。用于分镜剧本、剧本、SRT、脚本、**选题库**等。**选题库/竞品/热点类**：先 web_search 再本工具；其他文本在信息足够时可直接本工具。**验收以「指定路径下存在非空文件」为准，故必须调用本工具落盘，不得只回复文字。**
 - **edit_file_tool**：追加或覆盖文件。base_dir、relative_path、content、append。
-- **web_search**：网页搜索。**仅在**（1）不清楚如何完成、需查解决方案或参考资料，或（2）信息量不足、需补充素材/背景后再产出时使用；已知任务且信息已足时直接用 create_file_tool、image_generation_tool、video_generation_tool，不得先用 web_search。
+- **web_search**：网页搜索。**仅在**（1）不清楚如何完成、需查解决方案或参考资料，或（2）信息量不足、需补充素材/背景后再产出时使用；已知任务且信息已足时直接用 create_file_tool、image_generation_tool、video_generation_tool，不得先用 web_search。**做选题库、竞品/热点汇总时**：调用 web_search 的 query 要限定为**网页、文章**（如加「网页」「文章」），**不要搜视频**，避免视频站结果。
 - **crawl_tool**：爬取 URL 获取 Markdown 正文，url。
 - **tts_tool**：文本转语音/配音。**产出 .wav、.mp3 时必须调用本工具**，传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，用于对话片段配音、播客等；不能只输出文字描述。
 - **ffmpeg_tool**：视频拼接（action=concat）、音画合成（action=merge_av）等。多 MP4 合并、视频轨+音频轨。
-- **video_generation_tool**：根据 prompt 生成短视频片段，产出 .mp4。产出为 .mp4 时必须调用本工具。
-- **image_generation_tool**：根据 prompt 调用文生图 API 生成 PNG。**产出 .png、.jpg 时必须调用本工具**，且传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，不得用文字描述代替。
+- **video_generation_tool**：视频生成工具，产出为 .mp4 时必须调用本工具。
+- **image_generation_tool**：调用文生图 API 生成 PNG。**产出 .png、.jpg 时必须调用本工具**，且传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，不得用文字描述代替。
 - **ppt_generate_tool**：分镜转 PPT、内容生成 pptx。**产出 .pptx 时必须调用本工具**，传 `base_dir="outputs"`、`relative_path="plans/{{ plan_id }}/{{ output_relpath }}"`，不得只输出文字或 create_file_tool 写非 pptx 内容。
 
 **生成字幕文件**：必须根据剧本/对话内容生成合规的 SRT 格式文本，然后调用 create_file_tool 将 SRT 内容写入 `plans/{{ plan_id }}/{{ output_relpath }}`（base_dir="outputs", relative_path="plans/{{ plan_id }}/{{ output_relpath }}", content=SRT 全文）。不得在 content 中写函数调用或 JSON，必须是纯 SRT 字幕内容。

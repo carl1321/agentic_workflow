@@ -220,3 +220,4 @@ dmypy.json
 .pyre/
 .pytype/
 cython_debug/
+temp/

@@ -192,7 +192,7 @@ def video_generation_tool(
             out_dir = cfg.get("output_dir") or DEFAULT_VIDEO_OUTPUT_DIR
             out_rel = save_relative_path or f"{file_id}.mp4"
             out_path = root / out_dir / out_rel
-            delay_minutes = int(cfg.get("deferred_download_minutes", 0))
+            delay_minutes = int(cfg.get("deferred_download_minutes", 30))
             if delay_minutes > 0:
                 # 延迟下载：由调度器在 N 分钟后检查并下载，返回约定格式供 executor 写入待下载表
                 return (

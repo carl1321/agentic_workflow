@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import logging
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -193,7 +194,11 @@ class EdgeTTS:
                 with open(tmp_mp3, "rb") as f:
                     audio_bytes = f.read()
                 if encoding.lower() == "wav":
-                    # 用 ffmpeg 转 mp3 -> wav
+                    # 用 ffmpeg 转 mp3 -> wav；未安装 ffmpeg 时给出明确提示
+                    if not shutil.which("ffmpeg"):
+                        raise FileNotFoundError(
+                            "请求 WAV 格式需要系统安装 ffmpeg 并加入 PATH。请安装 ffmpeg（如 brew install ffmpeg）或改用 encoding=mp3。"
+                        )
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wf:
                         tmp_wav = wf.name
                     try:
@@ -208,6 +213,10 @@ class EdgeTTS:
                                 audio_bytes = f.read()
                         else:
                             logger.warning("ffmpeg mp3->wav failed, using mp3: %s", r.stderr)
+                    except FileNotFoundError:
+                        raise FileNotFoundError(
+                            "请求 WAV 格式需要系统安装 ffmpeg 并加入 PATH。请安装 ffmpeg（如 brew install ffmpeg）或改用 encoding=mp3。"
+                        )
                     finally:
                         Path(tmp_wav).unlink(missing_ok=True)
                 return {"success": True, "audio_data": base64.b64encode(audio_bytes).decode(), "error": None}

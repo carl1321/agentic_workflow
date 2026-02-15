@@ -90,7 +90,8 @@ BASIC_MODEL:
 #   max_wait: 600
 #   timeout: 60
 #   output_dir: "temp/video_generations"
-#   deferred_download_minutes: 30  # 提交后延迟 N 分钟再检查并下载（0 表示立即轮询）
+#   deferred_download_minutes: 30   # 提交后延迟 N 分钟再检查状态并下载、验收（视频生成约需 30 分钟，默认 30）
+#   downstream_delay_minutes: 30   # 依赖本视频任务的下游任务，至少在本任务开始后 N 分钟才允许执行（默认 30）
 # 兼容旧配置：也可用 url + status_url（完整 URL）
 
 # 文本转语音 TTS 配置

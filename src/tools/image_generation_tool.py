@@ -50,16 +50,19 @@ def _call_image_api(
     num_inference_steps: int = 9,
     seed: int = 42,
     timeout: int = 120,
+    path: Optional[str] = None,
 ) -> Tuple[bool, Optional[bytes], Optional[str]]:
     """
     同步请求文生图 API，返回 (成功, 图片二进制, 错误信息)。
     对 5xx 及连接/超时错误进行最多 3 次重试，重试前有退避等待。
     API 响应为 PNG 二进制（Content-Type: image/png）。
+    path: 请求路径，如 /image/generations；默认 /v1/images/generations。
     """
     import requests
 
     base = _normalize_base_url(base_url)
-    url = f"{base}/v1/images/generations"
+    endpoint = (path or "").strip() or "/v1/images/generations"
+    url = f"{base}{endpoint}" if endpoint.startswith("/") else f"{base}/{endpoint}"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -143,6 +146,7 @@ def image_generation_tool(
         num_inference_steps=num_inference_steps,
         seed=seed,
         timeout=timeout,
+        path=cfg.get("path"),
     )
     if not ok or content is None:
         return f"请求失败: {err or '未返回图片数据'}"
