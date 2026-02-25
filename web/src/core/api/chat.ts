@@ -13,6 +13,49 @@ import { useAuthStore } from "../store/auth-store";
 import { resolveServiceURL } from "./resolve-service-url";
 import type { ChatEvent } from "./types";
 
+/**
+ * VASP agent stream: POST /api/chat/vasp-stream with messages, same SSE events as main chat.
+ */
+export async function* vaspStream(
+  messages: Array<{ role: string; content: string }>,
+  params: { thread_id?: string | null },
+  options: { abortSignal?: AbortSignal } = {},
+): AsyncIterable<ChatEvent> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-cache",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  try {
+    const stream = fetchStream(resolveServiceURL("chat/vasp-stream"), {
+      headers,
+      body: JSON.stringify({
+        messages,
+        thread_id: params.thread_id ?? undefined,
+      }),
+      signal: options.abortSignal,
+    });
+    for await (const event of stream) {
+      yield {
+        type: event.event,
+        data: JSON.parse(event.data),
+      } as ChatEvent;
+    }
+  } catch (e) {
+    console.error("vaspStream error:", e);
+    yield {
+      type: "error",
+      data: {
+        thread_id: params.thread_id ?? "",
+        error: e instanceof Error ? e.message : String(e),
+      },
+    } as ChatEvent & { type: "error" };
+  }
+}
+
 export async function* chatStream(
   userMessage: string,
   params: {

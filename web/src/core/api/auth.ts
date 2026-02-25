@@ -94,4 +94,42 @@ export async function fetchCurrentUser(token: string): Promise<UserInfo> {
   );
 }
 
+/** 获取 Casdoor 授权 URL，用于前端跳转 */
+export async function getCasdoorLoginUrl(
+  redirectUri: string,
+  state?: string,
+): Promise<{ url: string }> {
+  const params = new URLSearchParams({ redirect_uri: redirectUri });
+  if (state) params.set("state", state);
+  const url = resolveServiceURL("auth/casdoor/login") + "?" + params.toString();
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `获取 Casdoor 登录地址失败: ${res.status}`);
+  }
+  return res.json();
+}
+
+/** Casdoor 回调：用 code 换 token，返回与 login() 相同的 LoginResponse */
+export async function casdoorCallback(
+  code: string,
+  state?: string | null,
+  redirectUri?: string | null,
+): Promise<LoginResponse> {
+  const url = resolveServiceURL("auth/casdoor/callback");
+  const body: { code: string; state?: string; redirect_uri?: string } = { code };
+  if (state) body.state = state;
+  if (redirectUri) body.redirect_uri = redirectUri;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Casdoor 登录失败: ${res.status}`);
+  }
+  return res.json();
+}
+
 

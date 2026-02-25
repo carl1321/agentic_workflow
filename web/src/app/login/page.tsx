@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { useAuthStore } from "~/core/store/auth-store";
+import { getCasdoorLoginUrl } from "~/core/api/auth";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
@@ -19,6 +20,7 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [casdoorLoading, setCasdoorLoading] = useState(false);
 
   // 如果已经登录，直接跳转（放在 effect 里，避免在 render 期间触发路由更新）
   useEffect(() => {
@@ -96,6 +98,38 @@ export default function LoginPage() {
             disabled={loading}
           >
             {loading ? "登录中..." : "登录"}
+          </Button>
+
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-slate-600" />
+            </div>
+            <div className="relative flex justify-center text-xs text-slate-500">
+              <span className="bg-slate-950/80 px-2">或</span>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+            disabled={casdoorLoading || loading}
+            onClick={async () => {
+              setLocalError(null);
+              setCasdoorLoading(true);
+              try {
+                const origin = typeof window !== "undefined" ? window.location.origin : "";
+                const redirectUri = `${origin}/login/callback`;
+                const { url } = await getCasdoorLoginUrl(redirectUri, redirect);
+                window.location.href = url;
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : "获取 Casdoor 登录地址失败";
+                setLocalError(msg);
+                setCasdoorLoading(false);
+              }
+            }}
+          >
+            {casdoorLoading ? "跳转中…" : "使用 Casdoor 登录"}
           </Button>
         </form>
       </div>

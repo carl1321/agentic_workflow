@@ -302,8 +302,8 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
           工作流
         </Button>
 
-        {/* 扩展菜单（由后端配置驱动，如我的文库） */}
-        {extensionMenus.map((menu) => {
+        {/* 扩展菜单（由后端配置驱动，如我的文库）；VASP 工作流菜单已隐藏 */}
+        {extensionMenus.filter((menu) => menu.code !== "vasp-workflow").map((menu) => {
           const IconComponent = menu.icon ? iconMap[menu.icon] : Library;
           const isActive = pathname === "/chat" && searchParams.get("view") === menu.code;
           return (

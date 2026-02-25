@@ -13,7 +13,13 @@ export interface Message {
     | "researcher"
     | "coder"
     | "reporter"
-    | "podcast";
+    | "podcast"
+    | "agent"
+    | "vasp_agent"
+    | "common_reporter"
+    | "literature_planner"
+    | "literature_researcher"
+    | "literature_answerer";
   role: MessageRole;
   isStreaming?: boolean;
   content: string;
