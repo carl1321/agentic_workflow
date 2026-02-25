@@ -1,0 +1,94 @@
+{
+  "name": "Zotero 文献检索与分析",
+  "description": "示例工作流：搜索 Zotero 文献、获取详情、LLM 分析",
+  "graph": {
+    "nodes": [
+      {
+        "id": "start1",
+        "type": "start",
+        "position": { "x": 0, "y": 0 },
+        "data": {
+          "label": "开始",
+          "taskName": "start",
+          "displayName": "开始",
+          "startInputInfo": "输入搜索关键词，例如：machine learning"
+        }
+      },
+      {
+        "id": "tool_search",
+        "type": "tool",
+        "position": { "x": 200, "y": 0 },
+        "data": {
+          "label": "Zotero 搜索",
+          "taskName": "tool",
+          "displayName": "Zotero 搜索",
+          "toolName": "zotero_literature_tool",
+          "toolParams": {
+            "action": "search",
+            "query": "{{start1.input}}",
+            "limit": 10
+          }
+        }
+      },
+      {
+        "id": "llm1",
+        "type": "llm",
+        "position": { "x": 400, "y": 0 },
+        "data": {
+          "label": "选取文献",
+          "taskName": "LLM",
+          "displayName": "选取文献",
+          "llmPrompt": "从以下 Zotero 搜索结果 JSON 中，选取第一项文献的 key 值，直接输出该 key，不要其他内容。\n\n{{tool_search.output}}"
+        }
+      },
+      {
+        "id": "tool_detail",
+        "type": "tool",
+        "position": { "x": 600, "y": 0 },
+        "data": {
+          "label": "获取详情",
+          "taskName": "tool",
+          "displayName": "获取详情",
+          "toolName": "zotero_literature_tool",
+          "toolParams": {
+            "action": "get_detail",
+            "item_key": "{{llm1.output}}"
+          }
+        }
+      },
+      {
+        "id": "tool_analyze",
+        "type": "tool",
+        "position": { "x": 800, "y": 0 },
+        "data": {
+          "label": "文献分析",
+          "taskName": "tool",
+          "displayName": "文献分析",
+          "toolName": "zotero_literature_tool",
+          "toolParams": {
+            "action": "analyze",
+            "item_keys": "{{llm1.output}}",
+            "analysis_type": "summary"
+          }
+        }
+      },
+      {
+        "id": "end1",
+        "type": "end",
+        "position": { "x": 1000, "y": 0 },
+        "data": {
+          "label": "结束",
+          "taskName": "end",
+          "displayName": "结束"
+        }
+      }
+    ],
+    "edges": [
+      { "id": "e1", "source": "start1", "target": "tool_search" },
+      { "id": "e2", "source": "tool_search", "target": "llm1" },
+      { "id": "e3", "source": "llm1", "target": "tool_detail" },
+      { "id": "e4", "source": "tool_detail", "target": "tool_analyze" },
+      { "id": "e5", "source": "tool_analyze", "target": "end1" }
+    ]
+  }
+}

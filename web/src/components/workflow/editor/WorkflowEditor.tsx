@@ -36,6 +36,7 @@ import { NodePalette } from "./NodePalette";
 import { nanoid } from "nanoid";
 import { useRouter } from "next/navigation";
 import { createRelease, createWorkflow, getDraft, getWorkflow, listWorkflows, saveDraft, executeWorkflowStream, getRunStatus, getWorkflowRuns, type WorkflowExecutionEvent } from "~/core/api/workflow";
+import { sha256Hex } from "~/core/utils/crypto";
 import { toast } from "sonner";
 
 // 参考 szlabAgent 的 LOOP_PADDING 常量
@@ -807,14 +808,7 @@ function WorkflowEditorInner({
 
       // 5. 计算校验和（简单使用 JSON 字符串的哈希）
       const specString = JSON.stringify(spec);
-      const checksum = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(specString)
-      ).then((hash) => {
-        return Array.from(new Uint8Array(hash))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-      });
+      const checksum = await sha256Hex(specString);
 
       // 6. 创建发布版本
       const release = await createRelease(workflowId, {

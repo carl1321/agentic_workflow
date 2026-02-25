@@ -4,7 +4,7 @@
 "use client";
 
 import { useMemo, useState, useEffect, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 
 import { useStore } from "~/core/store";
 import { cn } from "~/lib/utils";
@@ -22,13 +22,16 @@ import { KnowledgeBaseDetail } from "./components/knowledge-base-detail";
 import { ToolExecutor } from "./components/tool-executor";
 import { WorkflowList } from "./components/workflow-list";
 import { WorkflowsPage } from "./components/workflows-page";
+import { LibraryPage } from "./components/library-page";
+import { VaspWorkflowPage } from "./components/vasp-workflow-page";
 import type { ToolConfig } from "~/core/config/tools";
 import type { Resource } from "~/core/messages";
 
-type ViewMode = "chat" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor" | "workflow";
+type ViewMode = "chat" | "toolbox" | "knowledge" | "knowledge-detail" | "tool-executor" | "workflow" | "library" | "vasp-workflow";
 
 export default function Main() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { token } = useAuthStore();
   const openResearchId = useStore((state) => state.openResearchId);
   const threadId = useStore((state) => state.threadId);
@@ -51,7 +54,7 @@ export default function Main() {
   // 从 URL 参数中读取 view 参数，设置初始视图模式
   useEffect(() => {
     const viewParam = searchParams.get("view");
-    if (viewParam && ["chat", "toolbox", "knowledge", "knowledge-detail", "tool-executor", "workflow"].includes(viewParam)) {
+    if (viewParam && ["chat", "toolbox", "knowledge", "knowledge-detail", "tool-executor", "workflow", "library", "vasp-workflow"].includes(viewParam)) {
       setViewMode(viewParam as ViewMode);
     }
   }, [searchParams]);
@@ -485,17 +488,20 @@ export default function Main() {
   };
 
   const handleOpenToolbox = () => {
+    router.push("/chat?view=toolbox");
     setViewMode("toolbox");
     setSelectedTool(null);
   };
 
   const handleOpenKnowledgeBase = () => {
+    router.push("/chat?view=knowledge");
     setViewMode("knowledge");
     setSelectedTool(null);
     setSelectedResource(null);
   };
 
   const handleOpenWorkflow = () => {
+    router.push("/chat?view=workflow");
     setViewMode("workflow");
     setSelectedTool(null);
     setSelectedResource(null);
@@ -544,6 +550,7 @@ export default function Main() {
         onOpenToolbox={handleOpenToolbox}
         onOpenKnowledgeBase={handleOpenKnowledgeBase}
         onOpenWorkflow={handleOpenWorkflow}
+        onOpenExtensionMenu={(view) => setViewMode(view as ViewMode)}
       />
       
       <div className="flex flex-1 h-full flex-col overflow-visible">
@@ -612,6 +619,18 @@ export default function Main() {
         {viewMode === "workflow" && (
           <div className="flex-1 overflow-hidden">
             <WorkflowsPage />
+          </div>
+        )}
+
+        {viewMode === "library" && (
+          <div className="flex-1 overflow-hidden">
+            <LibraryPage />
+          </div>
+        )}
+
+        {viewMode === "vasp-workflow" && (
+          <div className="flex-1 overflow-hidden">
+            <VaspWorkflowPage />
           </div>
         )}
       </div>

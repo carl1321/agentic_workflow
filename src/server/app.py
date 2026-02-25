@@ -1638,6 +1638,43 @@ async def config_compat():
     return await config()
 
 
+@app.get("/api/chat/extension-menus")
+async def get_extension_menus():
+    """
+    Get extension menus driven by backend config (e.g. Zotero, VASP).
+    When ZOTERO is enabled with library_id and api_key configured, returns 我的文库 menu.
+    """
+    menus = []
+    try:
+        from src.config.loader import load_yaml_config
+        config = load_yaml_config("conf.yaml") or {}
+        zotero = config.get("ZOTERO") or {}
+        if isinstance(zotero, dict):
+            enabled = zotero.get("enabled", False)
+            library_id = (zotero.get("library_id") or "").strip()
+            api_key = (zotero.get("api_key") or "").strip()
+            if enabled and library_id and api_key:
+                menus.append({
+                    "code": "library",
+                    "name": "我的文库",
+                    "path": "/chat?view=library",
+                    "icon": "Library",
+                })
+        vasp_workflow = config.get("VASP_WORKFLOW") or {}
+        if isinstance(vasp_workflow, dict):
+            enabled = vasp_workflow.get("enabled", False)
+            if enabled:
+                menus.append({
+                    "code": "vasp-workflow",
+                    "name": "VASP 工作流",
+                    "path": "/chat?view=vasp-workflow",
+                    "icon": "Workflow",
+                })
+    except Exception as e:
+        logger.warning("Failed to load extension menus: %s", e)
+    return menus
+
+
 @app.get("/api/skills")
 async def get_skills(include_tools: bool = Query(False, description="Include tool names for each skill")):
     """List all Agent Skills (metadata only). Use ?include_tools=1 to attach tool names per skill."""
@@ -1881,10 +1918,13 @@ async def execute_tool(request: ToolExecuteRequest):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: tool.invoke(mapped_args))
         
+        result_str = str(result) if result is not None else ""
         logger.info(f"=== TOOL EXECUTION END ===")
-        logger.info(f"Tool '{request.tool_name}' executed successfully")
+        logger.info(f"Tool '{request.tool_name}' executed successfully, result length=%d", len(result_str))
+        if request.tool_name == "zotero_literature_tool" and result_str:
+            logger.info("Zotero result preview: %s...", (result_str[:300] + "..." if len(result_str) > 300 else result_str))
         logger.info(f"=== TOOL EXECUTION END ===")
-        return ToolExecuteResponse(result=str(result))
+        return ToolExecuteResponse(result=result_str)
         
     except HTTPException:
         raise

@@ -1,0 +1,67 @@
+# 全局设置
+#
+# 目的：
+#   集中管理项目的全局配置，包括路径、数据库连接、功能开关等。
+
+version: "1.0"
+
+# 路径配置
+paths:
+  vasp_pp_path: "${VASP_PP_PATH}"  # 从环境变量读取
+  knowledge_base: "./src/vasp_potcar_skill/knowledge"
+  user_history: "~/.vasp-potcar-skill/history.json"
+
+# MongoDB配置
+mongodb:
+  uri: "${MONGO_URI:mongodb://localhost:27017}"
+  database: "${MONGO_DB:vasp_structures}"
+  collection: "calculations"
+
+# 功能开关
+features:
+  context_analysis: true      # 是否分析同目录文件
+  feedback_collection: true   # 是否收集反馈
+  auto_validation: true       # 是否自动验证生成的POTCAR
+  user_history: true          # 是否记录用户历史
+
+# 验证配置
+validation:
+  check_element_order: true
+  check_encut_coverage: true
+  check_functional_consistency: true
+  warn_on_failure: true       # 验证失败时警告而非阻止
+
+# 外部API配置
+external_apis:
+  materials_project:
+    enabled: true
+    api_key: "toaZvyOlKuO1XKoMXwhoVxctF8MJMUUk"  # Materials Project API密钥
+    base_url: "https://api.materialsproject.org"
+    timeout: 30
+    max_results: 50
+    cache_ttl: 86400          # 缓存24小时
+
+  aflow:
+    enabled: false            # 暂未实现，默认关闭
+    base_url: "http://aflowlib.org"
+    timeout: 30
+    max_results: 30
+
+  oqmd:
+    enabled: false            # 暂未实现，默认关闭
+    base_url: "https://oqmd.org/oqmdapi"
+    timeout: 30
+    max_results: 30
+
+  # 数据源权重配置（用于聚合多个数据源的结果）
+  weights:
+    materials_project: 1.0    # Materials Project权重最高
+    aflow: 0.8
+    oqmd: 0.7
+
+# 缓存配置
+cache:
+  enabled: true
+  backend: "file"             # file 或 redis
+  path: "~/.vasp-potcar-skill/cache"
+  ttl: 86400                  # 默认缓存时间（秒）

@@ -1,0 +1,32 @@
+# VASPilot Configuration - wenliyang@cancon.hpccube.com
+#
+# SSH connection to HPC cluster
+ssh:
+  host: cancon.hpccube.com
+  username: wenliyang
+  port: 65023
+  key_path: /home/zxw/workspace/AgenticWorkflow/skills/vaspilot-skill/configs/wenliyang_cancon.hpccube.com_RsaKeyExpireTime_2026-05-25_16-04-32.txt
+
+# HPC environment settings
+hpc:
+  work_dir: /public/home/wenliyang/vaspilot
+  potcar_dir: /public/home/wenliyang/atomate/potcar_ori/POT_GGA_PAW_PBE_54
+  vasp_bin: /public/home/wenliyang/softwares/vasp.6.3.0/bin
+  vasp_command: vasp_std
+  # 用 mpirun 启动（Intel MPI 与 srun/PMI 不兼容时会报 PMI_KVS_Get -1 / MPI_Init failed，需改为 mpirun）
+  run_style: mpirun
+  # 若集群 module 与默认不同，在此填写，例如: ["intel/2019", "openmpi"]
+  # modules: []
+
+# Slurm job settings
+slurm:
+  partition: kshcnormal
+  nodes: 1
+  ntasks: 32
+  time: "48:00:00"
+
+# Local settings
+local_work_dir: D:/code/vaspilot-skill/work
+
+# Materials Project API key (optional)
+mp_api_key: null

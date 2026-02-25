@@ -1,0 +1,34 @@
+# VASPilot Configuration Template
+# Copy to ~/.vaspilot/config.yaml and customize
+
+# SSH connection to HPC cluster
+ssh:
+  host: your.hpc.cluster.com
+  username: your_username
+  port: 22
+  key_path: ~/.ssh/id_rsa
+  # password: your_password  # Alternative to key_path
+
+# HPC environment settings
+hpc:
+  work_dir: /scratch/username/vaspilot
+  potcar_dir: /path/to/potpaw_PBE
+  vasp_bin: /path/to/vasp/bin
+  vasp_command: vasp_std
+
+# Slurm job settings
+slurm:
+  partition: normal
+  nodes: 1
+  ntasks: 32
+  time: "48:00:00"
+
+# Local settings
+local_work_dir: ./vaspilot_work
+
+# Materials Project API key (optional)
+mp_api_key: null
+
+# POTCAR generation method: "script" or "potcar_skill"
+potcar_method: potcar_skill
+potcar_skill_path: null  # Auto-detect if null

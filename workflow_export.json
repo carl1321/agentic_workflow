@@ -1,0 +1,1167 @@
+{
+  "name": "分子生成2",
+  "description": "",
+  "graph": {
+    "edges": [
+      {
+        "id": "xy-edge__4NDYnqRO4r2DiNmD4vnoL-KQjQl1CvCXhIWF9fXZsO-",
+        "source": "4NDYnqRO4r2DiNmD4vnoL",
+        "target": "KQjQl1CvCXhIWF9fXZsO-"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-YlaWWOk40vFkgNAnH37vkinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "YlaWWOk40vFkgNAnH37vk",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-MYzvGO32cWFFiPs14IjKAinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "MYzvGO32cWFFiPs14IjKA",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-PrUr3On_B1xjo0hnjaiNjinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "PrUr3On_B1xjo0hnjaiNj",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__YlaWWOk40vFkgNAnH37vkoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "YlaWWOk40vFkgNAnH37vk",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__MYzvGO32cWFFiPs14IjKAoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "MYzvGO32cWFFiPs14IjKA",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__PrUr3On_B1xjo0hnjaiNjoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "PrUr3On_B1xjo0hnjaiNj",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__KQjQl1CvCXhIWF9fXZsO--lmA6cbWS8PIfvIMvQky08",
+        "source": "KQjQl1CvCXhIWF9fXZsO-",
+        "target": "lmA6cbWS8PIfvIMvQky08"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "4NDYnqRO4r2DiNmD4vnoL",
+        "data": {
+          "label": "开始",
+          "taskName": "start",
+          "displayName": "开始",
+          "isLoopChild": false,
+          "startInputInfo": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space. ",
+          "executionResult": {
+            "inputs": {
+              "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space.",
+              "inputs": {
+                "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space."
+              }
+            },
+            "endTime": "2026-02-12T15:49:01.509353+08:00",
+            "metrics": null,
+            "outputs": {
+              "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space.",
+              "output": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space."
+            },
+            "startTime": "2026-02-12T15:49:01.507082+08:00"
+          },
+          "executionStatus": "success"
+        },
+        "type": "start",
+        "label": "开始",
+        "dragging": false,
+        "measured": {
+          "width": 140,
+          "height": 47
+        },
+        "position": {
+          "x": -1906.9700680207186,
+          "y": -107.78292592415703
+        },
+        "selected": false
+      },
+      {
+        "id": "KQjQl1CvCXhIWF9fXZsO-",
+        "data": {
+          "label": "loop",
+          "taskName": "loop",
+          "loopCount": 3,
+          "loopWidth": 732,
+          "loopHeight": 460,
+          "loop_count": 3,
+          "loop_width": 732,
+          "displayName": "loop",
+          "isLoopChild": false,
+          "loop_height": 460,
+          "outputFields": [],
+          "output_fields": [],
+          "breakConditions": [
+            {
+              "value": "8",
+              "operator": ">=",
+              "outputVariable": "LLM4.output.score"
+            }
+          ],
+          "executionResult": {
+            "inputs": null,
+            "startTime": "2026-02-12T15:49:01.511502+08:00"
+          },
+          "executionStatus": "running"
+        },
+        "type": "loop",
+        "label": "loop",
+        "style": {
+          "zIndex": 1,
+          "pointerEvents": "auto"
+        },
+        "width": 732,
+        "height": 460,
+        "dragging": false,
+        "measured": {
+          "width": 732,
+          "height": 460
+        },
+        "position": {
+          "x": -1648.7232044481673,
+          "y": -221.85884230717636
+        },
+        "resizing": false,
+        "selected": false
+      },
+      {
+        "id": "aAOGgDATXwHG5mIvlHOlx",
+        "data": {
+          "label": "LLM",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "taskName": "LLM",
+          "llmPrompt": "{% if loop.iteration > 1 %}\n# 任务阶段：定向优化 (第 {{loop.iteration}} 轮迭代)\n你是一名精通材料化学的 AI 专家。请根据以下评估结果，对上一轮生成的 SAM 分子进行靶向修正。\n\n## 1. 待优化分子及缺陷评估：\n{{loop.variables.pending_items}}\n\n## 2. 修正核心原则：\n- **靶向修正**：仅针对评分低于 8 分的维度进行改进，保留 8 分及以上的优秀设计。\n- **架构保留**：严格遵循“锚定-间隔-末端”架构，禁止重构分子骨架。\n- **数量对齐**：输入 JSON 中有多少个分子，输出必须对应返回相同数量的优化分子，且generation_id需要和输入的分子一一对应。\n\n## 3. 强制输出格式 (JSON 数组)：\n[\n  {% for item in loop.variables.pending_items %}\n  {\n    \"generation_id\": \"{{item.generation_id}}\",\n    \"name\": \"<优化后的分子名>\",\n    \"smiles\": \"<优化后的SMILES>\",\n    \"rationale\": {\n      \"backbone\": \"<优化后的核心骨架描述>\",\n      \"anchor_group\": \"<优化后的锚定基团描述>\",\n      \"passivation_group\": \"<优化后的缺陷钝化基团描述>\",\n      \"side_chain_solubility\": \"<优化后的侧链溶解性描述>\",\n      \"self_assembly_potential\": \"<优化后的自组装潜力描述>\",\n      \"estimated_energy_levels\": \"<优化后的能级预估>\"\n    }\n  }\n  {% endfor %}\n]\n\n{% else %}\n# 任务阶段：初次设计\n你是一名精通钙钛矿光电器件的材料设计专家。请设计 **3款** 全新的自组装单分子层（SAM）分子。\n\n## 1. 核心结构约束 (必须严格遵守)：\n- **架构**：锚定基团 (Anchor) - 间隔基团 (Spacer) - 末端基团 (Terminal)。\n- **形状**：线性或准线性结构，严禁支链烷基，以确保自组装的紧密性。\n- **基团选择**：\n    - **锚定**：优先选用膦酸基 (-PO(OH)2) 或 羧基 (-COOH)，禁止使用巯基 (-SH)。\n    - **间隔**：必须使用 π-共轭体系（如苯环、咔唑、芴、噻吩）。\n    - **末端**：p-i-n 型选用富电子基（如甲氧基、二苯胺基）；n-i-p 型选用缺电子基（如氰基、氟代基）。\n\n## 2. 任务要求：\n- 请生成 **3 个** 不同的候选分子。\n- 确保 SMILES 结构符合有机化学成键规则（化合价正确）。\n\n\n## 3. 强制输出格式 (JSON 数组)：\n请严格按以下 JSON 格式返回，不要包含任何多余的解释文字。确保数组内包含 **3 个** 对象。\n\n[\n  {\n    \"generation_id\": 1,\n    \"name\": \"由化学结构定义的专业名称\",\n    \"smiles\": \"符合规范的 SMILES 字符串\",\n    \"rationale\": {\n      \"backbone\": \"骨架描述\",\n      \"anchor_group\": \"锚定基团功能说明\",\n      \"passivation_group\": \"钝化机制\",\n      \"side_chain_solubility\": \"溶解性平衡说明\",\n      \"self_assembly_potential\": \"自组装潜力及预估膜厚\",\n      \"estimated_energy_levels\": \"能级预估 (e.g., HOMO ~ -5.3 eV)\"\n    }\n  },\n  { \"generation_id\": 2, \"...\": \"以此类推，必须写满 3 个\" },\n  { \"generation_id\": 3, \"...\": \"以此类推，必须写满 3 个\" }\n]\n{% endif %} 完整的翻译成英文",
+          "displayName": "分子生成",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "rationale",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "rationale",
+              "type": "String"
+            }
+          ],
+          "executionResult": {
+            "error": "Connection error.",
+            "inputs": {
+              "model": "Qwen-235B-Instruct",
+              "prompt": "\n# 任务阶段：初次设计\n你是一名精通钙钛矿光电器件的材料设计专家。请设计 **3款** 全新的自组装单分子层（SAM）分子。\n\n## 1. 核心结构约束 (必须严格遵守)：\n- **架构**：锚定基团 (Anchor) - 间隔基团 (Spacer) - 末端基团 (Terminal)。\n- **形状**：线性或准线性结构，严禁支链烷基，以确保自组装的紧密性。\n- **基团选择**：\n    - **锚定**：优先选用膦酸基 (-PO(OH)2) 或 羧基 (-COOH)，禁止使用巯基 (-SH)。\n    - **间隔**：必须使用 π-共轭体系（如苯环、咔唑、芴、噻吩）。\n    - **末端**：p-i-n 型选用富电子基（如甲氧基、二苯胺基）；n-i-p 型选用缺电子基（如氰基、氟代基）。\n\n## 2. 任务要求：\n- 请生成 **3 个** 不同的候选分子。\n- 确保 SMILES 结构符合有机化学成键规则（化合价正确）。\n\n\n## 3. 强制输出格式 (JSON 数组)：\n请严格按以下 JSON 格式返回，不要包含任何多余的解释文字。确保数组内包含 **3 个** 对象。\n\n[\n  {\n    \"generation_id\": 1,\n    \"name\": \"由化学结构定义的专业名称\",\n    \"smiles\": \"符合规范的 SMILES 字符串\",\n    \"rationale\": {\n      \"backbone\": \"骨架描述\",\n      \"anchor_group\": \"锚定基团功能说明\",\n      \"passivation_group\": \"钝化机制\",\n      \"side_chain_solubility\": \"溶解性平衡说明\",\n      \"self_assembly_potential\": \"自组装潜力及预估膜厚\",\n      \"estimated_energy_levels\": \"能级预估 (e.g., HOMO ~ -5.3 eV)\"\n    }\n  },\n  { \"generation_id\": 2, \"...\": \"以此类推，必须写满 3 个\" },\n  { \"generation_id\": 3, \"...\": \"以此类推，必须写满 3 个\" }\n]\n 完整的翻译成英文",
+              "system_prompt": "你是一个SAM分子生成/优化器"
+            },
+            "endTime": "2026-02-12T15:49:04.690604+08:00",
+            "startTime": "2026-02-12T15:49:01.525433+08:00"
+          },
+          "executionStatus": "error",
+          "llmSystemPrompt": "你是一个SAM分子生成/优化器"
+        },
+        "type": "llm",
+        "label": "LLM",
+        "style": {
+          "zIndex": 15,
+          "pointerEvents": "auto"
+        },
+        "extent": "parent",
+        "dragging": false,
+        "measured": {
+          "width": 160,
+          "height": 66
+        },
+        "parentId": "KQjQl1CvCXhIWF9fXZsO-",
+        "position": {
+          "x": 37.20172487283651,
+          "y": 184.75086338327048
+        },
+        "selected": false,
+        "draggable": true
+      },
+      {
+        "id": "YlaWWOk40vFkgNAnH37vk",
+        "data": {
+          "label": "LLM1",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "taskName": "LLM1",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "表面锚定强度评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert, specialized in “Anchoring / Interface-Binding Potential”.\nTask:\n1. Evaluate whether the molecule’s anchor_group + linker/spacer + overall geometry / substituents are suitable for stable adsorption / binding to a metal-oxide (e.g. TiO₂ / ITO) surface, and formation of a dense, ordered SAM (monolayer).\n\n2. Use the following **scoring rubric** to assign an **anchor-binding score (integer 0–10)**:\n\n   - If the anchor_group is clearly inappropriate for oxide binding (e.g. no phosphonic / carboxylic / silane / known oxide-binding head) → score ≤ 2.  \n   - If anchor_group is acceptable but spacer/linker is too short (steric hindrance risk) or too floppy/long (poor packing / unstable orientation) → subtract 2–4 points depending on severity.  \n   - If bulky side-chains or substituents are near anchor or on backbone that likely hinder binding or dense packing / uniform coverage → subtract 1–3 points (or more if very severe).  \n   - If the molecule has multiple anchors / very large head-groups / complex head-structure likely to cause multilayer formation / disorder → subtract 2–5 points.  \n   - If anchor + linker + geometry corresponds to known good SAM-binding motifs (e.g. phosphonic acid head, appropriate linker length/flexibility, minimal steric hindrance, mono-anchor) — may add +1–2 bonus points for plausibility / expect stronger binding / better SAM formation.\n\n3. Optionally, list detected issues & possible fixes; add short comment if relevant (e.g. “spacer too long → consider shortening to C3–C5 alkyl”, “bulky side-chain near head → move substituent away from anchor”).  \n\n4. Output exactly (JSON):\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"anchoring / interface-binding\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "label": "LLM1",
+        "style": {
+          "zIndex": 15,
+          "pointerEvents": "auto"
+        },
+        "extent": "parent",
+        "dragging": false,
+        "measured": {
+          "width": 160,
+          "height": 47
+        },
+        "parentId": "KQjQl1CvCXhIWF9fXZsO-",
+        "position": {
+          "x": 322.2309923039504,
+          "y": 49.08290606863373
+        },
+        "selected": false,
+        "draggable": true
+      },
+      {
+        "id": "MYzvGO32cWFFiPs14IjKA",
+        "data": {
+          "label": "LLM2",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "taskName": "LLM2",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "化学有效性评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert (Chemistry-Validity / Structural Sanity Critic).\nTask: \n1. Parse the SMILES and evaluate whether it represents a chemically plausible, structurally sane molecule under standard organic-chemistry rules (valid valence, realistic bonding, reasonable ring/branch structure, no obvious exotic/unrealistic fragments).\n\n2. Use the following scoring rubric to assign a **structural-sanity score (integer 0–10)**:\n\n   - If SMILES fails basic chemical parse or has valence / bonding errors → score <= 2.  \n   - For each “exotic / unrealistic structural issue” (e.g. highly strained small rings, improbable fused-ring systems, exotic atom/bond patterns) → subtract 2–4 points (severity dependent).  \n   - If molecule has heavy over-substitution / many bulky substituents / severe steric crowding → subtract 1–3 points (or more if very severe).  \n   - If molecule is extremely large / has many rings / heavy-atom count high / many rotatable bonds / overly complex connectivity → subtract 1–3 points (or more depending on complexity).  \n   - If structure is based on common, well-known scaffolds / simple aromatics / reasonable functional groups / typical fragments — optionally add +1–2 bonus points for stability/ plausibility.  \n\n3. Optionally, list detected issues & possible fixes. Add short comment if needed (e.g. “3D steric clash potential — recommend geometry check”).  \n\n4. Output exactly（JSON）:\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"chemistry-validity\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "label": "LLM2",
+        "style": {
+          "zIndex": 15,
+          "pointerEvents": "auto"
+        },
+        "extent": "parent",
+        "dragging": false,
+        "measured": {
+          "width": 160,
+          "height": 47
+        },
+        "parentId": "KQjQl1CvCXhIWF9fXZsO-",
+        "position": {
+          "x": 328.479101897728,
+          "y": 173.884931922393
+        },
+        "selected": false,
+        "draggable": true
+      },
+      {
+        "id": "PrUr3On_B1xjo0hnjaiNj",
+        "data": {
+          "label": "LLM3",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "taskName": "LLM3",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "缺陷评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert, specialized in “Defect-Passivation / Interface-Defect Potential Critic”.\nTask:\n1. Evaluate whether the candidate’s structural features (functional / passivation / coordination groups, heteroatoms, groups with lone-pair electrons, etc.) are likely to provide effective passivation of interface / perovskite / metal-oxide defects (e.g. under-coordinated metal ions, halide vacancies, dangling bonds, trap states) when assembled at the interface.\n\n   Consider:\n   - Presence and type of passivation-capable groups (e.g. S, N, O heteroatoms; Lewis-base groups; potential coordination / hydrogen-bonding / dipole / ionic interaction moieties).  \n   - Spatial accessibility / steric environment: are these groups positioned such that, once the molecule is anchored and assembled, they remain exposed / able to reach / interact with potential defect-sites (i.e. not buried or shielded by bulky substituents)?  \n   - Balance with other design demands: whether the passivation groups interfere with anchor binding, self-assembly / packing, film uniformity, or cause steric conflict / aggregation / poor packing.  \n   - Stability / compatibility: whether passivation groups remain chemically and structurally stable under processing and device conditions (solvent exposure, perovskite deposition, annealing, moisture / oxygen, environmental stress), and maintain their passivation capability (not degrade, not get blocked).  \n   - (If mixed-SAM / multi-molecule scenario) Whether passivation-capable molecules and SAM / HTL molecules are compatible: co-adsorption, co-packing, no phase-separation, passivation groups remain effective in mixed monolayer / interface environment.\n\n2. Use the following **scoring rubric** to assign a **passivation-potential score (integer 0–10)**:\n\n   - If candidate lacks identifiable passivation-capable groups (no suitable heteroatom / coordination / lone-pair moiety) → score ≤ 2.  \n   - If passivation groups are present but likely buried / sterically shielded / orientation inaccessible → subtract 2–4 points (depending on severity of accessibility issue).  \n   - If passivation groups exist and accessible, but their presence conflicts strongly with other functions (e.g. anchor binding, packing, self-assembly), or introduce risk of aggregation / disorder → subtract 1–3 points.  \n   - If passivation groups are present, well-positioned / exposed, structurally stable, and design seems consistent with anchor / SAM / film formation / packing constraints — optionally add +1–2 bonus points for good passivation-potential.  \n\n3. Optionally, list identified issues (with type / description) and suggest modifications (e.g. relocate passivation group, reduce surrounding steric bulk, replace with a different heteroatom / functional group, adjust linker / substituent geometry to expose passivation site, ensure chemical stability of passivation group). Add comment if relevant (e.g. “this –S or –N site likely accessible but recommend DFT or binding-energy calculation, surface spectroscopy or passivation test on perovskite interface”).\n\n4. Output exactly（JSON）:\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"Defect-Passivation\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "label": "LLM3",
+        "style": {
+          "zIndex": 15,
+          "pointerEvents": "auto"
+        },
+        "extent": "parent",
+        "dragging": false,
+        "measured": {
+          "width": 160,
+          "height": 47
+        },
+        "parentId": "KQjQl1CvCXhIWF9fXZsO-",
+        "position": {
+          "x": 343.3935611455986,
+          "y": 291.6480815378021
+        },
+        "selected": false,
+        "draggable": true
+      },
+      {
+        "id": "vtrF5nMs9UoFpFfASikCW",
+        "data": {
+          "label": "LLM4",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "taskName": "LLM4",
+          "llmPrompt": "You will receive three separate arrays, each containing evaluations for 3 molecules (generation_id: 1, 2, 3) from different perspectives:\n\nChemistry Validity Array: Evaluates structural plausibility and chemical rules\n\nAnchoring/Interface-Binding Array: Evaluates self-assembled monolayer (SAM) formation and surface binding\n\nDefect-Passivation Array: Evaluates interface defect healing capabilities\n\n\n##Input info:\n{{LLM1.output}}{{LLM2.output}}{{LLM3.output}}",
+          "displayName": "总结",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "opt_des",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "opt_des",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular design optimization synthesizer. Your task is to combine evaluations from three specialized models (chemistry validity, interface binding, and defect passivation) to provide a comprehensive assessment and optimization strategy for each molecule.\nProcessing Instructions:\nCalculate Weighted Score as follows:\n\n1. Weights for each dimension:\n   - Chemistry Validity: 0.30\n   - Anchoring/Interface-Binding: 0.40\n   - Defect-Passivation: 0.30\n\n2. Actual scores for each dimension (replace with real values):\n   - Chemistry Validity: [INPUT_ACTUAL_SCORE_HERE]\n   - Anchoring/Interface-Binding: [INPUT_ACTUAL_SCORE_HERE]\n   - Defect-Passivation: [INPUT_ACTUAL_SCORE_HERE]\n\n3. Requirements:\n   - Substitute the actual scores into the formula: Weighted Score = (Chemistry Validity × 0.30) + (Anchoring/Interface-Binding × 0.40) + (Defect-Passivation × 0.30)\n   - Calculate the exact value\n   - Round the result to 0 decimal places (no decimals)\n   - Output ONLY the final numerical score (do not return the formula or intermediate steps)\n\nGenerate Comprehensive Optimization Description (opt_des):\n\nSynthesize information from all three suggested_fixes fields\n\nPrioritize fixes based on: (1) lower dimension scores, (2) binding issues (highest weight), (3) chemical validity concerns\n\nStructure the opt_des as:\n\nPrimary Issue: Most critical problem to address\n\nSecondary Considerations: Other important optimizations\n\nStrengths to Preserve: What works well\n\nBe specific and actionable, referencing molecular features\n\nPlease output the content corresponding to each generation_id.\n\nOutput Format (must match exactly):\n\n[{\n  \"generation_id\": \"id\",\n  \"score\": <0–10>,\n  \"smiles\":\"xxx\",\n  \"opt_des\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "label": "LLM4",
+        "style": {
+          "zIndex": 15,
+          "pointerEvents": "auto"
+        },
+        "extent": "parent",
+        "dragging": false,
+        "measured": {
+          "width": 160,
+          "height": 47
+        },
+        "parentId": "KQjQl1CvCXhIWF9fXZsO-",
+        "position": {
+          "x": 571.513240747324,
+          "y": 165.84379716529946
+        },
+        "selected": false,
+        "draggable": true
+      },
+      {
+        "id": "lmA6cbWS8PIfvIMvQky08",
+        "data": {
+          "label": "结束",
+          "taskName": "end",
+          "displayName": "结束",
+          "isLoopChild": false,
+          "executionStatus": "ready"
+        },
+        "type": "end",
+        "label": "结束",
+        "dragging": false,
+        "measured": {
+          "width": 140,
+          "height": 36
+        },
+        "position": {
+          "x": -553.2118391071106,
+          "y": 75.49359678003493
+        },
+        "selected": false
+      }
+    ]
+  },
+  "spec": {
+    "name": "分子生成2",
+    "edges": [
+      {
+        "id": "xy-edge__4NDYnqRO4r2DiNmD4vnoL-KQjQl1CvCXhIWF9fXZsO-",
+        "source": "4NDYnqRO4r2DiNmD4vnoL",
+        "target": "KQjQl1CvCXhIWF9fXZsO-"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-YlaWWOk40vFkgNAnH37vkinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "YlaWWOk40vFkgNAnH37vk",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-MYzvGO32cWFFiPs14IjKAinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "MYzvGO32cWFFiPs14IjKA",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__aAOGgDATXwHG5mIvlHOlxoutput-PrUr3On_B1xjo0hnjaiNjinput",
+        "source": "aAOGgDATXwHG5mIvlHOlx",
+        "target": "PrUr3On_B1xjo0hnjaiNj",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__YlaWWOk40vFkgNAnH37vkoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "YlaWWOk40vFkgNAnH37vk",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__MYzvGO32cWFFiPs14IjKAoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "MYzvGO32cWFFiPs14IjKA",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__PrUr3On_B1xjo0hnjaiNjoutput-vtrF5nMs9UoFpFfASikCWinput",
+        "source": "PrUr3On_B1xjo0hnjaiNj",
+        "target": "vtrF5nMs9UoFpFfASikCW",
+        "sourceHandle": "output",
+        "targetHandle": "input"
+      },
+      {
+        "id": "xy-edge__KQjQl1CvCXhIWF9fXZsO--lmA6cbWS8PIfvIMvQky08",
+        "source": "KQjQl1CvCXhIWF9fXZsO-",
+        "target": "lmA6cbWS8PIfvIMvQky08"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "4NDYnqRO4r2DiNmD4vnoL",
+        "data": {
+          "label": "开始",
+          "nodeName": "start",
+          "taskName": "start",
+          "displayName": "开始",
+          "isLoopChild": false,
+          "startInputInfo": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space. ",
+          "executionResult": {
+            "inputs": {
+              "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space.",
+              "inputs": {
+                "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space."
+              }
+            },
+            "endTime": "2026-02-12T15:49:01.509353+08:00",
+            "metrics": null,
+            "outputs": {
+              "input": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space.",
+              "output": "The goal is to design self-assembled monolayer (SAM) molecules for use on ITO substrates as hole-extraction and interface-engineering layers in perovskite solar cells. The SAM should form a uniform, densely packed monolayer no thicker than ~5 nm, remain stable during device processing, and provide high-quality surface contact with the perovskite layer. Functionally, the molecule must support efficient hole extraction, passivate interface defects through appropriate heteroatoms, and achieve suitable energy-level alignment, ideally with a HOMO in the −5.4 to −5.6 eV range. Structurally, the design may include π-conjugated aromatic, heterocyclic, fused-ring, or moderately extended conjugated backbones—even unconventional motifs are allowed if they offer beneficial electronic or packing behavior. Anchor groups should be compatible with metal oxides, such as phosphonic acids, carboxylic acids, silanes, or related oxide-binding functionalities, and side-chain substituents should be short or moderately sized alkyl, alkoxy, fluoroalkyl, or other small polar groups to balance solubility, packing, and film quality. Molecules may be small to medium in size, with moderate complexity acceptable as long as synthetic feasibility is retained. The SAM should be processable in alcohols or moderately polar solvents, exhibit good thermal, chemical, and moisture stability, and maintain exposed functional groups capable of interacting with and passivating perovskite surface defects. Planarity, extended conjugation, single-anchor designs, and overall synthetic plausibility are preferred but not strictly required to encourage exploration of a broader chemical design space."
+            },
+            "startTime": "2026-02-12T15:49:01.507082+08:00"
+          },
+          "executionStatus": "success"
+        },
+        "type": "start",
+        "position": {
+          "x": -1906.9700680207186,
+          "y": -107.78292592415703
+        }
+      },
+      {
+        "id": "KQjQl1CvCXhIWF9fXZsO-",
+        "data": {
+          "label": "loop",
+          "nodeName": "loop",
+          "taskName": "loop",
+          "loopCount": 3,
+          "loopWidth": 732,
+          "loopHeight": 460,
+          "loop_count": 3,
+          "loop_width": 732,
+          "displayName": "loop",
+          "isLoopChild": false,
+          "loop_height": 460,
+          "outputFields": [],
+          "output_fields": [],
+          "breakConditions": [
+            {
+              "value": "8",
+              "operator": ">=",
+              "outputVariable": "LLM4.output.score"
+            }
+          ],
+          "executionResult": {
+            "inputs": null,
+            "startTime": "2026-02-12T15:49:01.511502+08:00"
+          },
+          "executionStatus": "running"
+        },
+        "type": "loop",
+        "position": {
+          "x": -1648.7232044481673,
+          "y": -221.85884230717636
+        }
+      },
+      {
+        "id": "aAOGgDATXwHG5mIvlHOlx",
+        "data": {
+          "label": "LLM",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "nodeName": "LLM",
+          "taskName": "LLM",
+          "llmPrompt": "{% if loop.iteration > 1 %}\n# 任务阶段：定向优化 (第 {{loop.iteration}} 轮迭代)\n你是一名精通材料化学的 AI 专家。请根据以下评估结果，对上一轮生成的 SAM 分子进行靶向修正。\n\n## 1. 待优化分子及缺陷评估：\n{{loop.variables.pending_items}}\n\n## 2. 修正核心原则：\n- **靶向修正**：仅针对评分低于 8 分的维度进行改进，保留 8 分及以上的优秀设计。\n- **架构保留**：严格遵循“锚定-间隔-末端”架构，禁止重构分子骨架。\n- **数量对齐**：输入 JSON 中有多少个分子，输出必须对应返回相同数量的优化分子，且generation_id需要和输入的分子一一对应。\n\n## 3. 强制输出格式 (JSON 数组)：\n[\n  {% for item in loop.variables.pending_items %}\n  {\n    \"generation_id\": \"{{item.generation_id}}\",\n    \"name\": \"<优化后的分子名>\",\n    \"smiles\": \"<优化后的SMILES>\",\n    \"rationale\": {\n      \"backbone\": \"<优化后的核心骨架描述>\",\n      \"anchor_group\": \"<优化后的锚定基团描述>\",\n      \"passivation_group\": \"<优化后的缺陷钝化基团描述>\",\n      \"side_chain_solubility\": \"<优化后的侧链溶解性描述>\",\n      \"self_assembly_potential\": \"<优化后的自组装潜力描述>\",\n      \"estimated_energy_levels\": \"<优化后的能级预估>\"\n    }\n  }\n  {% endfor %}\n]\n\n{% else %}\n# 任务阶段：初次设计\n你是一名精通钙钛矿光电器件的材料设计专家。请设计 **3款** 全新的自组装单分子层（SAM）分子。\n\n## 1. 核心结构约束 (必须严格遵守)：\n- **架构**：锚定基团 (Anchor) - 间隔基团 (Spacer) - 末端基团 (Terminal)。\n- **形状**：线性或准线性结构，严禁支链烷基，以确保自组装的紧密性。\n- **基团选择**：\n    - **锚定**：优先选用膦酸基 (-PO(OH)2) 或 羧基 (-COOH)，禁止使用巯基 (-SH)。\n    - **间隔**：必须使用 π-共轭体系（如苯环、咔唑、芴、噻吩）。\n    - **末端**：p-i-n 型选用富电子基（如甲氧基、二苯胺基）；n-i-p 型选用缺电子基（如氰基、氟代基）。\n\n## 2. 任务要求：\n- 请生成 **3 个** 不同的候选分子。\n- 确保 SMILES 结构符合有机化学成键规则（化合价正确）。\n\n\n## 3. 强制输出格式 (JSON 数组)：\n请严格按以下 JSON 格式返回，不要包含任何多余的解释文字。确保数组内包含 **3 个** 对象。\n\n[\n  {\n    \"generation_id\": 1,\n    \"name\": \"由化学结构定义的专业名称\",\n    \"smiles\": \"符合规范的 SMILES 字符串\",\n    \"rationale\": {\n      \"backbone\": \"骨架描述\",\n      \"anchor_group\": \"锚定基团功能说明\",\n      \"passivation_group\": \"钝化机制\",\n      \"side_chain_solubility\": \"溶解性平衡说明\",\n      \"self_assembly_potential\": \"自组装潜力及预估膜厚\",\n      \"estimated_energy_levels\": \"能级预估 (e.g., HOMO ~ -5.3 eV)\"\n    }\n  },\n  { \"generation_id\": 2, \"...\": \"以此类推，必须写满 3 个\" },\n  { \"generation_id\": 3, \"...\": \"以此类推，必须写满 3 个\" }\n]\n{% endif %} 完整的翻译成英文",
+          "displayName": "分子生成",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "rationale",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "rationale",
+              "type": "String"
+            }
+          ],
+          "executionResult": {
+            "error": "Connection error.",
+            "inputs": {
+              "model": "Qwen-235B-Instruct",
+              "prompt": "\n# 任务阶段：初次设计\n你是一名精通钙钛矿光电器件的材料设计专家。请设计 **3款** 全新的自组装单分子层（SAM）分子。\n\n## 1. 核心结构约束 (必须严格遵守)：\n- **架构**：锚定基团 (Anchor) - 间隔基团 (Spacer) - 末端基团 (Terminal)。\n- **形状**：线性或准线性结构，严禁支链烷基，以确保自组装的紧密性。\n- **基团选择**：\n    - **锚定**：优先选用膦酸基 (-PO(OH)2) 或 羧基 (-COOH)，禁止使用巯基 (-SH)。\n    - **间隔**：必须使用 π-共轭体系（如苯环、咔唑、芴、噻吩）。\n    - **末端**：p-i-n 型选用富电子基（如甲氧基、二苯胺基）；n-i-p 型选用缺电子基（如氰基、氟代基）。\n\n## 2. 任务要求：\n- 请生成 **3 个** 不同的候选分子。\n- 确保 SMILES 结构符合有机化学成键规则（化合价正确）。\n\n\n## 3. 强制输出格式 (JSON 数组)：\n请严格按以下 JSON 格式返回，不要包含任何多余的解释文字。确保数组内包含 **3 个** 对象。\n\n[\n  {\n    \"generation_id\": 1,\n    \"name\": \"由化学结构定义的专业名称\",\n    \"smiles\": \"符合规范的 SMILES 字符串\",\n    \"rationale\": {\n      \"backbone\": \"骨架描述\",\n      \"anchor_group\": \"锚定基团功能说明\",\n      \"passivation_group\": \"钝化机制\",\n      \"side_chain_solubility\": \"溶解性平衡说明\",\n      \"self_assembly_potential\": \"自组装潜力及预估膜厚\",\n      \"estimated_energy_levels\": \"能级预估 (e.g., HOMO ~ -5.3 eV)\"\n    }\n  },\n  { \"generation_id\": 2, \"...\": \"以此类推，必须写满 3 个\" },\n  { \"generation_id\": 3, \"...\": \"以此类推，必须写满 3 个\" }\n]\n 完整的翻译成英文",
+              "system_prompt": "你是一个SAM分子生成/优化器"
+            },
+            "endTime": "2026-02-12T15:49:04.690604+08:00",
+            "startTime": "2026-02-12T15:49:01.525433+08:00"
+          },
+          "executionStatus": "error",
+          "llmSystemPrompt": "你是一个SAM分子生成/优化器"
+        },
+        "type": "llm",
+        "position": {
+          "x": 37.20172487283651,
+          "y": 184.75086338327048
+        }
+      },
+      {
+        "id": "YlaWWOk40vFkgNAnH37vk",
+        "data": {
+          "label": "LLM1",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "nodeName": "LLM1",
+          "taskName": "LLM1",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "表面锚定强度评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert, specialized in “Anchoring / Interface-Binding Potential”.\nTask:\n1. Evaluate whether the molecule’s anchor_group + linker/spacer + overall geometry / substituents are suitable for stable adsorption / binding to a metal-oxide (e.g. TiO₂ / ITO) surface, and formation of a dense, ordered SAM (monolayer).\n\n2. Use the following **scoring rubric** to assign an **anchor-binding score (integer 0–10)**:\n\n   - If the anchor_group is clearly inappropriate for oxide binding (e.g. no phosphonic / carboxylic / silane / known oxide-binding head) → score ≤ 2.  \n   - If anchor_group is acceptable but spacer/linker is too short (steric hindrance risk) or too floppy/long (poor packing / unstable orientation) → subtract 2–4 points depending on severity.  \n   - If bulky side-chains or substituents are near anchor or on backbone that likely hinder binding or dense packing / uniform coverage → subtract 1–3 points (or more if very severe).  \n   - If the molecule has multiple anchors / very large head-groups / complex head-structure likely to cause multilayer formation / disorder → subtract 2–5 points.  \n   - If anchor + linker + geometry corresponds to known good SAM-binding motifs (e.g. phosphonic acid head, appropriate linker length/flexibility, minimal steric hindrance, mono-anchor) — may add +1–2 bonus points for plausibility / expect stronger binding / better SAM formation.\n\n3. Optionally, list detected issues & possible fixes; add short comment if relevant (e.g. “spacer too long → consider shortening to C3–C5 alkyl”, “bulky side-chain near head → move substituent away from anchor”).  \n\n4. Output exactly (JSON):\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"anchoring / interface-binding\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "position": {
+          "x": 322.2309923039504,
+          "y": 49.08290606863373
+        }
+      },
+      {
+        "id": "MYzvGO32cWFFiPs14IjKA",
+        "data": {
+          "label": "LLM2",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "nodeName": "LLM2",
+          "taskName": "LLM2",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "化学有效性评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert (Chemistry-Validity / Structural Sanity Critic).\nTask: \n1. Parse the SMILES and evaluate whether it represents a chemically plausible, structurally sane molecule under standard organic-chemistry rules (valid valence, realistic bonding, reasonable ring/branch structure, no obvious exotic/unrealistic fragments).\n\n2. Use the following scoring rubric to assign a **structural-sanity score (integer 0–10)**:\n\n   - If SMILES fails basic chemical parse or has valence / bonding errors → score <= 2.  \n   - For each “exotic / unrealistic structural issue” (e.g. highly strained small rings, improbable fused-ring systems, exotic atom/bond patterns) → subtract 2–4 points (severity dependent).  \n   - If molecule has heavy over-substitution / many bulky substituents / severe steric crowding → subtract 1–3 points (or more if very severe).  \n   - If molecule is extremely large / has many rings / heavy-atom count high / many rotatable bonds / overly complex connectivity → subtract 1–3 points (or more depending on complexity).  \n   - If structure is based on common, well-known scaffolds / simple aromatics / reasonable functional groups / typical fragments — optionally add +1–2 bonus points for stability/ plausibility.  \n\n3. Optionally, list detected issues & possible fixes. Add short comment if needed (e.g. “3D steric clash potential — recommend geometry check”).  \n\n4. Output exactly（JSON）:\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"chemistry-validity\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "position": {
+          "x": 328.479101897728,
+          "y": 173.884931922393
+        }
+      },
+      {
+        "id": "PrUr3On_B1xjo0hnjaiNj",
+        "data": {
+          "label": "LLM3",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "nodeName": "LLM3",
+          "taskName": "LLM3",
+          "llmPrompt": "{{LLM.output}}",
+          "displayName": "缺陷评估",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "critic_aspect",
+              "type": "String"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "comments",
+              "type": "String"
+            },
+            {
+              "name": "name",
+              "type": "String"
+            },
+            {
+              "name": "suggested_fixes",
+              "type": "String"
+            },
+            {
+              "name": "confidence",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular / materials-interface chemistry expert, specialized in “Defect-Passivation / Interface-Defect Potential Critic”.\nTask:\n1. Evaluate whether the candidate’s structural features (functional / passivation / coordination groups, heteroatoms, groups with lone-pair electrons, etc.) are likely to provide effective passivation of interface / perovskite / metal-oxide defects (e.g. under-coordinated metal ions, halide vacancies, dangling bonds, trap states) when assembled at the interface.\n\n   Consider:\n   - Presence and type of passivation-capable groups (e.g. S, N, O heteroatoms; Lewis-base groups; potential coordination / hydrogen-bonding / dipole / ionic interaction moieties).  \n   - Spatial accessibility / steric environment: are these groups positioned such that, once the molecule is anchored and assembled, they remain exposed / able to reach / interact with potential defect-sites (i.e. not buried or shielded by bulky substituents)?  \n   - Balance with other design demands: whether the passivation groups interfere with anchor binding, self-assembly / packing, film uniformity, or cause steric conflict / aggregation / poor packing.  \n   - Stability / compatibility: whether passivation groups remain chemically and structurally stable under processing and device conditions (solvent exposure, perovskite deposition, annealing, moisture / oxygen, environmental stress), and maintain their passivation capability (not degrade, not get blocked).  \n   - (If mixed-SAM / multi-molecule scenario) Whether passivation-capable molecules and SAM / HTL molecules are compatible: co-adsorption, co-packing, no phase-separation, passivation groups remain effective in mixed monolayer / interface environment.\n\n2. Use the following **scoring rubric** to assign a **passivation-potential score (integer 0–10)**:\n\n   - If candidate lacks identifiable passivation-capable groups (no suitable heteroatom / coordination / lone-pair moiety) → score ≤ 2.  \n   - If passivation groups are present but likely buried / sterically shielded / orientation inaccessible → subtract 2–4 points (depending on severity of accessibility issue).  \n   - If passivation groups exist and accessible, but their presence conflicts strongly with other functions (e.g. anchor binding, packing, self-assembly), or introduce risk of aggregation / disorder → subtract 1–3 points.  \n   - If passivation groups are present, well-positioned / exposed, structurally stable, and design seems consistent with anchor / SAM / film formation / packing constraints — optionally add +1–2 bonus points for good passivation-potential.  \n\n3. Optionally, list identified issues (with type / description) and suggest modifications (e.g. relocate passivation group, reduce surrounding steric bulk, replace with a different heteroatom / functional group, adjust linker / substituent geometry to expose passivation site, ensure chemical stability of passivation group). Add comment if relevant (e.g. “this –S or –N site likely accessible but recommend DFT or binding-energy calculation, surface spectroscopy or passivation test on perovskite interface”).\n\n4. Output exactly（JSON）:\n[{\n  \"generation_id\": \"ID\",\n  \"name\": \"<candidate name>\",\n  \"smiles\": \"<SMILES>\",\n  \"critic_aspect\": \"Defect-Passivation\",\n  \"score\": <0–10>,\n  \"suggested_fixes\":\"xxx\",\n  \"confidence\": \"low|medium|high\",\n  \"comments\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "position": {
+          "x": 343.3935611455986,
+          "y": 291.6480815378021
+        }
+      },
+      {
+        "id": "vtrF5nMs9UoFpFfASikCW",
+        "data": {
+          "label": "LLM4",
+          "loopId": "KQjQl1CvCXhIWF9fXZsO-",
+          "loop_id": "KQjQl1CvCXhIWF9fXZsO-",
+          "llmModel": "Qwen-235B-Instruct",
+          "nodeName": "LLM4",
+          "taskName": "LLM4",
+          "llmPrompt": "You will receive three separate arrays, each containing evaluations for 3 molecules (generation_id: 1, 2, 3) from different perspectives:\n\nChemistry Validity Array: Evaluates structural plausibility and chemical rules\n\nAnchoring/Interface-Binding Array: Evaluates self-assembled monolayer (SAM) formation and surface binding\n\nDefect-Passivation Array: Evaluates interface defect healing capabilities\n\n\n##Input info:\n{{LLM1.output}}{{LLM2.output}}{{LLM3.output}}",
+          "displayName": "总结",
+          "isLoopChild": true,
+          "outputFields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "opt_des",
+              "type": "String"
+            }
+          ],
+          "output_fields": [
+            {
+              "name": "generation_id",
+              "type": "Integer"
+            },
+            {
+              "name": "score",
+              "type": "Integer"
+            },
+            {
+              "name": "smiles",
+              "type": "String"
+            },
+            {
+              "name": "opt_des",
+              "type": "String"
+            }
+          ],
+          "llmTemperature": 0.1,
+          "executionStatus": "ready",
+          "llmSystemPrompt": "You are a molecular design optimization synthesizer. Your task is to combine evaluations from three specialized models (chemistry validity, interface binding, and defect passivation) to provide a comprehensive assessment and optimization strategy for each molecule.\nProcessing Instructions:\nCalculate Weighted Score as follows:\n\n1. Weights for each dimension:\n   - Chemistry Validity: 0.30\n   - Anchoring/Interface-Binding: 0.40\n   - Defect-Passivation: 0.30\n\n2. Actual scores for each dimension (replace with real values):\n   - Chemistry Validity: [INPUT_ACTUAL_SCORE_HERE]\n   - Anchoring/Interface-Binding: [INPUT_ACTUAL_SCORE_HERE]\n   - Defect-Passivation: [INPUT_ACTUAL_SCORE_HERE]\n\n3. Requirements:\n   - Substitute the actual scores into the formula: Weighted Score = (Chemistry Validity × 0.30) + (Anchoring/Interface-Binding × 0.40) + (Defect-Passivation × 0.30)\n   - Calculate the exact value\n   - Round the result to 0 decimal places (no decimals)\n   - Output ONLY the final numerical score (do not return the formula or intermediate steps)\n\nGenerate Comprehensive Optimization Description (opt_des):\n\nSynthesize information from all three suggested_fixes fields\n\nPrioritize fixes based on: (1) lower dimension scores, (2) binding issues (highest weight), (3) chemical validity concerns\n\nStructure the opt_des as:\n\nPrimary Issue: Most critical problem to address\n\nSecondary Considerations: Other important optimizations\n\nStrengths to Preserve: What works well\n\nBe specific and actionable, referencing molecular features\n\nPlease output the content corresponding to each generation_id.\n\nOutput Format (must match exactly):\n\n[{\n  \"generation_id\": \"id\",\n  \"score\": <0–10>,\n  \"smiles\":\"xxx\",\n  \"opt_des\":\"yyy\"\n}]\n5. Correct Output Format: The output should include as many molecules as specified in the input. So if generation_id array contains three IDs, your output should reflect three corresponding evaluations."
+        },
+        "type": "llm",
+        "position": {
+          "x": 571.513240747324,
+          "y": 165.84379716529946
+        }
+      },
+      {
+        "id": "lmA6cbWS8PIfvIMvQky08",
+        "data": {
+          "label": "结束",
+          "nodeName": "end",
+          "taskName": "end",
+          "displayName": "结束",
+          "isLoopChild": false,
+          "executionStatus": "ready"
+        },
+        "type": "end",
+        "position": {
+          "x": -553.2118391071106,
+          "y": 75.49359678003493
+        }
+      }
+    ]
+  }
+}

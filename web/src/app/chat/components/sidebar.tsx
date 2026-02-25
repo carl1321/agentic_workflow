@@ -1,15 +1,16 @@
 "use client";
 
-import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow, FlaskConical } from "lucide-react";
+import { Plus, MessageSquare, Trash2, BookOpen, Wrench, Workflow, FlaskConical, Library } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useState, useImperativeHandle, forwardRef } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 
 import { Logo } from "~/components/ui/logo";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import { fetchConversations, deleteConversation, type ConversationSummary } from "~/core/api/conversations";
+import { fetchExtensionMenus, type ExtensionMenu } from "~/core/api/chat";
 import { useAuthStore } from "~/core/store/auth-store";
 import type { MenuInfo } from "~/core/api/auth";
 
@@ -29,6 +30,8 @@ interface SidebarProps {
   onOpenToolbox?: () => void;
   onOpenKnowledgeBase?: () => void;
   onOpenWorkflow?: () => void;
+  /** 扩展菜单点击时回调，用于在 URL 未变化时仍能切换视图 */
+  onOpenExtensionMenu?: (view: string) => void;
 }
 
 export interface SidebarRef {
@@ -41,6 +44,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   BookOpen,
   Wrench,
   Workflow,
+  Library,
 };
 
 export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
@@ -51,10 +55,13 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   onOpenToolbox,
   onOpenKnowledgeBase,
   onOpenWorkflow,
+  onOpenExtensionMenu,
 }, ref) => {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { token, user } = useAuthStore();
+  const [extensionMenus, setExtensionMenus] = useState<ExtensionMenu[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +168,12 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
     loadConversations();
   }, []);
 
+  useEffect(() => {
+    fetchExtensionMenus()
+      .then(setExtensionMenus)
+      .catch(() => setExtensionMenus([]));
+  }, []);
+
   // map to old ChatSession shape for rendering
   const chatHistory: ChatSession[] = useMemo(() => {
     return (conversations || []).map((c) => ({
@@ -263,7 +276,7 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
       </div>
 
       {/* Navigation Buttons */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-2">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex flex-col gap-2">
         <Button
           variant="outline"
           className="w-full justify-start"
@@ -288,31 +301,51 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
           <Workflow className="h-4 w-4 mr-2" />
           工作流
         </Button>
-        
+
+        {/* 扩展菜单（由后端配置驱动，如我的文库） */}
+        {extensionMenus.map((menu) => {
+          const IconComponent = menu.icon ? iconMap[menu.icon] : Library;
+          const isActive = pathname === "/chat" && searchParams.get("view") === menu.code;
+          return (
+            <Link
+              key={menu.code}
+              href={menu.path}
+              className="block w-full"
+              onClick={() => onOpenExtensionMenu?.(menu.code)}
+            >
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start",
+                  isActive && "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700"
+                )}
+              >
+                {IconComponent ? <IconComponent className="h-4 w-4 mr-2" /> : <Library className="h-4 w-4 mr-2" />}
+                {menu.name}
+              </Button>
+            </Link>
+          );
+        })}
+
         {/* 动态菜单项 */}
-        {userMenus.length > 0 && (
-          <>
-            {userMenus.map((menu) => {
-              const IconComponent = menu.icon ? iconMap[menu.icon] : FlaskConical;
-              const isActive = pathname === menu.path;
-              
-              return (
-                <Link key={menu.id} href={menu.path || "#"}>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-full justify-start",
-                      isActive && "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700"
-                    )}
-                  >
-                    {IconComponent ? <IconComponent className="h-4 w-4 mr-2" /> : <FlaskConical className="h-4 w-4 mr-2" />}
-                    {menu.name}
-                  </Button>
-                </Link>
-              );
-            })}
-          </>
-        )}
+        {userMenus.map((menu) => {
+          const IconComponent = menu.icon ? iconMap[menu.icon] : FlaskConical;
+          const isActive = pathname === menu.path;
+          return (
+            <Link key={menu.id} href={menu.path || "#"} className="block w-full">
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full justify-start",
+                  isActive && "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700"
+                )}
+              >
+                {IconComponent ? <IconComponent className="h-4 w-4 mr-2" /> : <FlaskConical className="h-4 w-4 mr-2" />}
+                {menu.name}
+              </Button>
+            </Link>
+          );
+        })}
       </div>
 
       {/* Chat History */}

@@ -74,6 +74,7 @@ cp conf.yaml.example conf.yaml
 - **RAG 提供者** (`ENV.RAG_PROVIDER`, `ENV.RAGFLOW_API_URL`): 配置知识库服务
 - **数据库连接** (`ENV.LANGGRAPH_CHECKPOINT_DB_URL`): 配置 PostgreSQL 连接
 - **其他环境变量**: 在 `ENV` 部分配置所有必要的环境变量
+- **扩展页入口**：`ZOTERO` 配置「我的文库」；`VASP_WORKFLOW: { enabled: true }` 配置「VASP 工作流」侧边栏入口
 
 详细配置请参考 [配置指南](docs/configuration_guide.md)
 
@@ -166,6 +167,17 @@ pnpm start
 - 背景调研功能
 - 多轮澄清对话
 - 对话历史管理
+
+### 我的文库
+- 当 `conf.yaml` 中 ZOTERO 已配置且启用时，侧边栏会显示「我的文库」入口
+- 支持 Zotero 文献搜索、详情/全文查看、多篇文献分析（摘要/对比/关键发现）
+- 菜单由后端 `GET /api/chat/extension-menus` 动态返回，无需修改前端路由
+
+### VASP 工作流
+- 当 `conf.yaml` 中 `VASP_WORKFLOW.enabled: true` 时，侧边栏会显示「VASP 工作流」入口（与「我的文库」同一扩展菜单逻辑）
+- 支持全流程：选择流程类型 → 创建/选择结构（如预设 Si 金刚石）→ 生成 VASP 输入（INCAR、KPOINTS、POSCAR、gen_potcar.sh、submit.sh）→ **提交到 HPC**（填写主机、用户名、远程目录、SSH 密钥或密码，上传并 sbatch）→ 查看作业状态
+- 前置条件：后端需安装 pymatgen、paramiko（vaspilot-skill 依赖）；提交到 HPC 需配置 SSH（密钥或密码）；可选配置 `potcar_dir`、MP API Key 等
+- 赝势（POTCAR）由 vasp-potcar-skill 参与生成（gen_potcar.sh），无需在前端单独调用
 
 ### 工具箱
 - 搜索引擎集成（Tavily, Brave）

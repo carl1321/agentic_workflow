@@ -91,17 +91,22 @@ def init_sam_design_menu():
                     else:
                         logger.error(f"创建权限 {perm['code']} 失败")
             
-            # 2. 创建菜单（使用 read 权限）
+            # 2. 创建菜单（使用 read 权限），路由为 /newSam
             cursor.execute("SELECT id FROM menus WHERE code = 'sam-design'")
             existing_menu = cursor.fetchone()
             if existing_menu:
-                logger.info("SAM分子设计菜单已存在，跳过创建")
+                logger.info("SAM分子设计菜单已存在，更新 path 为 /newSam")
                 menu_id = _as_uuid(existing_menu["id"])
+                cursor.execute(
+                    "UPDATE menus SET path = %s WHERE id = %s",
+                    ("/newSam", str(menu_id)),
+                )
+                conn.commit()
             else:
                 menu_id = MenuAdminDB.create_menu(
                     code="sam-design",
                     name="SAM分子设计",
-                    path="/sam-design",
+                    path="/newSam",
                     icon="FlaskConical",
                     menu_type="menu",
                     permission_code="sam-design:read",  # 使用 read 权限

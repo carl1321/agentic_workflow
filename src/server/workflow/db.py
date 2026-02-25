@@ -902,6 +902,27 @@ def list_workflows(
 
 # ============= 草稿CRUD =============
 
+def _build_spec_from_graph(graph: Dict[str, Any], name: str = "未命名工作流") -> Dict[str, Any]:
+    """从 graph 构建最小 spec，供 workflow_drafts.spec 使用（当表有 spec 列且 NOT NULL 时）"""
+    nodes = graph.get("nodes", [])
+    return {
+        "name": name,
+        "nodes": [
+            {
+                "id": n["id"],
+                "type": n["type"],
+                "position": n.get("position", {"x": 0, "y": 0}),
+                "data": {**n.get("data", {}), "nodeName": n.get("data", {}).get("taskName", n.get("data", {}).get("nodeName", n["id"]))},
+            }
+            for n in nodes
+        ],
+        "edges": [
+            {"id": e["id"], "source": e["source"], "target": e["target"], "sourceHandle": e.get("sourceHandle"), "targetHandle": e.get("targetHandle")}
+            for e in graph.get("edges", [])
+        ],
+    }
+
+
 def save_draft(
     conn: psycopg.Connection,
     workflow_id: UUID,
@@ -909,6 +930,7 @@ def save_draft(
     created_by: UUID,
     is_autosave: bool = False,
     validation: Optional[Dict[str, Any]] = None,
+    spec: Optional[Dict[str, Any]] = None,
 ) -> UUID:
     """
     保存工作流草稿
@@ -920,6 +942,7 @@ def save_draft(
         created_by: 创建者ID
         is_autosave: 是否为自动保存
         validation: 验证结果（可选）
+        spec: 执行规范（可选，若 workflow_drafts 表有 spec 列且 NOT NULL 时需提供，未提供则从 graph 构建）
         
     Returns:
         草稿ID
@@ -935,14 +958,15 @@ def save_draft(
         version = row['next_version'] if row else 1
     
     draft_id = uuid4()
+    spec_val = spec if spec is not None else _build_spec_from_graph(graph)
     
     with conn.cursor() as cursor:
         cursor.execute("""
             INSERT INTO workflow_drafts (
-                id, workflow_id, version, is_autosave, graph, validation, created_by
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                id, workflow_id, spec, version, is_autosave, graph, validation, created_by
+            ) VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s)
         """, (
-            draft_id, workflow_id, version, is_autosave,
+            draft_id, workflow_id, json.dumps(spec_val), version, is_autosave,
             json.dumps(graph), json.dumps(validation) if validation else None, created_by
         ))
     
@@ -1039,6 +1063,19 @@ def delete_draft(conn: psycopg.Connection, workflow_id: UUID, version: Optional[
 
 # ============= 发布CRUD =============
 
+def _get_release_version_column(conn: psycopg.Connection) -> str:
+    """检测 workflow_releases 表的版本列名（release_version 或 version）"""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'workflow_releases' AND column_name IN ('release_version', 'version')
+            """
+        )
+        row = cursor.fetchone()
+    return row["column_name"] if row else "release_version"
+
+
 def create_release(
     conn: psycopg.Connection,
     workflow_id: UUID,
@@ -1062,27 +1099,33 @@ def create_release(
     Returns:
         发布ID
     """
-    # 获取当前最大发布版本号
+    version_col = _get_release_version_column(conn)
+    # 兼容 INTEGER 与 VARCHAR：用 ::text 避免类型不匹配
     with conn.cursor() as cursor:
-        cursor.execute("""
-            SELECT COALESCE(MAX(release_version), 0) + 1 as next_version
+        cursor.execute(
+            f"""
+            SELECT (COALESCE(MAX({version_col})::text, '0')::int + 1) AS next_version
             FROM workflow_releases
             WHERE workflow_id = %s
-        """, (workflow_id,))
+            """,
+            (workflow_id,),
+        )
         row = cursor.fetchone()
-        release_version = row['next_version'] if row else 1
-    
+    next_ver = row["next_version"] if row else 1
+    release_version = str(next_ver) if isinstance(next_ver, (int, float)) else next_ver
+
     release_id = uuid4()
     
     with conn.cursor() as cursor:
-        cursor.execute("""
+        cursor.execute(
+            f"""
             INSERT INTO workflow_releases (
-                id, workflow_id, release_version, source_draft_id, spec, checksum, created_by
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            release_id, workflow_id, release_version, source_draft_id,
-            json.dumps(spec), checksum, created_by
-        ))
+                id, workflow_id, {version_col}, source_draft_id, spec, checksum, created_by
+            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+            """,
+            (release_id, workflow_id, release_version, source_draft_id,
+             json.dumps(spec), checksum, created_by),
+        )
     
     # 更新工作流的current_release_id和status（仅在正式发布时）
     if set_current:
@@ -1127,12 +1170,16 @@ def list_releases(conn: psycopg.Connection, workflow_id: UUID) -> List[Dict[str,
     Returns:
         发布列表
     """
+    version_col = _get_release_version_column(conn)
     with conn.cursor() as cursor:
-        cursor.execute("""
+        cursor.execute(
+            f"""
             SELECT * FROM workflow_releases
             WHERE workflow_id = %s
-            ORDER BY release_version DESC
-        """, (workflow_id,))
+            ORDER BY {version_col} DESC
+            """,
+            (workflow_id,),
+        )
         releases = []
         for row in cursor.fetchall():
             release = dict(row)

@@ -1,0 +1,1271 @@
+# VASP赝势选择规则知识库
+# 版本: 2.0
+# 来源: VASP Wiki - Choosing pseudopotentials & Available pseudopotentials
+# 说明: 此文件定义了各元素的赝势选择规则，基于VASP官方推荐
+
+version: "2.0"
+default_functional: "PBE"
+recommended_potcar_set: "potpaw_PBE.64"
+
+# ============================================================
+# 后缀含义说明
+# ============================================================
+suffix_meanings:
+  _s:
+    name: "soft"
+    description: "软赝势，核半径大，截断能低"
+    pros: "计算速度快，适合大体系"
+    cons: "可迁移性和精度较低"
+    restrictions:
+      - "禁止用于Hartree-Fock和杂化泛函计算"
+      - "禁止用于切换交换关联泛函的计算"
+  _h:
+    name: "hard"
+    description: "硬赝势，核半径小，截断能高"
+    pros: "精度高，可迁移性好"
+    cons: "计算代价大"
+    recommended_for:
+      - "短键体系（如双原子分子H2O, O2, CO, N2）"
+      - "需要极高精度的参考计算"
+  _pv:
+    name: "p-valence"
+    description: "半芯p态作为价态处理"
+    pros: "精度和可迁移性提高"
+    cons: "计算代价略增"
+    recommended_for:
+      - "过渡金属化合物"
+      - "需要精确描述磁性的计算"
+  _sv:
+    name: "s-valence"
+    description: "半芯s和p态都作为价态处理"
+    pros: "精度和可迁移性最高"
+    cons: "计算代价较大"
+    recommended_for:
+      - "碱金属和碱土金属"
+      - "需要高精度的过渡金属计算"
+      - "DFT+U计算"
+  _d:
+    name: "d-valence"
+    description: "半芯d态作为价态处理"
+    pros: "对p区元素更准确"
+    cons: "价电子数增加"
+    recommended_for:
+      - "Ga, Ge, In, Sn等p区元素"
+      - "Tl-At重p区元素"
+  _GW:
+    name: "GW"
+    description: "优化用于高能散射性质，适合非占据态"
+    pros: "对费米能以上的态描述更好"
+    cons: "截断能通常较高"
+    recommended_for:
+      - "GW计算"
+      - "BSE计算"
+      - "光学性质计算"
+      - "多体微扰理论计算"
+  _AE:
+    name: "all-electron"
+    description: "全电子赝势，核半径极小"
+    available_for: ["H", "He", "Li"]
+    pros: "原子核区波函数最准确"
+    cons: "截断能极高（~1000-2000 eV）"
+  _2:
+    name: "divalent"
+    description: "镧系元素二价态，f电子冻结在芯中"
+    available_for: ["Eu", "Yb", "Er"]
+  _3:
+    name: "trivalent"
+    description: "镧系元素三价态，f电子冻结在芯中"
+    available_for: ["Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu"]
+
+# ============================================================
+# 计算类型定义
+# ============================================================
+calculation_types:
+  standard:
+    description: "标准DFT计算（结构优化、电子结构）"
+    notes: "不需要大量非占据态的计算"
+  gw:
+    description: "GW计算及多体微扰理论"
+    notes: "必须使用_GW赝势"
+    requires_potcar_suffix: "_GW"
+  optical:
+    description: "光学性质计算"
+    notes: "必须使用_GW赝势"
+    requires_potcar_suffix: "_GW"
+  hybrid:
+    description: "杂化泛函计算（HSE, PBE0等）"
+    notes: "禁止使用_s软赝势"
+    forbidden_potcar_suffix: "_s"
+  hf:
+    description: "Hartree-Fock计算"
+    notes: "禁止使用_s软赝势"
+    forbidden_potcar_suffix: "_s"
+  magnetic:
+    description: "磁性结构计算"
+    notes: "建议使用_pv或_sv包含半芯态"
+  phonon:
+    description: "声子计算"
+    notes: "可使用软赝势节省计算，但需测试"
+  dft_plus_u:
+    description: "DFT+U计算"
+    notes: "建议使用_pv或_sv以正确描述相关效应"
+  reference:
+    description: "极高精度参考计算"
+    notes: "使用_h或_sv_GW赝势，ENCUT=1000 eV"
+
+# ============================================================
+# 元素赝势规则 - 完整周期表
+# ============================================================
+elements:
+  # --------------------------------------------------------
+  # 第1周期
+  # --------------------------------------------------------
+  H:
+    default: "H"
+    gw: "H_GW"
+    reference: "H_GW"
+    fast: "H_s"
+    enmax:
+      H: 250
+      H_s: 200
+      H_h: 700
+      H_GW: 300
+      H_AE: 1000
+    variants:
+      - name: "H"
+        valence: 1
+        description: "标准氢赝势"
+      - name: "H_s"
+        valence: 1
+        description: "软赝势"
+      - name: "H_h"
+        valence: 1
+        description: "硬赝势"
+      - name: "H_GW"
+        valence: 1
+        description: "GW优化赝势"
+    notes: "存在分数价电子变体（H.25-H1.75）用于表面悬挂键钝化"
+    fractional_variants: ["H.25", "H.33", "H.42", "H.5", "H.58", "H.66", "H.75", "H1.25", "H1.33", "H1.5", "H1.66", "H1.75"]
+
+  He:
+    default: "He"
+    gw: "He_GW"
+    enmax:
+      He: 479
+      He_GW: 406
+
+  # --------------------------------------------------------
+  # 第2周期 - 碱金属/碱土金属
+  # --------------------------------------------------------
+  Li:
+    default: "Li_sv"
+    gw: "Li_sv_GW"
+    reference: "Li_sv_GW"
+    fast: "Li"
+    reason: "Li_sv包含1s半芯态，可迁移性远高于标准Li"
+    enmax:
+      Li: 140
+      Li_sv: 499
+      Li_sv_GW: 434
+    variants:
+      - name: "Li"
+        valence: 1
+        description: "标准赝势（仅2s价态）"
+      - name: "Li_sv"
+        valence: 3
+        description: "包含1s半芯态，推荐使用"
+    notes: "电池材料等应用强烈建议使用Li_sv"
+
+  Be:
+    default: "Be"
+    gw: "Be_sv_GW"
+    reference: "Be_sv_GW"
+    enmax:
+      Be: 248
+      Be_sv: 309
+      Be_sv_GW: 537
+
+  # --------------------------------------------------------
+  # 第2周期 - 第一行元素 (B, C, N, O, F)
+  # 重要：这些元素有标准、硬、软三种版本
+  # --------------------------------------------------------
+  B:
+    default: "B"
+    accurate: "B_h"
+    gw: "B_GW"
+    fast: "B_s"
+    reason: "标准版本适合大多数计算，短键用_h"
+    enmax:
+      B: 319
+      B_h: 700
+      B_s: 269
+      B_GW: 319
+    notes: "HF/杂化泛函必须用标准或_h，禁止_s"
+
+  C:
+    default: "C"
+    accurate: "C_h"
+    gw: "C_GW"
+    fast: "C_s"
+    reason: "标准版本ENCUT~400 eV足够大多数应用"
+    enmax:
+      C: 400
+      C_h: 742
+      C_s: 274
+      C_GW: 414
+    notes: "含有CO, C-C短键的体系建议用C_h"
+
+  N:
+    default: "N"
+    accurate: "N_h"
+    gw: "N_GW"
+    fast: "N_s"
+    reason: "标准版本适合大多数计算"
+    enmax:
+      N: 400
+      N_h: 756
+      N_s: 280
+      N_GW: 421
+    notes: "含N2分子或N-N短键的体系建议用N_h"
+
+  O:
+    default: "O"
+    accurate: "O_h"
+    gw: "O_GW"
+    reference: "O_h_GW"
+    fast: "O_s"
+    reason: "标准版本适用于大多数氧化物"
+    enmax:
+      O: 400
+      O_h: 765
+      O_s: 283
+      O_GW: 415
+      O_h_GW: 765
+    notes: |
+      - O_s可用于VxOy, TiO2, CeO2等氧化物但不适合沸石
+      - HF/杂化泛函禁止使用O_s
+      - 含O2, H2O, CO等短键分子的体系建议用O_h
+
+  F:
+    default: "F"
+    accurate: "F_h"
+    gw: "F_GW"
+    fast: "F_s"
+    enmax:
+      F: 400
+      F_h: 773
+      F_s: 290
+      F_GW: 488
+    notes: "含F2分子或短F键的体系建议用F_h"
+
+  Ne:
+    default: "Ne"
+    gw: "Ne_GW"
+    enmax:
+      Ne: 344
+      Ne_GW: 432
+
+  # --------------------------------------------------------
+  # 第3周期 - 碱金属/碱土金属/主族
+  # --------------------------------------------------------
+  Na:
+    default: "Na_pv"
+    accurate: "Na_sv"
+    gw: "Na_sv_GW"
+    fast: "Na"
+    reason: "Na_pv包含2p半芯态，适合大多数应用"
+    enmax:
+      Na: 102
+      Na_pv: 260
+      Na_sv: 646
+      Na_sv_GW: 373
+    notes: "轻碱金属Na用_pv通常足够"
+
+  Mg:
+    default: "Mg"
+    accurate: "Mg_pv"
+    gw: "Mg_sv_GW"
+    fast: "Mg"
+    enmax:
+      Mg: 200
+      Mg_pv: 404
+      Mg_sv: 495
+      Mg_sv_GW: 430
+
+  Al:
+    default: "Al"
+    gw: "Al_GW"
+    enmax:
+      Al: 240
+      Al_GW: 240
+
+  Si:
+    default: "Si"
+    gw: "Si_GW"
+    enmax:
+      Si: 245
+      Si_GW: 245
+
+  P:
+    default: "P"
+    accurate: "P_h"
+    gw: "P_GW"
+    enmax:
+      P: 255
+      P_h: 390
+      P_GW: 255
+    notes: "含P2分子或P-P短键用P_h"
+
+  S:
+    default: "S"
+    accurate: "S_h"
+    gw: "S_GW"
+    enmax:
+      S: 259
+      S_h: 402
+      S_GW: 259
+    notes: "含S2分子或S-S短键用S_h"
+
+  Cl:
+    default: "Cl"
+    accurate: "Cl_h"
+    gw: "Cl_GW"
+    enmax:
+      Cl: 262
+      Cl_h: 409
+      Cl_GW: 262
+    notes: "含Cl2分子或Cl-Cl短键用Cl_h"
+
+  Ar:
+    default: "Ar"
+    gw: "Ar_GW"
+    enmax:
+      Ar: 266
+      Ar_GW: 291
+
+  # --------------------------------------------------------
+  # 第4周期 - 碱金属/碱土金属
+  # --------------------------------------------------------
+  K:
+    default: "K_sv"
+    accurate: "K_sv"
+    gw: "K_sv_GW"
+    fast: "K_pv"
+    reason: "K_sv精度最高"
+    enmax:
+      K_pv: 117
+      K_sv: 259
+      K_sv_GW: 249
+
+  Ca:
+    default: "Ca_sv"
+    accurate: "Ca_sv"
+    gw: "Ca_sv_GW"
+    fast: "Ca_pv"
+    reason: "Ca_sv精度最高"
+    enmax:
+      Ca_pv: 120
+      Ca_sv: 267
+      Ca_sv_GW: 281
+
+  # --------------------------------------------------------
+  # 3d过渡金属
+  # 规则：p态作为价态通常必要，HF/杂化泛函建议用_sv
+  # --------------------------------------------------------
+  Sc:
+    default: "Sc_sv"
+    accurate: "Sc_sv"
+    gw: "Sc_sv_GW"
+    fast: "Sc"
+    enmax:
+      Sc: 155
+      Sc_sv: 223
+      Sc_sv_GW: 379
+
+  Ti:
+    default: "Ti_sv"
+    accurate: "Ti_sv"
+    gw: "Ti_sv_GW"
+    fast: "Ti_pv"
+    reason: "Ti_sv包含3s3p半芯态，对钛化合物更准确"
+    enmax:
+      Ti: 178
+      Ti_pv: 222
+      Ti_sv: 275
+      Ti_sv_GW: 384
+    notes: "TiO2等钛氧化物用Ti_pv通常足够"
+
+  V:
+    default: "V_sv"
+    accurate: "V_sv"
+    gw: "V_sv_GW"
+    fast: "V_pv"
+    enmax:
+      V: 193
+      V_pv: 264
+      V_sv: 264
+      V_sv_GW: 382
+
+  Cr:
+    default: "Cr_pv"
+    accurate: "Cr_sv"
+    gw: "Cr_sv_GW"
+    fast: "Cr"
+    enmax:
+      Cr: 227
+      Cr_pv: 266
+      Cr_sv: 395
+      Cr_sv_GW: 385
+
+  Mn:
+    default: "Mn_pv"
+    accurate: "Mn_sv"
+    gw: "Mn_sv_GW"
+    fast: "Mn"
+    enmax:
+      Mn: 270
+      Mn_pv: 270
+      Mn_sv: 387
+      Mn_sv_GW: 385
+    notes: "磁性计算建议用Mn_pv"
+
+  Fe:
+    default: "Fe"
+    accurate: "Fe_pv"
+    gw: "Fe_sv_GW"
+    fast: "Fe"
+    reason: "标准Fe赝势对大多数铁化合物足够"
+    enmax:
+      Fe: 268
+      Fe_pv: 293
+      Fe_sv: 391
+      Fe_sv_GW: 388
+    notes: "磁性计算和DFT+U建议使用Fe_pv"
+
+  Co:
+    default: "Co"
+    accurate: "Co_pv"
+    gw: "Co_sv_GW"
+    fast: "Co"
+    reason: "Co标准赝势已足够精确"
+    enmax:
+      Co: 268
+      Co_pv: 271
+      Co_sv: 390
+      Co_sv_GW: 387
+
+  Ni:
+    default: "Ni"
+    accurate: "Ni_pv"
+    gw: "Ni_sv_GW"
+    dft_plus_u: "Ni_pv"
+    fast: "Ni"
+    reason: "标准Ni足够大多数应用"
+    enmax:
+      Ni: 270
+      Ni_pv: 368
+      Ni_sv_GW: 390
+    notes: |
+      DFT+U计算需注意：
+      - 标准Ni在U较大时会低估晶格常数
+      - Ni_pv改善明显
+      - Ni_sv_GW最准确但计算代价大
+
+  Cu:
+    default: "Cu"
+    accurate: "Cu_pv"
+    gw: "Cu_sv_GW"
+    fast: "Cu"
+    enmax:
+      Cu: 295
+      Cu_pv: 369
+      Cu_sv_GW: 467
+
+  Zn:
+    default: "Zn"
+    accurate: "Zn"
+    gw: "Zn_sv_GW"
+    fast: "Zn"
+    enmax:
+      Zn: 277
+      Zn_sv_GW: 402
+
+  # --------------------------------------------------------
+  # 4p元素 (Ga-Kr)
+  # Ga, Ge需要_d包含3d态
+  # --------------------------------------------------------
+  Ga:
+    default: "Ga_d"
+    accurate: "Ga_d"
+    gw: "Ga_d_GW"
+    fast: "Ga"
+    reason: "_d赝势包含3d10态，对Ga化合物更准确"
+    enmax:
+      Ga: 135
+      Ga_d: 283
+      Ga_h: 405
+      Ga_d_GW: 405
+
+  Ge:
+    default: "Ge_d"
+    accurate: "Ge_d"
+    gw: "Ge_d_GW"
+    fast: "Ge"
+    reason: "_d赝势包含3d10态"
+    enmax:
+      Ge: 174
+      Ge_d: 310
+      Ge_h: 410
+      Ge_d_GW: 375
+
+  As:
+    default: "As"
+    accurate: "As_d"
+    gw: "As_GW"
+    enmax:
+      As: 209
+      As_d: 289
+      As_GW: 209
+
+  Se:
+    default: "Se"
+    gw: "Se_GW"
+    enmax:
+      Se: 212
+      Se_GW: 212
+
+  Br:
+    default: "Br"
+    gw: "Br_GW"
+    enmax:
+      Br: 216
+      Br_GW: 216
+
+  Kr:
+    default: "Kr"
+    gw: "Kr_GW"
+    enmax:
+      Kr: 185
+      Kr_GW: 252
+
+  # --------------------------------------------------------
+  # 第5周期 - 碱金属/碱土金属
+  # Rb, Sr必须用_sv
+  # --------------------------------------------------------
+  Rb:
+    default: "Rb_sv"
+    accurate: "Rb_sv"
+    gw: "Rb_sv_GW"
+    fast: "Rb_pv"
+    reason: "Rb必须用_sv包含4s4p态"
+    enmax:
+      Rb_pv: 122
+      Rb_sv: 220
+      Rb_sv_GW: 221
+
+  Sr:
+    default: "Sr_sv"
+    accurate: "Sr_sv"
+    gw: "Sr_sv_GW"
+    reason: "Sr必须用_sv包含4s4p态"
+    enmax:
+      Sr_sv: 229
+      Sr_sv_GW: 225
+
+  # --------------------------------------------------------
+  # 4d过渡金属
+  # --------------------------------------------------------
+  Y:
+    default: "Y_sv"
+    gw: "Y_sv_GW"
+    enmax:
+      Y_sv: 203
+      Y_sv_GW: 340
+
+  Zr:
+    default: "Zr_sv"
+    gw: "Zr_sv_GW"
+    enmax:
+      Zr_sv: 230
+      Zr_sv_GW: 346
+
+  Nb:
+    default: "Nb_sv"
+    gw: "Nb_sv_GW"
+    fast: "Nb_pv"
+    enmax:
+      Nb_pv: 209
+      Nb_sv: 293
+      Nb_sv_GW: 354
+
+  Mo:
+    default: "Mo_sv"
+    gw: "Mo_sv_GW"
+    fast: "Mo_pv"
+    enmax:
+      Mo: 225
+      Mo_pv: 225
+      Mo_sv: 243
+      Mo_sv_GW: 345
+
+  Tc:
+    default: "Tc_pv"
+    gw: "Tc_sv_GW"
+    enmax:
+      Tc: 229
+      Tc_pv: 264
+      Tc_sv: 319
+      Tc_sv_GW: 351
+
+  Ru:
+    default: "Ru_pv"
+    gw: "Ru_sv_GW"
+    fast: "Ru"
+    enmax:
+      Ru: 213
+      Ru_pv: 240
+      Ru_sv: 319
+      Ru_sv_GW: 348
+
+  Rh:
+    default: "Rh_pv"
+    gw: "Rh_sv_GW"
+    fast: "Rh"
+    enmax:
+      Rh: 229
+      Rh_pv: 247
+      Rh_sv_GW: 351
+
+  Pd:
+    default: "Pd"
+    gw: "Pd_sv_GW"
+    enmax:
+      Pd: 251
+      Pd_pv: 251
+      Pd_sv_GW: 356
+
+  Ag:
+    default: "Ag"
+    gw: "Ag_sv_GW"
+    enmax:
+      Ag: 250
+      Ag_pv: 298
+      Ag_sv_GW: 354
+
+  Cd:
+    default: "Cd"
+    gw: "Cd_sv_GW"
+    enmax:
+      Cd: 274
+      Cd_sv_GW: 362
+
+  # --------------------------------------------------------
+  # 5p元素 (In-Xe)
+  # In, Sn需要_d包含4d态
+  # --------------------------------------------------------
+  In:
+    default: "In_d"
+    gw: "In_d_GW"
+    fast: "In"
+    reason: "_d赝势包含4d10态"
+    enmax:
+      In: 96
+      In_d: 239
+      In_d_GW: 279
+
+  Sn:
+    default: "Sn_d"
+    gw: "Sn_d_GW"
+    fast: "Sn"
+    reason: "_d赝势包含4d10态"
+    enmax:
+      Sn: 103
+      Sn_d: 241
+      Sn_d_GW: 260
+
+  Sb:
+    default: "Sb"
+    gw: "Sb_d_GW"
+    enmax:
+      Sb: 172
+      Sb_d_GW: 263
+
+  Te:
+    default: "Te"
+    gw: "Te_GW"
+    enmax:
+      Te: 175
+      Te_GW: 175
+
+  I:
+    default: "I"
+    gw: "I_GW"
+    enmax:
+      I: 176
+      I_GW: 176
+
+  Xe:
+    default: "Xe"
+    gw: "Xe_GW"
+    enmax:
+      Xe: 153
+      Xe_GW: 180
+
+  # --------------------------------------------------------
+  # 第6周期 - 碱金属/碱土金属
+  # Cs, Ba必须用_sv
+  # --------------------------------------------------------
+  Cs:
+    default: "Cs_sv"
+    gw: "Cs_sv_GW"
+    reason: "Cs必须用_sv包含5s5p态"
+    enmax:
+      Cs_sv: 221
+      Cs_sv_GW: 198
+
+  Ba:
+    default: "Ba_sv"
+    gw: "Ba_sv_GW"
+    reason: "Ba必须用_sv包含5s5p态"
+    enmax:
+      Ba_sv: 187
+      Ba_sv_GW: 267
+
+  # --------------------------------------------------------
+  # 镧系元素 (La-Lu)
+  # 重要：f电子自相互作用问题严重
+  # 如果不关心f磁性，建议使用_2或_3冻结f电子
+  # --------------------------------------------------------
+  La:
+    default: "La"
+    gw: "La_GW"
+    reference: "La_GW"
+    fast: "La_s"
+    enmax:
+      La: 219
+      La_s: 137
+      La_GW: 314
+    notes: "镧系第一个元素，f电子问题在La/Ce开始出现"
+
+  Ce:
+    default: "Ce"
+    trivalent: "Ce_3"
+    gw: "Ce_GW"
+    enmax:
+      Ce: 273
+      Ce_3: 177
+      Ce_h: 300
+      Ce_GW: 305
+    notes: |
+      - 标准Ce适合四价Ce（如CeO2）
+      - Ce_3用于三价Ce（f电子冻结在芯中）
+
+  Pr:
+    default: "Pr_3"
+    full_f: "Pr"
+    gw: "Pr_h"
+    reason: "Pr_3将f电子冻结在芯中，避免自相互作用问题"
+    enmax:
+      Pr: 337
+      Pr_3: 182
+      Pr_h: 401
+
+  Nd:
+    default: "Nd_3"
+    full_f: "Nd"
+    gw: "Nd_h"
+    enmax:
+      Nd: 338
+      Nd_3: 183
+      Nd_h: 402
+
+  Pm:
+    default: "Pm_3"
+    full_f: "Pm"
+    gw: "Pm_h"
+    enmax:
+      Pm: 340
+      Pm_3: 177
+      Pm_h: 404
+
+  Sm:
+    default: "Sm_3"
+    full_f: "Sm"
+    gw: "Sm_h"
+    enmax:
+      Sm: 341
+      Sm_3: 177
+      Sm_h: 405
+
+  Eu:
+    default: "Eu_2"
+    trivalent: "Eu_3"
+    full_f: "Eu"
+    gw: "Eu_h"
+    reason: "Eu常见二价态，Eu_2冻结f电子"
+    enmax:
+      Eu: 345
+      Eu_2: 99
+      Eu_3: 129
+      Eu_h: 403
+
+  Gd:
+    default: "Gd_3"
+    full_f: "Gd"
+    gw: "Gd_h"
+    reason: "Gd有半满4f7壳层，DFT描述相对准确"
+    enmax:
+      Gd: 343
+      Gd_3: 154
+      Gd_h: 407
+
+  Tb:
+    default: "Tb_3"
+    full_f: "Tb"
+    gw: "Tb_h"
+    enmax:
+      Tb: 341
+      Tb_3: 156
+      Tb_h: 405
+
+  Dy:
+    default: "Dy_3"
+    full_f: "Dy"
+    gw: "Dy_h"
+    enmax:
+      Dy: 342
+      Dy_3: 156
+      Dy_h: 406
+
+  Ho:
+    default: "Ho_3"
+    full_f: "Ho"
+    gw: "Ho_h"
+    enmax:
+      Ho: 344
+      Ho_3: 154
+      Ho_h: 416
+
+  Er:
+    default: "Er_3"
+    divalent: "Er_2"
+    full_f: "Er"
+    gw: "Er_h"
+    enmax:
+      Er: 346
+      Er_2: 120
+      Er_3: 155
+      Er_h: 430
+
+  Tm:
+    default: "Tm_3"
+    full_f: "Tm"
+    gw: "Tm_h"
+    enmax:
+      Tm: 344
+      Tm_3: 149
+      Tm_h: 420
+
+  Yb:
+    default: "Yb_2"
+    trivalent: "Yb_3"
+    full_f: "Yb"
+    gw: "Yb_h"
+    reason: "Yb常见二价态"
+    enmax:
+      Yb: 344
+      Yb_2: 113
+      Yb_3: 188
+      Yb_h: 409
+
+  Lu:
+    default: "Lu_3"
+    full_f: "Lu"
+    reference: "Lu"
+    reason: "Lu有满的4f14壳层"
+    enmax:
+      Lu: 256
+      Lu_3: 155
+
+  # --------------------------------------------------------
+  # 5d过渡金属
+  # 5d元素5p态较局域化（由于4f填充），标准赝势通常足够
+  # --------------------------------------------------------
+  Hf:
+    default: "Hf_pv"
+    accurate: "Hf_sv"
+    gw: "Hf_sv_GW"
+    fast: "Hf"
+    enmax:
+      Hf: 220
+      Hf_pv: 220
+      Hf_sv: 237
+      Hf_sv_GW: 309
+
+  Ta:
+    default: "Ta_pv"
+    gw: "Ta_sv_GW"
+    fast: "Ta"
+    enmax:
+      Ta: 224
+      Ta_pv: 224
+      Ta_sv_GW: 286
+
+  W:
+    default: "W_sv"
+    gw: "W_sv_GW"
+    fast: "W"
+    enmax:
+      W: 223
+      W_sv: 223
+      W_sv_GW: 317
+
+  Re:
+    default: "Re"
+    gw: "Re_sv_GW"
+    enmax:
+      Re: 226
+      Re_pv: 226
+      Re_sv_GW: 317
+
+  Os:
+    default: "Os"
+    gw: "Os_sv_GW"
+    enmax:
+      Os: 228
+      Os_pv: 228
+      Os_sv_GW: 320
+
+  Ir:
+    default: "Ir"
+    gw: "Ir_sv_GW"
+    enmax:
+      Ir: 211
+      Ir_sv_GW: 320
+
+  Pt:
+    default: "Pt"
+    gw: "Pt_sv_GW"
+    enmax:
+      Pt: 230
+      Pt_pv: 295
+      Pt_sv_GW: 324
+
+  Au:
+    default: "Au"
+    gw: "Au_sv_GW"
+    enmax:
+      Au: 230
+      Au_sv_GW: 307
+
+  Hg:
+    default: "Hg"
+    gw: "Hg_sv_GW"
+    enmax:
+      Hg: 233
+      Hg_sv_GW: 312
+
+  # --------------------------------------------------------
+  # 6p元素 (Tl-Rn)
+  # Tl-At需要_d包含5d态
+  # --------------------------------------------------------
+  Tl:
+    default: "Tl_d"
+    gw: "Tl_d_GW"
+    fast: "Tl"
+    reason: "_d赝势包含5d10态"
+    enmax:
+      Tl: 90
+      Tl_d: 237
+      Tl_d_GW: 237
+
+  Pb:
+    default: "Pb_d"
+    gw: "Pb_d_GW"
+    fast: "Pb"
+    reason: "_d赝势包含5d10态"
+    enmax:
+      Pb: 98
+      Pb_d: 238
+      Pb_d_GW: 238
+
+  Bi:
+    default: "Bi_d"
+    gw: "Bi_d_GW"
+    fast: "Bi"
+    reason: "_d赝势包含5d10态"
+    enmax:
+      Bi: 105
+      Bi_d: 243
+      Bi_d_GW: 262
+
+  Po:
+    default: "Po_d"
+    gw: "Po_d_GW"
+    fast: "Po"
+    enmax:
+      Po: 160
+      Po_d: 265
+      Po_d_GW: 268
+
+  At:
+    default: "At"
+    gw: "At_d_GW"
+    enmax:
+      At: 161
+      At_d_GW: 266
+
+  Rn:
+    default: "Rn"
+    gw: "Rn_d_GW"
+    enmax:
+      Rn: 151
+      Rn_d_GW: 267
+
+  # --------------------------------------------------------
+  # 第7周期 - 碱金属/碱土金属/锕系
+  # --------------------------------------------------------
+  Fr:
+    default: "Fr_sv"
+    enmax:
+      Fr_sv: 215
+
+  Ra:
+    default: "Ra_sv"
+    enmax:
+      Ra_sv: 237
+
+  # 锕系元素
+  Ac:
+    default: "Ac"
+    reference: "Ac"
+    enmax:
+      Ac: 172
+
+  Th:
+    default: "Th"
+    reference: "Th"
+    fast: "Th_s"
+    enmax:
+      Th: 247
+      Th_s: 169
+
+  Pa:
+    default: "Pa"
+    reference: "Pa"
+    fast: "Pa_s"
+    enmax:
+      Pa: 252
+      Pa_s: 194
+
+  U:
+    default: "U"
+    reference: "U"
+    fast: "U_s"
+    enmax:
+      U: 253
+      U_s: 209
+
+  Np:
+    default: "Np"
+    reference: "Np"
+    fast: "Np_s"
+    enmax:
+      Np: 254
+      Np_s: 208
+
+  Pu:
+    default: "Pu"
+    reference: "Pu"
+    fast: "Pu_s"
+    enmax:
+      Pu: 254
+      Pu_s: 208
+
+  Am:
+    default: "Am"
+    reference: "Am"
+    enmax:
+      Am: 256
+
+  Cm:
+    default: "Cm"
+    reference: "Cm"
+    enmax:
+      Cm: 258
+
+# ============================================================
+# 计算场景规则
+# ============================================================
+scenario_rules:
+  battery_cathode:
+    description: "电池正极材料（如LiFePO4, LiCoO2）"
+    element_overrides:
+      Li: "Li_sv"
+      Fe: "Fe_pv"
+      Co: "Co"
+      Ni: "Ni_pv"
+      Mn: "Mn_pv"
+    notes: "锂离子电池材料建议使用半芯态赝势提高精度"
+
+  perovskite:
+    description: "钙钛矿材料（ABO3结构）"
+    element_overrides:
+      Ca: "Ca_sv"
+      Sr: "Sr_sv"
+      Ba: "Ba_sv"
+      Ti: "Ti_pv"
+      Zr: "Zr_sv"
+    notes: "钙钛矿需要准确描述A位阳离子"
+
+  magnetic:
+    description: "磁性材料计算"
+    element_overrides:
+      Fe: "Fe_pv"
+      Co: "Co_pv"
+      Ni: "Ni_pv"
+      Mn: "Mn_pv"
+      Cr: "Cr_pv"
+    notes: "磁性计算需要_pv或_sv以正确描述自旋极化"
+
+  semiconductor:
+    description: "半导体材料"
+    element_overrides:
+      Ga: "Ga_d"
+      Ge: "Ge_d"
+      In: "In_d"
+      Sn: "Sn_d"
+    notes: "III-V和IV族半导体需要_d赝势"
+
+  catalyst:
+    description: "催化剂表面计算"
+    element_overrides:
+      Pt: "Pt"
+      Pd: "Pd"
+      Rh: "Rh_pv"
+      Ru: "Ru_pv"
+    notes: "贵金属催化剂标准赝势通常足够"
+
+  rare_earth:
+    description: "稀土化合物"
+    use_fixed_valence: true
+    notes: |
+      - 如果已知稀土元素价态且不关心f磁性，使用_2或_3
+      - 需要描述f电子磁性时使用标准赝势，但需注意DFT精度限制
+
+  high_pressure:
+    description: "高压计算"
+    prefer_hard: true
+    notes: "高压下建议使用_pv或_sv赝势，可能需要更高ENCUT"
+
+  gw_optical:
+    description: "GW或光学性质计算"
+    use_gw_potentials: true
+    notes: "必须使用_GW赝势"
+
+# ============================================================
+# 快速查找表 - VASP官方推荐的默认赝势
+# ============================================================
+vasp_recommended_defaults:
+  # 第1-2周期
+  H: "H"
+  He: "He"
+  Li: "Li_sv"
+  Be: "Be"
+  B: "B"
+  C: "C"
+  N: "N"
+  O: "O"
+  F: "F"
+  Ne: "Ne"
+  # 第3周期
+  Na: "Na_pv"
+  Mg: "Mg"
+  Al: "Al"
+  Si: "Si"
+  P: "P"
+  S: "S"
+  Cl: "Cl"
+  Ar: "Ar"
+  # 第4周期
+  K: "K_sv"
+  Ca: "Ca_sv"
+  Sc: "Sc_sv"
+  Ti: "Ti_sv"
+  V: "V_sv"
+  Cr: "Cr_pv"
+  Mn: "Mn_pv"
+  Fe: "Fe"
+  Co: "Co"
+  Ni: "Ni"
+  Cu: "Cu"
+  Zn: "Zn"
+  Ga: "Ga_d"
+  Ge: "Ge_d"
+  As: "As"
+  Se: "Se"
+  Br: "Br"
+  Kr: "Kr"
+  # 第5周期
+  Rb: "Rb_sv"
+  Sr: "Sr_sv"
+  Y: "Y_sv"
+  Zr: "Zr_sv"
+  Nb: "Nb_sv"
+  Mo: "Mo_sv"
+  Tc: "Tc_pv"
+  Ru: "Ru_pv"
+  Rh: "Rh_pv"
+  Pd: "Pd"
+  Ag: "Ag"
+  Cd: "Cd"
+  In: "In_d"
+  Sn: "Sn_d"
+  Sb: "Sb"
+  Te: "Te"
+  I: "I"
+  Xe: "Xe"
+  # 第6周期
+  Cs: "Cs_sv"
+  Ba: "Ba_sv"
+  La: "La"
+  Ce: "Ce"
+  Pr: "Pr_3"
+  Nd: "Nd_3"
+  Pm: "Pm_3"
+  Sm: "Sm_3"
+  Eu: "Eu_2"
+  Gd: "Gd_3"
+  Tb: "Tb_3"
+  Dy: "Dy_3"
+  Ho: "Ho_3"
+  Er: "Er_3"
+  Tm: "Tm_3"
+  Yb: "Yb_2"
+  Lu: "Lu_3"
+  Hf: "Hf_pv"
+  Ta: "Ta_pv"
+  W: "W_sv"
+  Re: "Re"
+  Os: "Os"
+  Ir: "Ir"
+  Pt: "Pt"
+  Au: "Au"
+  Hg: "Hg"
+  Tl: "Tl_d"
+  Pb: "Pb_d"
+  Bi: "Bi_d"
+  Po: "Po_d"
+  At: "At"
+  Rn: "Rn"
+  # 第7周期
+  Fr: "Fr_sv"
+  Ra: "Ra_sv"
+  Ac: "Ac"
+  Th: "Th"
+  Pa: "Pa"
+  U: "U"
+  Np: "Np"
+  Pu: "Pu"
+  Am: "Am"
+  Cm: "Cm"

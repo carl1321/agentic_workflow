@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import { resolveServiceURL } from "./resolve-service-url";
+import { useAuthStore } from "../store/auth-store";
 
 export interface ToolExecuteRequest {
   tool_name: string;
@@ -22,9 +23,12 @@ export async function executeTool(
   args: Record<string, unknown>
 ): Promise<string> {
   try {
+    const token = useAuthStore.getState().token;
+    const headers: HeadersInit = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const response = await fetch(resolveServiceURL("tools/execute"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ tool_name: toolName, arguments: args }),
     });
 

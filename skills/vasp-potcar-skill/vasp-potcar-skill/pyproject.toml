@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vasp-potcar-skill"
+version = "0.2.0"
+description = "VASP pseudopotential selection skill for Claude Code"
+requires-python = ">=3.10"
+dependencies = [
+    "pymatgen>=2024.1.1",
+    "pyyaml>=6.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+mongodb = ["pymongo>=4.6.0"]
+mp-api = ["mp-api>=0.39.0"]
+all = [
+    "pymongo>=4.6.0",
+    "mp-api>=0.39.0",
+]
+
+[project.scripts]
+vasp-potcar = "vasp_potcar_skill.cli:main"

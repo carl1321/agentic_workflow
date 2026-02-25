@@ -1,0 +1,36 @@
+[project]
+name = "vaspilot-skill"
+version = "0.2.0"
+description = "VASP automation skill for remote HPC clusters with high-throughput support"
+readme = "skill.md"
+requires-python = ">=3.9"
+dependencies = [
+    "paramiko>=3.0.0",
+    "pymatgen>=2024.1.1",
+    "pyyaml>=6.0",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+mp = [
+    "mp-api>=0.39.0",
+]
+viz = [
+    "matplotlib>=3.5.0",
+]
+full = [
+    "mp-api>=0.39.0",
+    "matplotlib>=3.5.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["skill_package*"]

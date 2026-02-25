@@ -274,11 +274,12 @@ def create_workflow_tables(conn):
             CREATE INDEX IF NOT EXISTS idx_workflows_status ON workflows(status);
         """)
         
-        # 2. 工作流草稿表
+        # 2. 工作流草稿表（spec 用于与 workflow_releases 一致，save_draft 会填充）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS workflow_drafts (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 workflow_id UUID NOT NULL,
+                spec JSONB,
                 version INTEGER NOT NULL,
                 is_autosave BOOLEAN DEFAULT FALSE,
                 graph JSONB NOT NULL,
@@ -293,6 +294,18 @@ def create_workflow_tables(conn):
             
             CREATE INDEX IF NOT EXISTS idx_workflow_drafts_workflow_id ON workflow_drafts(workflow_id);
             CREATE INDEX IF NOT EXISTS idx_workflow_drafts_version ON workflow_drafts(workflow_id, version);
+        """)
+        # 兼容已存在表：若 spec 列不存在则添加；若存在且为 NOT NULL 则 save_draft 会负责填充
+        cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'workflow_drafts' AND column_name = 'spec'
+                ) THEN
+                    ALTER TABLE workflow_drafts ADD COLUMN spec JSONB;
+                END IF;
+            END $$;
         """)
         
         # 3. 工作流发布表
@@ -313,8 +326,18 @@ def create_workflow_tables(conn):
             );
             
             CREATE INDEX IF NOT EXISTS idx_workflow_releases_workflow_id ON workflow_releases(workflow_id);
-            CREATE INDEX IF NOT EXISTS idx_workflow_releases_version ON workflow_releases(workflow_id, release_version);
         """)
+        # 版本索引需兼容 release_version / version 两种列名（已有表可能使用 version）
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'workflow_releases' AND column_name IN ('release_version', 'version')
+            LIMIT 1
+        """)
+        ver_col_row = cursor.fetchone()
+        ver_col = ver_col_row["column_name"] if ver_col_row else "release_version"
+        cursor.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_workflow_releases_version ON workflow_releases(workflow_id, {ver_col})"
+        )
         
         # 4. 工作流运行表
         cursor.execute("""

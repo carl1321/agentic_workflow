@@ -217,3 +217,19 @@ let fastForwardReplaying = false;
 export function fastForwardReplay(value: boolean) {
   fastForwardReplaying = value;
 }
+
+export interface ExtensionMenu {
+  code: string;
+  name: string;
+  path: string;
+  icon?: string;
+}
+
+export async function fetchExtensionMenus(): Promise<ExtensionMenu[]> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(resolveServiceURL("chat/extension-menus"), { headers });
+  if (!res.ok) throw new Error("Failed to fetch extension menus");
+  return res.json();
+}

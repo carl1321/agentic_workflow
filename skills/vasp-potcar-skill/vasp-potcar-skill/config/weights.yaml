@@ -1,0 +1,63 @@
+# 数据源权重配置
+#
+# 目的：
+#   定义各数据源在决策时的权重，数值越高优先级越高。
+#   当多个数据源给出不同建议时，根据此权重决定采纳顺序。
+#
+# 调整指南：
+#   - 如果发现MongoDB历史数据质量不高，降低其权重
+#   - 如果用户偏好与pymatgen推荐经常冲突，调整相应权重
+#   - 权重范围建议 0.0 - 1.0
+
+version: "1.0"
+
+# 数据源权重
+sources:
+  # 本地数据源
+  user_history:
+    weight: 0.95
+    description: "用户历史选择（同一材料体系）"
+
+  mongodb_exact:
+    weight: 0.90
+    description: "MongoDB精确匹配（相同化学式）"
+
+  scenario_rule:
+    weight: 0.80
+    description: "知识库场景规则（如电池材料、磁性材料）"
+
+  mongodb_similar:
+    weight: 0.70
+    description: "MongoDB相似匹配（相同元素组合）"
+
+  # 外部API数据源
+  materials_project:
+    weight: 0.85
+    description: "Materials Project数据库（权威DFT计算参考）"
+
+  aflow:
+    weight: 0.75
+    description: "AFLOW高通量数据库"
+
+  oqmd:
+    weight: 0.70
+    description: "OQMD开放量子材料数据库"
+
+  # 推荐引擎
+  pymatgen:
+    weight: 0.60
+    description: "pymatgen内置推荐"
+
+  knowledge_default:
+    weight: 0.50
+    description: "知识库默认规则"
+
+# 冲突解决策略
+conflict_resolution:
+  default_strategy: "HIGHEST_WEIGHT"
+
+  # 当最高权重数据源置信度低于此值时，询问用户
+  ask_user_threshold: 0.6
+
+  # 当多个数据源权重差距小于此值时，视为冲突
+  conflict_threshold: 0.1

@@ -1,0 +1,32 @@
+# VASPilot Skill
+
+# Work directory (calculation outputs)
+work/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# SSH keys
+*.pem
+*_RsaKey*
+*.txt
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Test outputs
+tests/__pycache__/
+.pytest_cache/
