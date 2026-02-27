@@ -885,6 +885,113 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
     });
   };
 
+  const renderResultContent = () => {
+    if (!result) return null;
+
+    // 文献搜索结果：尝试解析为 JSON 列表并表格展示
+    if (tool.id === "literature_search") {
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object") {
+          type LitItem = {
+            title?: string;
+            authors?: string[] | string;
+            year?: number;
+            url?: string;
+            pdf_url?: string;
+            source?: string;
+            abstract?: string;
+          };
+          const items = parsed as LitItem[];
+
+          return (
+            <div className="space-y-2">
+              <div className="max-h-96 overflow-auto border border-slate-200 dark:border-slate-700 rounded-md">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-900">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">标题</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">作者</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">年份</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">来源</th>
+                      <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                    {items.map((item, idx) => {
+                      const authors =
+                        Array.isArray(item.authors)
+                          ? item.authors.join(", ")
+                          : typeof item.authors === "string"
+                          ? item.authors
+                          : "";
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+                          <td className="px-3 py-2 align-top">
+                            {item.url ? (
+                              <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                {item.title || "(无标题)"}
+                              </a>
+                            ) : (
+                              <span className="text-xs text-slate-800 dark:text-slate-100">
+                                {item.title || "(无标题)"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs text-slate-600 dark:text-slate-300">
+                            {authors || "-"}
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs text-slate-600 dark:text-slate-300">
+                            {item.year ?? "-"}
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs text-slate-600 dark:text-slate-300">
+                            {item.source || "arxiv"}
+                          </td>
+                          <td className="px-3 py-2 align-top text-xs">
+                            {item.pdf_url ? (
+                              <a
+                                href={item.pdf_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline"
+                              >
+                                <Download className="h-3 w-3" />
+                                下载 PDF
+                              </a>
+                            ) : (
+                              <span className="text-slate-400 dark:text-slate-500">无PDF链接</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                提示：点击标题在新标签页打开文献；如有 PDF 链接，可直接点击「下载 PDF」。
+              </p>
+            </div>
+          );
+        }
+      } catch {
+        // 解析失败则回退为 Markdown 渲染
+      }
+    }
+
+    // 默认：按 Markdown 渲染
+    return (
+      <div className="text-sm text-green-700 dark:text-green-400">
+        <Markdown>{processResult(result)}</Markdown>
+      </div>
+    );
+  };
+
   const handleExecute = async () => {
     if (!validateParams()) {
       return;
@@ -2741,9 +2848,7 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                                   </Button>
                                 )}
                             </div>
-                      <div className="text-sm text-green-700 dark:text-green-400">
-                        <Markdown>{processResult(result)}</Markdown>
-                      </div>
+                            {renderResultContent()}
                           </>
                         )}
                       </div>

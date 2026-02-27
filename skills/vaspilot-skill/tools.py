@@ -960,7 +960,8 @@ def vaspilot_plot_band_structure(
         output_dir: Optional directory to save band_structure.png; if set, returns image_path.
 
     Returns:
-        JSON with image_base64 (PNG), and image_path if output_dir was set; or error.
+        If output_dir is set: JSON with success and image_path only (no image_base64, to avoid large payload in conversation).
+        Otherwise: JSON with success and image_base64 (PNG). Or error dict.
     """
     content = (vasprun_xml_content or "").strip()
     if not content:
@@ -994,15 +995,16 @@ def vaspilot_plot_band_structure(
         viz.plot_band_structure(vasprun_path, kpoints_path=kpoints_path, output_path=out_png)
         if not os.path.isfile(out_png):
             return json.dumps({"error": "生成能带图失败（未生成图片文件）"}, ensure_ascii=False)
-        with open(out_png, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("ascii")
-        result = {"success": True, "image_base64": b64}
         if output_dir and output_dir.strip():
+            # 指定 output_dir 时只返回 image_path，不返回 image_base64，避免对话/checkpoint 存放大图导致卡顿
             out_dir = Path(output_dir.strip()).resolve()
             out_dir.mkdir(parents=True, exist_ok=True)
             dest = out_dir / "band_structure.png"
             shutil.copy2(out_png, dest)
-            result["image_path"] = str(dest)
+            return json.dumps({"success": True, "image_path": str(dest)}, ensure_ascii=False)
+        with open(out_png, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        result = {"success": True, "image_base64": b64}
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         err_msg = str(e)

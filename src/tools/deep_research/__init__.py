@@ -7,6 +7,7 @@ from .tool_visit import Visit
 from .tool_scholar import Scholar
 from .tool_python import PythonInterpreter
 from src.config.loader import load_yaml_config
+from src.config import SELECTED_SEARCH_ENGINE, SearchEngine
 
 # 从conf.yaml加载配置
 def load_deepresearch_config():
@@ -57,14 +58,28 @@ def visit(url: Union[str, List[str]], goal: str) -> str:
     return visit_tool.call({"url": url, "goal": goal})
 
 @tool
-def google_scholar(query: List[str]) -> str:
-    """Leverage Google Scholar to retrieve academic publications."""
-    # 设置环境变量
+def _google_scholar_serper(query: List[str]) -> str:
+    """Leverage Google Scholar (Serper API) to retrieve academic publications."""
     config = load_deepresearch_config()
     os.environ['SERPER_KEY_ID'] = config['serper_key']
-    
     scholar_tool = Scholar()
     return scholar_tool.call({"query": query})
+
+
+def _use_tavily_for_scholar() -> bool:
+    """当配置了 TAVILY 且存在 TAVILY_API_KEY 时，使用 Tavily 做学术检索，不再用 Serper/Google。"""
+    config = load_yaml_config("conf.yaml")
+    env = config.get("ENV", {})
+    key = (env.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", "") or "").strip()
+    return SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value and bool(key)
+
+
+if _use_tavily_for_scholar():
+    from src.tools.literature_search import get_google_scholar_tool
+    google_scholar = get_google_scholar_tool(5)
+else:
+    google_scholar = _google_scholar_serper
+
 
 @tool  
 def python_interpreter(code: str) -> str:

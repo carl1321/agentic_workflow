@@ -1029,9 +1029,14 @@ def vasp_composite_node(
             },
         )
         kpoints_content = (dl_kpts.get("content") or "").strip() if not dl_kpts.get("error") else ""
+        # 传入 output_dir 使工具返回 image_path，仅将 image_path 写入 state，避免大 base64 导致打开会话卡顿
         plot_res = _invoke(
             "vaspilot_plot_band_structure",
-            {"vasprun_xml_content": dl.get("content", ""), "kpoints_content": kpoints_content or None},
+            {
+                "vasprun_xml_content": dl.get("content", ""),
+                "kpoints_content": kpoints_content or None,
+                "output_dir": "band_workflow_out",
+            },
         )
         if plot_res.get("error"):
             current_step.execution_res = json.dumps(plot_res, ensure_ascii=False)
@@ -1042,10 +1047,11 @@ def vasp_composite_node(
                 },
                 goto="vasp_team",
             )
+        # 只存 image_path，不存 image_base64，避免 checkpoint/messages 过大、打开会话卡顿；报告通过 /api/workspace-file 展示
         band_res = json.dumps(
-            {"success": True, "image_base64": plot_res.get("image_base64")}, ensure_ascii=False
+            {"success": True, "image_path": plot_res.get("image_path") or ""}, ensure_ascii=False
         )
-        logger.info("VASP composite_band done: image generated")
+        logger.info("VASP composite_band done: image generated (path only in state)")
         # 不在此处写 execution_res，交给 vasp_executor（LLM+组合）总结后再写
         return Command(
             update={

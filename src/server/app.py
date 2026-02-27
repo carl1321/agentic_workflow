@@ -115,6 +115,7 @@ from src.tools import (
     visualize_molecules,
     search_literature,
     fetch_pdf_text,
+    phase_diagram_tool,
 )
 from src.utils.json_utils import sanitize_args
 
@@ -143,6 +144,7 @@ TOOL_REGISTRY = {
     "molecular_analysis_tool": molecular_analysis_tool,
     "tts_tool": tts_tool,
     "data_extraction_tool": data_extraction_tool,
+    "phase_diagram_tool": phase_diagram_tool,
     # Actual tool.name mappings (for compatibility)
     "predict_molecular_properties": predict_molecular_properties,
     "visualize_molecules": visualize_molecules,
@@ -835,7 +837,8 @@ async def _stream_graph_events(
                                     ):
                                         if persisted_messages is not None and "data: " in event:
                                             try:
-                                                persisted_messages.append(json.loads(event.split("data: ", 1)[1]))
+                                                raw_msg = json.loads(event.split("data: ", 1)[1])
+                                                persisted_messages.append(_sanitize_message_for_persist(raw_msg))
                                             except Exception:
                                                 pass
                                         yield event
@@ -850,7 +853,8 @@ async def _stream_graph_events(
             ):
                 if persisted_messages is not None and "data: " in event:
                     try:
-                        persisted_messages.append(json.loads(event.split("data: ", 1)[1]))
+                        raw_msg = json.loads(event.split("data: ", 1)[1])
+                        persisted_messages.append(_sanitize_message_for_persist(raw_msg))
                     except Exception:
                         pass
                 yield event
@@ -1340,6 +1344,46 @@ async def _astream_workflow_generator(
                 "error": f"Graph execution error: {str(e)}",
             },
         )
+
+
+# 持久化前对大消息做摘要，避免 DB 中存整份 vasprun/image_base64 导致打开会话卡顿
+_MAX_PERSIST_CONTENT = 80_000  # 单条消息 content 超过此长度且匹配「大工具结果」则替换为摘要
+
+
+def _sanitize_message_for_persist(msg: dict) -> dict:
+    """若为工具返回的 vasprun/image_base64 等大 content，替换为短摘要再持久化。"""
+    if not isinstance(msg, dict):
+        return msg
+    content = msg.get("content")
+    if not isinstance(content, str) or len(content) <= _MAX_PERSIST_CONTENT:
+        return msg
+    try:
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return msg
+        # wait_and_download_band 返回：含 vasprun_xml_content、kpoints_content，整份会很大
+        if data.get("status") == "COMPLETED" and "vasprun_xml_content" in data:
+            summary = {
+                "status": "COMPLETED",
+                "job_id": data.get("job_id"),
+                "vasprun_length": len(data.get("vasprun_xml_content") or ""),
+                "kpoints_length": len(data.get("kpoints_content") or ""),
+                "note": "vasprun 与 KPOINTS 已存入 state，下一步生成能带图将自动注入，此处仅存摘要以避免打开会话卡顿。",
+            }
+            out = dict(msg)
+            out["content"] = json.dumps(summary, ensure_ascii=False)
+            return out
+        # 能带图等工具返回含 image_base64 时，只保留 success + image_path
+        if data.get("success") is True and "image_base64" in data:
+            out = dict(msg)
+            out["content"] = json.dumps(
+                {"success": True, "image_path": data.get("image_path") or ""},
+                ensure_ascii=False,
+            )
+            return out
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return msg
 
 
 def _make_event(event_type: str, data: dict[str, any]):

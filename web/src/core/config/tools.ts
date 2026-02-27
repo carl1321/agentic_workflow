@@ -69,6 +69,29 @@ export const tools: ToolConfig[] = [
     ],
   },
   {
+    id: "phase_diagram",
+    name: "相图分析",
+    description: "基于 Materials Project 的 0 K 能量凸包分析化学体系的稳定相与亚稳相",
+    category: "general",
+    icon: Globe,
+    toolName: "phase_diagram_tool",
+    parameters: [
+      {
+        name: "chemical_system",
+        type: "string",
+        description: "化学体系，例如 Li-Fe-P-O（元素用短横线分隔）",
+        required: true,
+      },
+      {
+        name: "max_entries",
+        type: "number",
+        description: "最多加载的材料条目数（用于构建相图）",
+        required: false,
+        default: 128,
+      },
+    ],
+  },
+  {
     id: "property_predictor",
     name: "性质预测",
     description: "预测分子的物理化学性质（HOMO、LUMO、偶极矩）",
@@ -142,7 +165,7 @@ export const tools: ToolConfig[] = [
   {
     id: "literature_search",
     name: "文献搜索",
-    description: "使用Semantic Scholar搜索学术文献",
+    description: "使用 arXiv 搜索学术文献",
     category: "literature",
     icon: Search,
     toolName: "literature_search_tool",

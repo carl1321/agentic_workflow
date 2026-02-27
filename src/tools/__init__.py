@@ -15,6 +15,7 @@ from .tts_tool import tts_tool
 from .visualize_molecules_tool import visualize_molecules
 from .literature_search_tool import search_literature
 from .pdf_crawler_tool import fetch_pdf_text
+from .phase_diagram_tool import phase_diagram_tool
 
 __all__ = [
     "crawl_tool",
@@ -31,4 +32,5 @@ __all__ = [
     "visualize_molecules",
     "search_literature",
     "fetch_pdf_text",
+    "phase_diagram_tool",
 ]
