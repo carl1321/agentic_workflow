@@ -3,7 +3,7 @@
 
 import { MagicWandIcon } from "@radix-ui/react-icons";
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowUp, Lightbulb, X } from "lucide-react";
+import { ArrowUp, Lightbulb, Paperclip, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useCallback, useRef, useState } from "react";
 
@@ -97,27 +97,57 @@ export function InputBox({
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isEnhanceAnimating, setIsEnhanceAnimating] = useState(false);
   const [currentPrompt, setCurrentPrompt] = useState("");
+  // 附件（如 POSCAR），发送时拼入用户消息供 VASP 等使用
+  const [attachments, setAttachments] = useState<Array<{ name: string; content: string }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSendMessage = useCallback(
     (message: string, resources: Array<Resource>) => {
       if (responding) {
         onCancel?.();
       } else {
-        if (message.trim() === "") {
+        if (message.trim() === "" && attachments.length === 0) {
           return;
         }
         if (onSend) {
-          onSend(message, {
+          const text = message.trim();
+          const withAttachments =
+            attachments.length > 0
+              ? text +
+                "\n\n" +
+                attachments
+                  .map(
+                    (f) =>
+                      `[附件: ${f.name}]\n\`\`\`\n${f.content}\n\`\`\``
+                  )
+                  .join("\n\n")
+              : text;
+          onSend(withAttachments, {
             interruptFeedback: feedback?.option.value,
             resources,
           });
           onRemoveFeedback?.();
-          // Clear enhancement animation after sending
+          setAttachments([]);
           setIsEnhanceAnimating(false);
         }
       }
     },
-    [responding, onCancel, onSend, feedback, onRemoveFeedback],
+    [responding, onCancel, onSend, feedback, onRemoveFeedback, attachments],
+  );
+
+  const handleFileAttach = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const content = String(reader.result ?? "");
+        setAttachments((prev) => [...prev, { name: file.name, content }]);
+      };
+      reader.readAsText(file, "UTF-8");
+      e.target.value = "";
+    },
+    []
   );
 
   const handleEnhancePrompt = useCallback(async () => {
@@ -231,6 +261,29 @@ export function InputBox({
             </motion.div>
           )}
         </AnimatePresence>
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-4 pt-2">
+            {attachments.map((f) => (
+              <span
+                key={f.name}
+                className="inline-flex items-center gap-1 rounded-full border bg-muted/60 px-2 py-1 text-xs"
+              >
+                <Paperclip className="h-3 w-3 opacity-70" />
+                {f.name}
+                <button
+                  type="button"
+                  className="hover:bg-muted rounded p-0.5"
+                  onClick={() =>
+                    setAttachments((prev) => prev.filter((a) => a.name !== f.name))
+                  }
+                  aria-label="移除附件"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <MessageInput
           className={cn(
             "h-24 px-4 pt-5",
@@ -244,6 +297,13 @@ export function InputBox({
           onChange={setCurrentPrompt}
         />
       </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".POSCAR,.poscar,.vasp,.cif,.CIF,.txt,.xml,.XML"
+        className="hidden"
+        onChange={handleFileAttach}
+      />
       <div className="flex items-center px-4 py-2">
         <div className="flex grow gap-2">
           <Tooltip
@@ -280,6 +340,17 @@ export function InputBox({
               }}
             >
               <Lightbulb /> {t("deepThinking")}
+            </Button>
+          </Tooltip>
+          <Tooltip title="上传附件（如 POSCAR）">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 rounded-2xl"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={responding}
+            >
+              <Paperclip className="h-4 w-4" />
             </Button>
           </Tooltip>
         </div>

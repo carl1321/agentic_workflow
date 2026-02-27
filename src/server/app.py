@@ -5,6 +5,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from datetime import datetime
 
 # 设置日志级别为INFO，避免过多的DEBUG日志
@@ -28,10 +29,10 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.wsgi import WSGIMiddleware
 from pydantic import ValidationError
-from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.mongodb import AsyncMongoDBSaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
@@ -66,6 +67,7 @@ from src.server.chat_request import (
     GeneratePPTRequest,
     GenerateProseRequest,
     TTSRequest,
+    VaspStreamRequest,
 )
 from src.server.config_request import ConfigResponse
 from src.server.mcp_request import MCPServerMetadataRequest, MCPServerMetadataResponse
@@ -193,13 +195,23 @@ load_examples()
 in_memory_store = InMemoryStore()
 graph = build_graph_with_memory()
 
-# Register authentication routes
+# Register authentication routes (core login, public-key, logout, me, refresh).
+# Keep this block independent so Casdoor optional registration cannot break it.
 try:
     from src.server.auth.routes import router as auth_router
     app.include_router(auth_router)
     logger.info("Authentication routes registered at /api/auth")
 except Exception as e:
-    logger.warning(f"Failed to register authentication routes: {e}. Authentication features may not be available.")
+    logger.exception("Failed to register authentication routes. /api/auth/login and /api/auth/public-key will not be available.")
+    logger.warning("Authentication features may not be available.")
+
+# Register Casdoor OAuth routes (optional). Failure here must not affect core auth above.
+try:
+    from src.server.auth.casdoor import router as casdoor_router
+    app.include_router(casdoor_router)
+    logger.info("Casdoor routes registered at /api/auth")
+except Exception as e:
+    logger.warning("Casdoor routes not registered: %s. Casdoor login will not be available.", e)
 
 # Register admin routes
 try:
@@ -400,6 +412,88 @@ async def chat_stream(
     )
 
 
+# Lazy-built VASP agent graph (uses TOOL_REGISTRY after startup)
+_vasp_graph_instance = None
+
+
+def get_vasp_graph():
+    """Build or return cached VASP agent graph with vaspilot_* tools from TOOL_REGISTRY."""
+    global _vasp_graph_instance
+    if _vasp_graph_instance is None:
+        from src.graph.vasp_agent import build_vasp_graph, get_vasp_tools_from_registry
+        tools = get_vasp_tools_from_registry(TOOL_REGISTRY)
+        if not tools:
+            raise ValueError(
+                "No vaspilot_* tools in TOOL_REGISTRY. Ensure vaspilot-skill is enabled and tools are loaded."
+            )
+        _vasp_graph_instance = build_vasp_graph(tools)
+        logger.info("VASP agent graph built with %d tools", len(tools))
+    return _vasp_graph_instance
+
+
+def _convert_messages_to_langchain_vasp(messages: List[dict]) -> List[BaseMessage]:
+    """Convert API message dicts to LangChain messages for VASP graph."""
+    out: List[BaseMessage] = []
+    for msg in messages or []:
+        role = (msg.get("role") or "user").lower()
+        raw = msg.get("content", "")
+        if isinstance(raw, list):
+            content = " ".join(
+                (c.get("text") or "") for c in raw if isinstance(c, dict) and c.get("type") == "text"
+            )
+        else:
+            content = str(raw)
+        if role == "user":
+            out.append(HumanMessage(content=content))
+        elif role == "assistant":
+            out.append(AIMessage(content=content))
+    return out
+
+
+async def _astream_vasp_generator(messages: List[dict], thread_id: str):
+    """Stream events from VASP agent graph in same SSE format as main chat."""
+    lc_messages = _convert_messages_to_langchain_vasp(messages)
+    if not lc_messages:
+        yield _make_event("error", {"thread_id": thread_id, "error": "No messages provided"})
+        return
+    try:
+        graph_instance = get_vasp_graph()
+    except ValueError as e:
+        yield _make_event("error", {"thread_id": thread_id, "error": str(e)})
+        return
+    workflow_config = {
+        "thread_id": thread_id,
+        "recursion_limit": get_recursion_limit(),
+    }
+    try:
+        async for event in _stream_graph_events(
+            graph_instance,
+            {"messages": lc_messages},
+            workflow_config,
+            thread_id,
+        ):
+            yield event
+    except Exception as e:
+        logger.exception("VASP stream error: %s", e)
+        yield _make_event("error", {"thread_id": thread_id, "error": str(e)})
+
+
+@app.post("/api/chat/vasp-stream")
+async def vasp_stream(
+    request: VaspStreamRequest,
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    Stream VASP agent responses: user goal -> LLM decides and calls vaspilot tools until done.
+    Same SSE event types as /api/chat/stream (message_chunk, tool_calls, tool_call_result, error).
+    """
+    thread_id = request.thread_id or str(uuid4())
+    return StreamingResponse(
+        _astream_vasp_generator(request.messages, thread_id),
+        media_type="text/event-stream",
+    )
+
+
 def _process_tool_call_chunks(tool_call_chunks):
     """Process tool call chunks and sanitize arguments."""
     chunks = []
@@ -517,7 +611,7 @@ def _extract_title_from_messages(messages: List[dict]) -> str:
             agent = message.get("agent", "")
             
             # Check if this is a planner message with plan JSON
-            if agent in ("planner", "molecular_planner", "literature_planner") and content:
+            if agent in ("planner", "molecular_planner", "literature_planner", "vasp_planner") and content:
                 try:
                     # Try to parse plan JSON from content
                     if content.strip().startswith("```json"):
@@ -850,7 +944,9 @@ async def _astream_workflow_generator(
     
     last_title_update = None
     last_message_update = 0
-    message_update_interval = 10  # Update messages every 10 messages
+    last_message_update_time: float = 0
+    message_update_interval = 80  # Update messages every 80 chunks to reduce DB writes
+    message_update_min_interval_sec = 8.0  # Min seconds between DB updates to avoid flooding during tool runs
     
     # Disable checkpoint functionality to avoid MongoDB connection issues
     # Use graph without checkpointer
@@ -866,7 +962,7 @@ async def _astream_workflow_generator(
                     content = event_data.get("content", "")
                     
                     # Try to extract plan title from planner messages
-                    if agent in ("planner", "molecular_planner", "literature_planner") and content:
+                    if agent in ("planner", "molecular_planner", "literature_planner", "vasp_planner") and content:
                         try:
                             # Parse plan JSON
                             plan_json = content
@@ -903,11 +999,14 @@ async def _astream_workflow_generator(
             
             yield event
             
-            # Periodically update messages in database (every N messages to avoid too frequent updates)
+            # Periodically update messages in database (throttled: every N chunks AND at least T sec apart)
             # Determine if this is a continuation - use append mode to preserve existing messages
             is_continuation = not is_new_conversation or (interrupt_feedback and interrupt_feedback.strip())
-            if persisted_messages and len(persisted_messages) - last_message_update >= message_update_interval:
-                if get_bool_env("LANGGRAPH_CHECKPOINT_SAVER", False) and not is_tool_execution:
+            import time as _time_mod
+            now = _time_mod.monotonic()
+            count_ok = persisted_messages and (len(persisted_messages) - last_message_update >= message_update_interval)
+            time_ok = (now - last_message_update_time) >= message_update_min_interval_sec
+            if count_ok and time_ok and get_bool_env("LANGGRAPH_CHECKPOINT_SAVER", False) and not is_tool_execution:
                     try:
                         # Validate message structure before saving
                         for idx, msg in enumerate(persisted_messages[-message_update_interval:]):
@@ -929,6 +1028,7 @@ async def _astream_workflow_generator(
                         # This ensures existing messages are preserved when continuing a conversation
                         update_conversation(thread_id, messages=persisted_messages, append=is_continuation)
                         last_message_update = len(persisted_messages)
+                        last_message_update_time = now
                         logger.debug(f"Updated conversation messages in real-time: thread_id={thread_id}, count={len(persisted_messages)}, append={is_continuation}")
                     except Exception as e:
                         logger.warning(f"Failed to update conversation messages: {e}", exc_info=True)
@@ -944,7 +1044,7 @@ async def _astream_workflow_generator(
                 planner_messages = []
                 for msg in persisted_messages:
                     agent = msg.get("agent", "")
-                    if agent in ("planner", "molecular_planner", "literature_planner"):
+                    if agent in ("planner", "molecular_planner", "literature_planner", "vasp_planner"):
                         content = msg.get("content", "")
                         if content:
                             planner_messages.append((msg, content))
@@ -1020,7 +1120,7 @@ async def _astream_workflow_generator(
             try:
                 # Merge message chunks before saving (planner, researcher, reporter, common_reporter)
                 # Improved strategy: merge chunks by message ID, even if non-consecutive
-                chunkable_agents = ("planner", "molecular_planner", "literature_planner", "researcher", "reporter", "common_reporter")
+                chunkable_agents = ("planner", "molecular_planner", "literature_planner", "vasp_planner", "researcher", "reporter", "common_reporter")
                 
                 # Step 1: Group chunks by message ID for chunkable agents
                 # This allows merging chunks even if they're separated by other messages (e.g., tool_call_result)
@@ -1636,6 +1736,28 @@ async def config_compat():
     某些前端或调试工具可能直接请求 /config。
     """
     return await config()
+
+
+@app.get("/api/workspace-file")
+async def get_workspace_file(path: str = Query(..., description="Relative path under workspace, e.g. band_workflow_out/band_structure.png")):
+    """
+    提供工作区内的文件（如能带图 band_structure.png），供报告中的图片展示使用。
+    仅允许访问当前工作目录下的相对路径，禁止路径穿越。
+    """
+    if not path or ".." in path or path.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    base = Path(os.getcwd()).resolve()
+    full = (base / path).resolve()
+    try:
+        full.relative_to(base)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Path outside workspace")
+    if not full.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    suffix = full.suffix.lower()
+    media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml"}
+    media_type = media_types.get(suffix, "application/octet-stream")
+    return FileResponse(path=str(full), media_type=media_type, filename=full.name)
 
 
 @app.get("/api/chat/extension-menus")

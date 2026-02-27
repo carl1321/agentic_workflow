@@ -96,8 +96,9 @@ class ResultVisualizer:
         # Create plotter
         plotter = BSPlotter(bs)
 
-        # Get plot
-        fig = plotter.get_plot(ylim=ylim, zero_to_efermi=zero_to_efermi)
+        # Get plot (pymatgen 新版本 get_plot 可能返回 Axes 而非 Figure)
+        obj = plotter.get_plot(ylim=ylim, zero_to_efermi=zero_to_efermi)
+        fig = obj.get_figure() if hasattr(obj, "get_figure") and callable(obj.get_figure) else obj
 
         if title:
             fig.suptitle(title)
@@ -165,7 +166,8 @@ class ResultVisualizer:
             # Total DOS
             plotter.add_dos("Total", dos)
 
-        fig = plotter.get_plot(xlim=xlim, ylim=ylim)
+        obj = plotter.get_plot(xlim=xlim, ylim=ylim)
+        fig = obj.get_figure() if hasattr(obj, "get_figure") and callable(obj.get_figure) else obj
 
         if title:
             fig.suptitle(title)
@@ -223,7 +225,8 @@ class ResultVisualizer:
 
         # Create combined plotter
         plotter = BSDOSPlotter()
-        fig = plotter.get_plot(bs, dos)
+        obj = plotter.get_plot(bs, dos)
+        fig = obj.get_figure() if hasattr(obj, "get_figure") and callable(obj.get_figure) else obj
 
         if title:
             fig.suptitle(title)

@@ -1,11 +1,15 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
+import contextvars
+import dataclasses
 import json
 import logging
 import os
+import time
 from functools import partial
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -42,6 +46,233 @@ from .types import State
 
 logger = logging.getLogger(__name__)
 
+# Context var for injecting HPC config into vaspilot tools when executor runs (avoids LLM omitting args)
+_VASP_HPC_CONFIG_CTX: contextvars.ContextVar[dict] = contextvars.ContextVar("vasp_hpc_config", default=None)
+# 同一执行步内「submit_to_hpc 因缺 files 失败」次数，超过上限后返回终止说明，避免无限重试
+_VASP_SUBMIT_FILES_ERROR_CTX: contextvars.ContextVar[int] = contextvars.ContextVar("vasp_submit_files_error_count", default=0)
+_SUBMIT_FILES_ERROR_LIMIT = 2
+# 从已完成步骤（生成输入）解析出的 files 字典，供 submit_to_hpc 在 LLM 未传时自动注入
+_VASP_SUBMIT_FILES_CTX: contextvars.ContextVar[dict] = contextvars.ContextVar("vasp_submit_files", default=None)
+# 第 3 步下载的 vasprun/kpoints 内容，供第 4 步 vaspilot_plot_band_structure 自动注入（避免大内容进 prompt）
+_VASP_BAND_CONTENT_CTX: contextvars.ContextVar[dict] = contextvars.ContextVar("vasp_band_content", default=None)
+
+
+def _get_hpc_config_for_wrapper() -> dict:
+    """Get HPC config: first from context (previous steps), else by calling vaspilot_get_hpc_config."""
+    hpc = _VASP_HPC_CONFIG_CTX.get()
+    if hpc and (hpc.get("host") or hpc.get("username")):
+        return hpc
+    try:
+        from src.server.app import TOOL_REGISTRY
+        get_cfg = TOOL_REGISTRY.get("vaspilot_get_hpc_config")
+        if get_cfg and callable(getattr(get_cfg, "invoke", None)):
+            out = get_cfg.invoke({})
+            if isinstance(out, str):
+                raw = json.loads(out)
+            else:
+                raw = out
+            if isinstance(raw, dict) and (raw.get("host") or raw.get("username")):
+                hpc = {
+                    "host": (raw.get("host") or "").strip(),
+                    "username": (raw.get("username") or "").strip(),
+                    "remote_work_dir": (raw.get("work_dir") or raw.get("remote_work_dir") or "").strip(),
+                    "port": int(raw.get("port", 22)) if raw.get("port") else 22,
+                    "key_path": (raw.get("key_path") or "").strip() or None,
+                }
+                try:
+                    _VASP_HPC_CONFIG_CTX.set(hpc)
+                except Exception:
+                    pass
+                return hpc
+    except Exception as e:
+        logger.debug("vasp wrapper: get_hpc_config fallback failed: %s", e)
+    return {}
+
+
+def _merge_hpc_into_args(name: str, args: dict, hpc: dict) -> dict:
+    """Merge hpc into args for host/username/port/key_path/remote_work_dir/password."""
+    if not hpc or not isinstance(args, dict):
+        return args
+    args = dict(args)
+    if not args.get("host") and hpc.get("host"):
+        args["host"] = hpc["host"]
+    if not args.get("username") and hpc.get("username"):
+        args["username"] = hpc["username"]
+    if not args.get("port") and hpc.get("port"):
+        args["port"] = hpc["port"]
+    if not args.get("key_path") and hpc.get("key_path"):
+        args["key_path"] = hpc["key_path"]
+    if name == "vaspilot_submit_to_hpc":
+        if not args.get("remote_work_dir") and hpc.get("remote_work_dir"):
+            args["remote_work_dir"] = hpc["remote_work_dir"]
+        if not args.get("key_path") and not args.get("password"):
+            args["password"] = "__use_config__"
+    elif name in ("vaspilot_job_status", "vaspilot_fetch_job_logs", "vaspilot_download_remote_file"):
+        if not args.get("key_path") and not args.get("password"):
+            args["password"] = "__use_config__"
+    return args
+
+
+def _wrap_vasp_tool_with_hpc_fill(t: Any, cached_files: dict | None = None) -> Any:
+    """Wrap a vaspilot tool so missing host/username/remote_work_dir/key_path/files are filled from cache or context."""
+    name = getattr(t, "name", "") or ""
+    if name not in (
+        "vaspilot_submit_to_hpc",
+        "vaspilot_job_status",
+        "vaspilot_fetch_job_logs",
+        "vaspilot_download_remote_file",
+    ):
+        return t
+    try:
+        from langchain_core.tools import StructuredTool
+    except ImportError:
+        return t
+
+    def _check_submit_files(args: dict) -> str | None:
+        """If submit_to_hpc is missing valid 'files', return error message for agent; else None."""
+        if name != "vaspilot_submit_to_hpc":
+            return None
+        files = args.get("files") if isinstance(args, dict) else None
+        if not files or not isinstance(files, dict):
+            err = (
+                "Error: 缺少必填参数 files。请从 **Completed Step 2**（生成输入）的 <finding> 中解析出 **files** 字段"
+                "（即 generate_inputs 返回的 JSON 里的 files 对象，包含 submit.sh、POSCAR、INCAR_*、KPOINTS_*、gen_potcar.sh 等），"
+                "将整个 files 字典作为 vaspilot_submit_to_hpc 的 files 参数传入，不可省略或传空。"
+            )
+        elif "submit.sh" not in files:
+            err = (
+                "Error: files 中必须包含 submit.sh。请使用 Completed Step 2 的 finding 里 **files** 对象的完整内容，不要删减。"
+            )
+        else:
+            return None
+        # 同一轮内缺 files 失败次数上限，超过后返回终止说明，避免无限重试
+        try:
+            count = _VASP_SUBMIT_FILES_ERROR_CTX.get() or 0
+        except LookupError:
+            count = 0
+        if count >= _SUBMIT_FILES_ERROR_LIMIT:
+            return (
+                "请勿继续重试。请检查 Completed Step 2 的 files，并确保将完整的 files 对象作为 vaspilot_submit_to_hpc 的 files 参数传入。"
+                "本步不再接受重复的空参数调用。"
+            )
+        try:
+            _VASP_SUBMIT_FILES_ERROR_CTX.set(count + 1)
+        except Exception:
+            pass
+        return err
+
+    def _fill_submit_files_from_ctx(args: dict) -> dict:
+        """If submit_to_hpc and args missing valid files, fill from cached_files (closure) or _VASP_SUBMIT_FILES_CTX."""
+        if name != "vaspilot_submit_to_hpc" or not isinstance(args, dict):
+            return args
+        files = args.get("files")
+        if isinstance(files, dict) and files.get("submit.sh"):
+            return args
+        fill_from = cached_files
+        if not (isinstance(fill_from, dict) and fill_from.get("submit.sh")):
+            try:
+                fill_from = _VASP_SUBMIT_FILES_CTX.get()
+            except LookupError:
+                fill_from = None
+        if isinstance(fill_from, dict) and fill_from.get("submit.sh"):
+            args = dict(args)
+            args["files"] = fill_from
+            logger.info("VASP: submit_to_hpc filled files from cache/context, keys=%s", list(fill_from.keys()))
+        return args
+
+    async def _acall(*positional: Any, **kwargs: Any):
+        # LangChain may call coroutine(**tool_input); accept both single dict and **kwargs
+        if positional and len(positional) == 1 and isinstance(positional[0], dict) and not kwargs:
+            args = dict(positional[0])
+        else:
+            args = dict(kwargs) if kwargs else (dict(positional[0]) if positional and isinstance(positional[0], dict) else {})
+        need_hpc = isinstance(args, dict) and (not args.get("host") or not args.get("username"))
+        if need_hpc:
+            hpc = _get_hpc_config_for_wrapper()
+            args = _merge_hpc_into_args(name, args, hpc)
+        args = _fill_submit_files_from_ctx(args)
+        err = _check_submit_files(args)
+        if err is not None:
+            return err
+        if hasattr(t, "ainvoke"):
+            return await t.ainvoke(args)
+        import asyncio
+        return await asyncio.get_event_loop().run_in_executor(None, lambda: t.invoke(args))
+
+    def _sync_call(*positional: Any, **kwargs: Any):
+        if positional and len(positional) == 1 and isinstance(positional[0], dict) and not kwargs:
+            args = dict(positional[0])
+        else:
+            args = dict(kwargs) if kwargs else (dict(positional[0]) if positional and isinstance(positional[0], dict) else {})
+        need_hpc = isinstance(args, dict) and (not args.get("host") or not args.get("username"))
+        if need_hpc:
+            hpc = _get_hpc_config_for_wrapper()
+            args = _merge_hpc_into_args(name, args, hpc)
+        args = _fill_submit_files_from_ctx(args)
+        err = _check_submit_files(args)
+        if err is not None:
+            return err
+        return t.invoke(args)
+
+    return StructuredTool(
+        name=t.name,
+        description=t.description,
+        args_schema=getattr(t, "args_schema", None),
+        func=_sync_call,
+        coroutine=_acall,
+    )
+
+
+def _wrap_vasp_plot_band_from_ctx(t: Any) -> Any:
+    """若为 vaspilot_plot_band_structure，则从 _VASP_BAND_CONTENT_CTX 注入 vasprun_xml_content/kpoints_content（避免第 4 步 LLM 未传大内容）。"""
+    name = getattr(t, "name", "") or ""
+    if name != "vaspilot_plot_band_structure":
+        return t
+    try:
+        from langchain_core.tools import StructuredTool
+    except ImportError:
+        return t
+
+    def _merge_band_content(args: dict) -> dict:
+        try:
+            band = _VASP_BAND_CONTENT_CTX.get()
+        except LookupError:
+            band = None
+        if not band or not isinstance(args, dict):
+            return args
+        args = dict(args)
+        if (not (args.get("vasprun_xml_content") or "").strip() and band.get("vasprun_xml_content")):
+            args["vasprun_xml_content"] = band["vasprun_xml_content"]
+            logger.info("VASP: plot_band_structure filled vasprun_xml_content from state (len=%s)", len(band.get("vasprun_xml_content", "")))
+        if band.get("kpoints_content") is not None and (args.get("kpoints_content") is None or (isinstance(args.get("kpoints_content"), str) and not args.get("kpoints_content").strip())):
+            args["kpoints_content"] = band["kpoints_content"]
+        return args
+
+    async def _acall(*positional: Any, **kwargs: Any):
+        if positional and len(positional) == 1 and isinstance(positional[0], dict) and not kwargs:
+            args = _merge_band_content(dict(positional[0]))
+        else:
+            args = _merge_band_content(dict(kwargs) if kwargs else (dict(positional[0]) if positional and isinstance(positional[0], dict) else {}))
+        if hasattr(t, "ainvoke"):
+            return await t.ainvoke(args)
+        import asyncio
+        return await asyncio.get_event_loop().run_in_executor(None, lambda: t.invoke(args))
+
+    def _sync_call(*positional: Any, **kwargs: Any):
+        if positional and len(positional) == 1 and isinstance(positional[0], dict) and not kwargs:
+            args = _merge_band_content(dict(positional[0]))
+        else:
+            args = _merge_band_content(dict(kwargs) if kwargs else (dict(positional[0]) if positional and isinstance(positional[0], dict) else {}))
+        return t.invoke(args)
+
+    return StructuredTool(
+        name=t.name,
+        description=t.description,
+        args_schema=getattr(t, "args_schema", None),
+        func=_sync_call,
+        coroutine=_acall,
+    )
+
 
 @tool
 def handoff_to_planner(
@@ -62,6 +293,15 @@ def handoff_to_molecular_planner(
     """Handoff to molecular planner agent for molecular design and generation tasks."""
     # This tool is not returning anything: we're just using it
     # as a way for LLM to signal that it needs to hand off to molecular planner agent
+    return
+
+
+@tool
+def handoff_to_vasp(
+    research_topic: Annotated[str, "The VASP calculation task (e.g. structure relaxation, band, DOS, submit to HPC)."],
+    locale: Annotated[str, "The user's detected language locale (e.g., en-US, zh-CN)."],
+):
+    """Handoff to VASP agent for VASP/DFT calculation workflows: structure, inputs, HPC submit, results, band plot."""
     return
 
 
@@ -395,6 +635,432 @@ def molecular_planner_node(
     )
 
 
+def vasp_planner_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["human_feedback", "__end__"]]:
+    """VASP workflow planner: output a Plan with steps, then go to human_feedback for Edit/Start."""
+    logger.info("VASP planner generating plan")
+    configurable = Configuration.from_runnable_config(config)
+    # VASP 4-step plan: load → submit (composite) → status → band plot (composite)
+    if getattr(configurable, "max_step_num", 3) < 4:
+        configurable = dataclasses.replace(configurable, max_step_num=10)
+    messages = apply_prompt_template("vasp_planner", state, configurable)
+    llm = get_llm_by_type("basic")
+    try:
+        llm = llm.with_structured_output(Plan, method="json_mode")
+    except Exception:
+        pass
+    response = llm.invoke(messages)
+    full_response = response.model_dump_json(indent=4, exclude_none=True) if hasattr(response, "model_dump_json") else str(response.content)
+    try:
+        curr_plan = json.loads(repair_json_output(full_response))
+    except json.JSONDecodeError:
+        logger.warning("VASP planner response is not valid JSON")
+        return Command(goto="__end__")
+    if not isinstance(curr_plan, dict):
+        return Command(goto="__end__")
+    new_plan = Plan.model_validate(curr_plan)
+    return Command(
+        update={
+            "messages": [AIMessage(content=full_response, name="vasp_planner")],
+            "current_plan": new_plan,
+        },
+        goto="human_feedback",
+    )
+
+
+def _vasp_current_step_is_composite(current_plan) -> bool:
+    """True iff the first unexecuted step has execution_mode composite_submit or composite_band.
+    仅当步骤显式标记为组合步时才走 composite；4 步全 agent 时全部走 executor。"""
+    steps = getattr(current_plan, "steps", None) or []
+    for step in steps:
+        if not getattr(step, "execution_res", None):
+            mode = getattr(step, "execution_mode", None)
+            if mode in ("composite_submit", "composite_band"):
+                return True
+            return False
+    return False
+
+
+def vasp_team_routing(state: State) -> str:
+    """Route: all steps done -> common_reporter; 刚跑完组合步 -> vasp_executor(LLM 参与); composite step -> vasp_composite; else -> vasp_executor."""
+    current_plan = state.get("current_plan")
+    if not current_plan or not getattr(current_plan, "steps", None):
+        return "common_reporter"
+    if all(getattr(s, "execution_res", None) for s in current_plan.steps):
+        return "common_reporter"
+    # 组合步已执行完毕，等待 LLM 参与总结/补充
+    if state.get("vasp_post_composite"):
+        return "vasp_executor"
+    if _vasp_current_step_is_composite(current_plan):
+        return "vasp_composite"
+    return "vasp_executor"
+
+
+def vasp_team_node(state: State) -> dict:
+    """Routing-only node: state passes through; conditional edge chooses vasp_executor, vasp_composite, or common_reporter."""
+    return {}
+
+
+def vasp_composite_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["vasp_team"]]:
+    """
+    Execute a composite VASP step without LLM: composite_submit (generate_inputs + get_hpc_config + submit_to_hpc)
+    or composite_band (download vasprun.xml + plot_band_structure). Reads inputs from completed_steps.
+    """
+    from src.server.app import TOOL_REGISTRY
+
+    current_plan = state.get("current_plan")
+    if not current_plan or not getattr(current_plan, "steps", None):
+        return Command(goto="vasp_team")
+    current_step = None
+    completed_steps = []
+    for step in current_plan.steps:
+        if not getattr(step, "execution_res", None):
+            current_step = step
+            break
+        completed_steps.append(step)
+    if not current_step:
+        return Command(goto="vasp_team")
+
+    mode = getattr(current_step, "execution_mode", None)
+    steps = current_plan.steps
+    if not mode:
+        idx = steps.index(current_step)
+        if len(steps) == 4:
+            mode = "composite_submit" if idx == 1 else ("composite_band" if idx == 3 else None)
+        elif len(steps) == 3:
+            mode = "composite_submit" if idx == 1 else ("composite_band" if idx == 2 else None)
+        else:
+            mode = None
+
+    observations = state.get("observations", [])
+
+    def _invoke(tool_name: str, args: dict) -> dict:
+        t = TOOL_REGISTRY.get(tool_name)
+        if not t or not callable(getattr(t, "invoke", None)):
+            return {"error": f"Tool {tool_name} not found"}
+        out = t.invoke(args)
+        if isinstance(out, str):
+            try:
+                return json.loads(repair_json_output(out))
+            except (json.JSONDecodeError, ValueError):
+                return {"error": out}
+        return out if isinstance(out, dict) else {"error": str(out)}
+
+    if mode == "composite_submit":
+        # 幂等：若本步已有提交结果（state 中有 vasp_composite_result 且含 job_id），视为步骤已成功，直接进入下一步
+        existing = state.get("vasp_composite_result")
+        if existing:
+            try:
+                parsed = json.loads(repair_json_output(existing))
+                if parsed.get("job_id") and parsed.get("remote_dir"):
+                    logger.info("VASP composite_submit idempotent: already have job_id=%s, mark step done and go to next", parsed.get("job_id"))
+                    current_step.execution_res = existing
+                    return Command(
+                        update={
+                            "messages": [HumanMessage(content=existing, name="vasp_composite")],
+                            "observations": observations + [existing],
+                            "vasp_post_composite": False,
+                            "vasp_composite_result": None,
+                        },
+                        goto="vasp_team",
+                    )
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+        poscar = _parse_poscar_from_completed_steps(completed_steps)
+        if not poscar:
+            current_step.execution_res = json.dumps(
+                {"error": "缺少 Step 1 的 poscar_content，无法生成输入"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        gen = _invoke("vaspilot_generate_inputs", {"poscar_content": poscar, "calc_type": "band"})
+        if gen.get("error"):
+            current_step.execution_res = json.dumps(gen, ensure_ascii=False)
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        files = gen.get("files")
+        if not files or not isinstance(files, dict) or "submit.sh" not in files:
+            current_step.execution_res = json.dumps(
+                {"error": "generate_inputs 未返回有效 files（需包含 submit.sh）"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        hpc = _invoke("vaspilot_get_hpc_config", {})
+        if hpc.get("error") or not (hpc.get("host") and hpc.get("username")):
+            current_step.execution_res = json.dumps(
+                hpc if hpc.get("error") else {"error": "get_hpc_config 未返回 host/username"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        remote_work_dir = (hpc.get("work_dir") or hpc.get("remote_work_dir") or "").strip()
+        if not remote_work_dir:
+            current_step.execution_res = json.dumps({"error": "HPC 配置缺少 work_dir"}, ensure_ascii=False)
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        submit_args = {
+            "files": files,
+            "host": str(hpc.get("host", "")).strip(),
+            "username": str(hpc.get("username", "")).strip(),
+            "remote_work_dir": remote_work_dir,
+            "port": int(hpc.get("port", 22)) if hpc.get("port") else 22,
+            "key_path": (str(hpc.get("key_path", "")).strip() or None),
+            "password": "__use_config__",
+        }
+        submit_res = _invoke("vaspilot_submit_to_hpc", submit_args)
+        if submit_res.get("error") or not submit_res.get("success"):
+            current_step.execution_res = json.dumps(submit_res, ensure_ascii=False)
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        # Store job_id, remote_dir and hpc for Step 3/4
+        result = {
+            "success": True,
+            "job_id": submit_res.get("job_id"),
+            "remote_dir": submit_res.get("remote_dir"),
+            "message": submit_res.get("message", ""),
+            "host": hpc.get("host"),
+            "username": hpc.get("username"),
+            "port": hpc.get("port", 22),
+            "key_path": hpc.get("key_path"),
+            "work_dir": remote_work_dir,
+        }
+        composite_res = json.dumps(result, ensure_ascii=False)
+        logger.info("VASP composite_submit done: job_id=%s remote_dir=%s", result.get("job_id"), result.get("remote_dir"))
+        # 给用户看的消息：生成输入文件列表+各文件内容+检查项+提交结果，便于看到有哪些输入文件
+        display = (gen.get("display") or "").strip()
+        if display:
+            user_visible = display + "\n\n--- 提交结果 ---\n" + json.dumps(result, ensure_ascii=False, indent=2)
+        else:
+            user_visible = composite_res
+        # 写入 state 供 composite_band 轮询使用，避免从 execution_res 解析不到 job_id 时跳过轮询
+        update = {
+            "messages": [HumanMessage(content=user_visible, name="vasp_composite")],
+            "observations": observations + [user_visible],
+            "vasp_composite_result": composite_res,
+            "vasp_gen_display": display or None,
+            "vasp_post_composite": True,
+            "vasp_submit_job_id": str(result.get("job_id", "")).strip() or None,
+            "vasp_submit_remote_dir": str(result.get("remote_dir", "")).strip() or None,
+            "vasp_submit_host": str(result.get("host", "")).strip() or None,
+            "vasp_submit_username": str(result.get("username", "")).strip() or None,
+            "vasp_submit_port": int(result.get("port", 22)) if result.get("port") is not None else 22,
+            "vasp_submit_key_path": (str(result.get("key_path", "")).strip() or None),
+        }
+        return Command(update=update, goto="vasp_team")
+
+    if mode == "composite_band":
+        # 优先从 state 取提交结果（composite_submit 写入），避免从 execution_res 解析失败导致无 job_id 从而跳过轮询
+        submit_info = {
+            "job_id": (state.get("vasp_submit_job_id") or "").strip() or None,
+            "remote_dir": (state.get("vasp_submit_remote_dir") or "").strip() or None,
+            "host": (state.get("vasp_submit_host") or "").strip() or None,
+            "username": (state.get("vasp_submit_username") or "").strip() or None,
+            "port": state.get("vasp_submit_port") if state.get("vasp_submit_port") is not None else 22,
+            "key_path": (state.get("vasp_submit_key_path") or "").strip() or None,
+        }
+        parsed = _parse_submit_result_from_completed_steps(completed_steps)
+        for k, v in parsed.items():
+            if v is not None and (v != "" if isinstance(v, str) else True):
+                submit_info[k] = v
+        remote_dir = submit_info.get("remote_dir")
+        host = submit_info.get("host")
+        username = submit_info.get("username")
+        job_id = submit_info.get("job_id")
+        logger.info(
+            "VASP composite_band: submit_info job_id=%s remote_dir=%s host=%s",
+            job_id, remote_dir, host,
+        )
+        if not host or not username:
+            hpc = _invoke("vaspilot_get_hpc_config", {})
+            if not hpc.get("error"):
+                host = host or str(hpc.get("host", "")).strip()
+                username = username or str(hpc.get("username", "")).strip()
+        if not remote_dir:
+            current_step.execution_res = json.dumps(
+                {"error": "缺少 Step 2 的 remote_dir，无法下载 vasprun.xml"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        if not host or not username:
+            current_step.execution_res = json.dumps(
+                {"error": "缺少 HPC host/username，无法下载 vasprun.xml"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        # 必须有 job_id 才能轮询，否则会直接下载（作业可能仍在 RUNNING）
+        if not job_id and remote_dir:
+            current_step.execution_res = json.dumps(
+                {"error": "缺少 job_id，无法轮询作业状态。请确保上一步提交结果包含 job_id，或使用带 composite 的能带流程。"}, ensure_ascii=False
+            )
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        port = submit_info.get("port", 22)
+        key_path = submit_info.get("key_path")
+        # 轮询作业状态直到 COMPLETED 或 FAILED，再下载/画图（与 scripts/run_band_workflow.py 一致：RUNNING 时持续轮询）
+        if job_id:
+            poll_interval_sec = 30
+            while True:
+                st = _invoke(
+                    "vaspilot_job_status",
+                    {
+                        "job_id": job_id,
+                        "host": host,
+                        "username": username,
+                        "port": port,
+                        "key_path": key_path,
+                        "password": "__use_config__",
+                    },
+                )
+                if st.get("error"):
+                    current_step.execution_res = json.dumps(
+                        {"error": f"查询作业状态失败: {st.get('error')}"}, ensure_ascii=False
+                    )
+                    return Command(
+                        update={
+                            "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                            "observations": observations + [current_step.execution_res],
+                        },
+                        goto="vasp_team",
+                    )
+                status = (st.get("status") or "").strip().upper()
+                node_info = st.get("node") or ""
+                time_used = st.get("time_used") or ""
+                logger.info("VASP composite_band 轮询: job_id=%s 状态=%s %s %s", job_id, status, node_info, time_used)
+                if status == "COMPLETED":
+                    logger.info("VASP composite_band: job %s COMPLETED, proceeding to download", job_id)
+                    break
+                if status == "FAILED":
+                    current_step.execution_res = json.dumps(
+                        {
+                            "error": "作业已失败 (FAILED)，请使用 vaspilot_fetch_job_logs 查看远程日志后重试或修改输入。",
+                            "job_id": job_id,
+                            "status": status,
+                        },
+                        ensure_ascii=False,
+                    )
+                    return Command(
+                        update={
+                            "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                            "observations": observations + [current_step.execution_res],
+                        },
+                        goto="vasp_team",
+                    )
+                logger.info("VASP composite_band: status=%s，%ds 后再次查询", status, poll_interval_sec)
+                time.sleep(poll_interval_sec)
+        dl = _invoke(
+            "vaspilot_download_remote_file",
+            {
+                "remote_dir": remote_dir,
+                "filename": "vasprun.xml",
+                "host": host,
+                "username": username,
+                "port": port,
+                "key_path": key_path,
+                "password": "__use_config__",
+            },
+        )
+        if dl.get("error") or not dl.get("content"):
+            current_step.execution_res = json.dumps(dl if dl.get("error") else {"error": "下载 vasprun.xml 失败或内容为空"}, ensure_ascii=False)
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        # 能带图需 KPOINTS（line mode）否则 pymatgen 报 KPOINTS not found
+        dl_kpts = _invoke(
+            "vaspilot_download_remote_file",
+            {
+                "remote_dir": remote_dir,
+                "filename": "KPOINTS",
+                "host": host,
+                "username": username,
+                "port": port,
+                "key_path": key_path,
+                "password": "__use_config__",
+            },
+        )
+        kpoints_content = (dl_kpts.get("content") or "").strip() if not dl_kpts.get("error") else ""
+        plot_res = _invoke(
+            "vaspilot_plot_band_structure",
+            {"vasprun_xml_content": dl.get("content", ""), "kpoints_content": kpoints_content or None},
+        )
+        if plot_res.get("error"):
+            current_step.execution_res = json.dumps(plot_res, ensure_ascii=False)
+            return Command(
+                update={
+                    "messages": [HumanMessage(content=current_step.execution_res, name="vasp_composite")],
+                    "observations": observations + [current_step.execution_res],
+                },
+                goto="vasp_team",
+            )
+        band_res = json.dumps(
+            {"success": True, "image_base64": plot_res.get("image_base64")}, ensure_ascii=False
+        )
+        logger.info("VASP composite_band done: image generated")
+        # 不在此处写 execution_res，交给 vasp_executor（LLM+组合）总结后再写
+        return Command(
+            update={
+                "messages": [HumanMessage(content=band_res, name="vasp_composite")],
+                "observations": observations + [band_res],
+                "vasp_composite_result": band_res,
+                "vasp_post_composite": True,
+            },
+            goto="vasp_team",
+        )
+
+    # Not a composite step; should not reach here if routing is correct
+    return Command(goto="vasp_team")
+
+
 def literature_planner_node(
     state: State, config: RunnableConfig
 ) -> Command[Literal["human_feedback", "literature_answerer", "reporter", "__end__"]]:
@@ -533,7 +1199,7 @@ def literature_answerer_node(state: State, config: RunnableConfig):
 
 def human_feedback_node(
     state: State, config: RunnableConfig
-) -> Command[Literal["planner", "research_team", "reporter", "__end__"]]:
+) -> Command[Literal["planner", "research_team", "vasp_team", "reporter", "__end__"]]:
     current_plan = state.get("current_plan", "")
     # check if the plan is auto accepted
     auto_accepted_plan = state.get("auto_accepted_plan", False)
@@ -558,6 +1224,13 @@ def human_feedback_node(
     # if the plan is accepted, run the following node
     plan_iterations = state["plan_iterations"] if state.get("plan_iterations", 0) else 0
     goto = "research_team"
+    # VASP flow: last plan message is from vasp_planner -> go to vasp_team
+    for m in reversed(state.get("messages", [])):
+        if hasattr(m, "name") and getattr(m, "name", None) == "vasp_planner":
+            goto = "vasp_team"
+            break
+        if hasattr(m, "name") and getattr(m, "name", None) in ("planner", "molecular_planner", "literature_planner"):
+            break
     
     # Handle both Plan object and string
     if isinstance(current_plan, Plan):
@@ -590,7 +1263,7 @@ def human_feedback_node(
 
 def coordinator_node(
     state: State, config: RunnableConfig
-) -> Command[Literal["planner", "molecular_planner", "background_investigator", "coordinator", "__end__"]]:
+) -> Command[Literal["planner", "molecular_planner", "vasp_planner", "background_investigator", "coordinator", "__end__"]]:
     """Coordinator node that communicate with customers and handle clarification."""
     logger.info("Coordinator talking.")
     configurable = Configuration.from_runnable_config(config)
@@ -612,7 +1285,7 @@ def coordinator_node(
         )
 
         # Bind handoff tools (literature planner branch removed)
-        tools = [handoff_to_planner, handoff_to_molecular_planner]
+        tools = [handoff_to_planner, handoff_to_molecular_planner, handoff_to_vasp]
         response = (
             _get_llm_for_agent("coordinator", config)
             .bind_tools(tools)
@@ -638,6 +1311,13 @@ def coordinator_node(
                         goto = "molecular_planner"
                         
                         # Extract locale and research_topic if provided
+                        if tool_args.get("locale") and tool_args.get("research_topic"):
+                            locale = tool_args.get("locale")
+                            research_topic = tool_args.get("research_topic")
+                        break
+                    elif tool_name == "handoff_to_vasp":
+                        logger.info("Handing off to vasp_planner")
+                        goto = "vasp_planner"
                         if tool_args.get("locale") and tool_args.get("research_topic"):
                             locale = tool_args.get("locale")
                             research_topic = tool_args.get("research_topic")
@@ -759,7 +1439,7 @@ def coordinator_node(
             messages.append({"role": "system", "content": clarification_context})
 
         # Bind all handoff tools
-        tools = [handoff_to_planner, handoff_to_molecular_planner, handoff_after_clarification]
+        tools = [handoff_to_planner, handoff_to_molecular_planner, handoff_to_vasp, handoff_after_clarification]
         response = (
             _get_llm_for_agent("coordinator", config)
             .bind_tools(tools)
@@ -846,6 +1526,13 @@ def coordinator_node(
                         locale = tool_args.get("locale")
                         research_topic = tool_args.get("research_topic")
                     break
+                elif tool_name == "handoff_to_vasp":
+                    logger.info("Handing off to vasp_planner")
+                    goto = "vasp_planner"
+                    if tool_args.get("locale") and tool_args.get("research_topic"):
+                        locale = tool_args.get("locale")
+                        research_topic = tool_args.get("research_topic")
+                    break
                 elif tool_name in ["handoff_to_planner", "handoff_after_clarification"]:
                     logger.info("Handing off to planner")
                     goto = "planner"
@@ -887,6 +1574,131 @@ def coordinator_node(
         },
         goto=goto,
     )
+
+
+async def vasp_agent_node(state: State, config: RunnableConfig):
+    """
+    Run VASP ReAct agent (vaspilot tools) in a loop, then hand off to common_reporter.
+    Same as molecular_planner flow: user goal -> single agent with tools -> common_reporter.
+    """
+    logger.info("VASP agent node running")
+    try:
+        from src.server.app import get_vasp_graph
+        vasp = get_vasp_graph()
+    except ValueError as e:
+        logger.warning("VASP graph not available: %s", e)
+        from langchain_core.messages import AIMessage
+        err_msg = AIMessage(
+            content=f"VASP 工具暂不可用：{e!s}。请确保已启用 vaspilot-skill 并加载工具。",
+            name="vasp_agent",
+        )
+        minimal_plan = Plan(
+            locale=state.get("locale", "en-US"),
+            has_enough_context=True,
+            thought="VASP workflow (tools unavailable).",
+            title=state.get("research_topic", "VASP 计算")[:200],
+            steps=[],
+        )
+        return Command(
+            update={
+                "messages": state.get("messages", []) + [err_msg],
+                "current_plan": minimal_plan,
+                "observations": [],
+            },
+            goto="common_reporter",
+        )
+    out = await vasp.ainvoke(
+        {"messages": state["messages"]},
+        config=config,
+    )
+    new_messages = out.get("messages", state["messages"])
+    # Build minimal plan for common_reporter (title from last user message)
+    research_topic = state.get("research_topic", "")
+    if not research_topic and new_messages:
+        for m in reversed(new_messages):
+            if isinstance(m, HumanMessage):
+                research_topic = (m.content or "")[:200]
+                break
+    minimal_plan = Plan(
+        locale=state.get("locale", "en-US"),
+        has_enough_context=True,
+        thought="VASP workflow execution.",
+        title=research_topic or "VASP 计算",
+        steps=[],
+    )
+    return Command(
+        update={
+            "messages": new_messages,
+            "current_plan": minimal_plan,
+            "observations": [],
+        },
+        goto="common_reporter",
+    )
+
+
+async def vasp_executor_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["vasp_team"]]:
+    """Execute one VASP plan step using vaspilot tools, then return to vasp_team."""
+    from src.server.app import TOOL_REGISTRY
+    from src.graph.vasp_agent import get_vasp_tools_from_registry
+
+    vasp_tools = get_vasp_tools_from_registry(TOOL_REGISTRY)
+    if not vasp_tools:
+        logger.warning("No vaspilot tools in registry; skipping step")
+        return Command(goto="vasp_team")
+    # 本步内「submit_to_hpc 缺 files 失败」计数清零，超过 _SUBMIT_FILES_ERROR_LIMIT 次后返回终止说明
+    try:
+        _VASP_SUBMIT_FILES_ERROR_CTX.set(0)
+    except Exception:
+        pass
+    # Set HPC config in context so wrapped tools can fill missing host/username/remote_work_dir when LLM omits them
+    current_plan = state.get("current_plan")
+    completed_steps = []
+    if current_plan and getattr(current_plan, "steps", None):
+        completed_steps = [s for s in current_plan.steps if getattr(s, "execution_res", None)]
+    hpc_args = _parse_hpc_config_from_completed_steps(completed_steps)
+    files_from_steps = _parse_files_from_completed_steps(completed_steps)
+    if files_from_steps is not None:
+        logger.info("VASP: parsed files from completed steps for submit_to_hpc, keys=%s", list(files_from_steps.keys()))
+    else:
+        logger.info("VASP: no files parsed from completed steps (will rely on context or LLM)")
+    token = None
+    files_token = None
+    band_token = None
+    if hpc_args:
+        token = _VASP_HPC_CONFIG_CTX.set(hpc_args)
+    if files_from_steps is not None:
+        try:
+            files_token = _VASP_SUBMIT_FILES_CTX.set(files_from_steps)
+        except Exception:
+            pass
+    # 第 4 步画图时从 state 注入 vasprun/kpoints，避免大内容进 prompt
+    band_ctx = {}
+    if state.get("vasp_vasprun_xml_content"):
+        band_ctx["vasprun_xml_content"] = state["vasp_vasprun_xml_content"]
+    if state.get("vasp_kpoints_content") is not None:
+        band_ctx["kpoints_content"] = state.get("vasp_kpoints_content") or ""
+    if band_ctx:
+        band_token = _VASP_BAND_CONTENT_CTX.set(band_ctx)
+    vasp_tools = [_wrap_vasp_plot_band_from_ctx(_wrap_vasp_tool_with_hpc_fill(t, cached_files=files_from_steps)) for t in vasp_tools]
+    try:
+        return await _setup_and_execute_agent_step(
+            state, config, "vasp_executor", vasp_tools, next_goto="vasp_team"
+        )
+    finally:
+        if token is not None:
+            _VASP_HPC_CONFIG_CTX.reset(token)
+        if files_token is not None:
+            try:
+                _VASP_SUBMIT_FILES_CTX.reset(files_token)
+            except Exception:
+                pass
+        if band_token is not None:
+            try:
+                _VASP_BAND_CONTENT_CTX.reset(band_token)
+            except Exception:
+                pass
 
 
 def reporter_node(state: State, config: RunnableConfig):
@@ -1019,6 +1831,49 @@ def common_reporter_node(state: State, config: RunnableConfig):
     # LLM 应该已经在响应中包含了 <img> 标签
     # 直接返回 LLM 响应，不再手动附加图片
     final_content = response_content
+
+    # VASP 能带工作流：若 observations 中有 step 结果含 image_base64/image_path，追加能带图到报告（与 common research 一致，在「结果」页展示）
+    # 优先使用 image_path 通过 /api/workspace-file 展示，避免 base64 过长导致浏览器不渲染
+    _MAX_BASE64_CHARS = 400_000  # 约 300KB 图片，再大则 data URL 易超限或卡顿
+    for obs in (observations or []):
+        obs_s = (obs or "").strip()
+        if not obs_s or ("image_base64" not in obs_s and "image_path" not in obs_s):
+            continue
+        json_end = obs_s.find("\n\n---")
+        json_str = obs_s[:json_end] if json_end >= 0 else obs_s
+        try:
+            data = json.loads(repair_json_output(json_str))
+            if not isinstance(data, dict) or not data.get("success"):
+                continue
+            image_path = data.get("image_path") or ""
+            b64 = data.get("image_base64") or ""
+            # 1) 有 image_path 时用 API 链接展示，避免超大 base64
+            if image_path and image_path.strip():
+                try:
+                    rel = os.path.relpath(image_path, os.getcwd()) if os.path.isabs(image_path) else image_path.strip()
+                    if ".." not in rel and not rel.startswith("/"):
+                        img_url = "/api/workspace-file?path=" + quote(rel, safe="/")
+                        final_content = final_content.rstrip() + "\n\n## 能带图\n\n![能带图](" + img_url + ")\n\n"
+                        logger.info("Common reporter: appended VASP band image via workspace-file API (path=%s)", rel)
+                    else:
+                        final_content = final_content.rstrip() + "\n\n## 能带图\n\n能带图已保存至：`" + image_path.strip() + "`，请在本机打开该文件查看。\n\n"
+                        logger.info("Common reporter: appended VASP band image path (no API link)")
+                except (ValueError, OSError):
+                    final_content = final_content.rstrip() + "\n\n## 能带图\n\n能带图已保存至：`" + image_path.strip() + "`，请在本机打开该文件查看。\n\n"
+                break
+            # 2) 仅 base64 且长度可接受时内嵌
+            if b64 and len(b64) <= _MAX_BASE64_CHARS:
+                final_content = final_content.rstrip() + "\n\n## 能带图\n\n<img src=\"data:image/png;base64," + b64 + "\" alt=\"能带图\" width=\"800\" />\n"
+                logger.info("Common reporter: appended VASP band image (base64, len=%s)", len(b64))
+                break
+            # 3) base64 过大或仅有 base64 无 path：只提示路径
+            if b64:
+                logger.warning("Common reporter: base64 too long (len=%s), not embedding; add path hint", len(b64))
+            final_content = final_content.rstrip() + "\n\n## 能带图\n\n能带图已生成并保存至：`band_workflow_out/band_structure.png`，请在本机打开该文件查看。\n\n"
+            logger.info("Common reporter: appended VASP band image path hint (no embed)")
+            break
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
     
     logger.info(f"Final content length: {len(final_content)}")
     if 'data:image' in final_content:
@@ -1064,10 +1919,244 @@ def research_team_node(state: State):
     pass
 
 
+def _parse_hpc_config_from_completed_steps(completed_steps: list) -> dict:
+    """
+    Parse vaspilot_get_hpc_config result from completed steps' execution_res.
+    Returns dict with host, username, remote_work_dir (from work_dir), port, key_path for submit_to_hpc.
+    """
+    def _extract_obj(text: str):
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        return None
+
+    def _to_hpc_args(obj: dict) -> dict:
+        if not isinstance(obj, dict) or not obj.get("host") or not obj.get("username"):
+            return {}
+        return {
+            "host": str(obj.get("host", "")).strip(),
+            "username": str(obj.get("username", "")).strip(),
+            "remote_work_dir": str(obj.get("work_dir") or obj.get("remote_work_dir") or "").strip(),
+            "port": int(obj.get("port", 22)) if obj.get("port") else 22,
+            "key_path": (str(obj.get("key_path", "")).strip() or None),
+        }
+
+    for step in reversed(completed_steps):
+        if not getattr(step, "execution_res", None):
+            continue
+        text = step.execution_res.strip()
+        try:
+            # Try whole text as JSON first
+            obj = json.loads(repair_json_output(text))
+            out = _to_hpc_args(obj)
+            if out:
+                return out
+            # Try first brace-balanced {...} in text
+            snippet = _extract_obj(text)
+            if snippet:
+                obj = json.loads(repair_json_output(snippet))
+                out = _to_hpc_args(obj)
+                if out:
+                    return out
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+    return {}
+
+
+def _parse_files_from_completed_steps(completed_steps: list) -> dict | None:
+    """
+    Parse generate_inputs result (top-level "files" dict) from completed steps' execution_res.
+    Returns the "files" dict if found (must contain submit.sh), else None.
+    Handles JSON string, Python dict string, and <finding>...</finding> wrapped content.
+    """
+    import ast
+
+    def _extract_obj(text: str):
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        return None
+
+    def _parse_obj(snippet: str) -> dict | None:
+        if not snippet or not snippet.strip():
+            return None
+        try:
+            obj = json.loads(repair_json_output(snippet))
+            if isinstance(obj, dict):
+                return obj
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+        try:
+            obj = ast.literal_eval(snippet)
+            if isinstance(obj, dict):
+                return obj
+        except (ValueError, SyntaxError, TypeError):
+            pass
+        return None
+
+    for step in reversed(completed_steps):
+        if not getattr(step, "execution_res", None):
+            continue
+        text = (step.execution_res or "").strip()
+        if not text:
+            continue
+        # Strip <finding>...</finding> if present
+        if "<finding>" in text and "</finding>" in text:
+            start = text.find("<finding>") + len("<finding>")
+            end = text.find("</finding>")
+            if end > start:
+                text = text[start:end].strip()
+        # Try whole text first
+        obj = _parse_obj(text)
+        if obj:
+            files = obj.get("files")
+            if isinstance(files, dict) and files.get("submit.sh"):
+                return files
+        # Try first brace-balanced {...}
+        snippet = _extract_obj(text)
+        if snippet:
+            obj = _parse_obj(snippet)
+            if obj:
+                files = obj.get("files")
+                if isinstance(files, dict) and files.get("submit.sh"):
+                    return files
+    return None
+
+
+def _parse_poscar_from_completed_steps(completed_steps: list) -> str | None:
+    """
+    Parse load_structure result (poscar_content) from the first completed step's execution_res.
+    Returns poscar_content string or None.
+    """
+    if not completed_steps:
+        return None
+    step = completed_steps[0]
+    text = (getattr(step, "execution_res", None) or "").strip()
+    if not text:
+        return None
+    if "<finding>" in text and "</finding>" in text:
+        start = text.find("<finding>") + len("<finding>")
+        end = text.find("</finding>")
+        if end > start:
+            text = text[start:end].strip()
+    try:
+        obj = json.loads(repair_json_output(text))
+        if isinstance(obj, dict) and obj.get("poscar_content"):
+            return str(obj["poscar_content"]).strip()
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    start = text.find("{")
+    if start >= 0:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        obj = json.loads(repair_json_output(text[start : i + 1]))
+                        if isinstance(obj, dict) and obj.get("poscar_content"):
+                            return str(obj["poscar_content"]).strip()
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        pass
+                    break
+    return None
+
+
+def _parse_submit_result_from_completed_steps(completed_steps: list) -> dict:
+    """
+    Parse submit_to_hpc result (job_id, remote_dir, etc.) from a completed step's execution_res.
+    execution_res 可能为：纯 JSON；或「display 文本 + --- 提交结果 ---\\n + JSON + --- LLM 总结 --- + ...」。
+    Prefers a step that has remote_dir (submit result); fallback to any step with job_id.
+    Returns dict with job_id, remote_dir, host, username, port, key_path, remote_work_dir (or work_dir).
+    """
+    def _extract_obj(text: str):
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        return None
+
+    def _extract_submit_json(text: str) -> str | None:
+        """若 execution_res 含「--- 提交结果 ---」，则提取其后到「--- LLM 总结 ---」或结尾的 JSON 片段。"""
+        marker = "--- 提交结果 ---"
+        if marker not in text:
+            return None
+        start = text.find(marker) + len(marker)
+        rest = text[start:].lstrip()
+        end_marker = "\n\n--- LLM 总结 ---"
+        if end_marker in rest:
+            rest = rest[: rest.find(end_marker)]
+        return rest.strip()
+
+    def _to_out(obj: dict) -> dict:
+        return {
+            "job_id": str(obj.get("job_id", "")).strip() or None,
+            "remote_dir": str(obj.get("remote_dir", "")).strip() or None,
+            "host": str(obj.get("host", "")).strip() or None,
+            "username": str(obj.get("username", "")).strip() or None,
+            "port": int(obj.get("port", 22)) if obj.get("port") else 22,
+            "key_path": (str(obj.get("key_path", "")).strip() or None),
+            "remote_work_dir": str(obj.get("remote_work_dir") or obj.get("work_dir") or "").strip() or None,
+        }
+
+    best = {}
+    for step in reversed(completed_steps):
+        text = (getattr(step, "execution_res", None) or "").strip()
+        if not text:
+            continue
+        json_str = _extract_submit_json(text)
+        if json_str is None:
+            json_str = text
+        try:
+            obj = json.loads(repair_json_output(json_str))
+            if not isinstance(obj, dict):
+                snippet = _extract_obj(json_str)
+                if snippet:
+                    obj = json.loads(repair_json_output(snippet))
+                else:
+                    continue
+            if not isinstance(obj, dict):
+                continue
+            remote_dir = obj.get("remote_dir")
+            job_id = obj.get("job_id")
+            if remote_dir and (obj.get("host") or obj.get("username")):
+                return _to_out(obj)
+            if job_id or remote_dir:
+                best = _to_out(obj)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+    return best
+
+
 async def _execute_agent_step(
-    state: State, agent, agent_name: str
-) -> Command[Literal["research_team"]]:
-    """Helper function to execute a step using the specified agent."""
+    state: State, agent, agent_name: str, *, next_goto: str = "research_team"
+) -> Command[Literal["research_team", "vasp_team"]]:
+    """Helper function to execute a step using the specified agent. next_goto: next node after step (research_team or vasp_team)."""
     current_plan = state.get("current_plan")
     plan_title = current_plan.title
     observations = state.get("observations", [])
@@ -1118,7 +2207,7 @@ async def _execute_agent_step(
                 }) + "\n")
         except: pass
         # #endregion
-        return Command(goto="research_team")
+        return Command(goto=next_goto)
 
     logger.info(f"Executing step: {current_step.title}, agent: {agent_name}")
     # #region debug log
@@ -1172,6 +2261,72 @@ async def _execute_agent_step(
         ]
     }
 
+    # For vasp_executor: include last user message so agent sees POSCAR/attachment and request
+    if agent_name == "vasp_executor":
+        for m in reversed(state.get("messages", [])):
+            if isinstance(m, HumanMessage) and m.content:
+                agent_input["messages"].insert(0, m)
+                break
+        # 组合步刚执行完：注入组合结果，由 LLM 总结/补充后再写 execution_res
+        if state.get("vasp_post_composite") and state.get("vasp_composite_result"):
+            agent_input["messages"].append(
+                HumanMessage(
+                    content="【组合步骤已执行】请根据下方组合步骤结果做简要总结或补充说明，完成后本步即完成。\n\n" + state["vasp_composite_result"],
+                    name="vasp_composite",
+                )
+            )
+        # Inject HPC args for any step that may call submit/job_status/fetch_logs/download (all need host/username)
+        step_desc_lower = ((current_step.title or "") + " " + (current_step.description or "")).lower()
+        needs_hpc = (
+            "submit" in step_desc_lower or "提交" in step_desc_lower
+            or "vaspilot_submit_to_hpc" in step_desc_lower
+            or "vaspilot_job_status" in step_desc_lower
+            or "vaspilot_fetch_job_logs" in step_desc_lower
+            or "vaspilot_download_remote_file" in step_desc_lower
+            or "监控" in (current_step.title or "") or "监控" in (current_step.description or "")
+            or "下载" in (current_step.title or "") or "下载" in (current_step.description or "")
+        )
+        if needs_hpc:
+            hpc_args = _parse_hpc_config_from_completed_steps(completed_steps)
+            if hpc_args:
+                # Append to the main instruction message (the one with Current Step), not the user message
+                main_idx = 1 if len(agent_input["messages"]) > 1 else 0
+                main_msg = agent_input["messages"][main_idx]
+                if isinstance(main_msg, HumanMessage):
+                    extra = (
+                        "\n\n**MANDATORY HPC parameters** (from vaspilot_get_hpc_config). "
+                        "You MUST pass these for vaspilot_submit_to_hpc, vaspilot_job_status, vaspilot_fetch_job_logs, vaspilot_download_remote_file:\n"
+                        f"- host={repr(hpc_args.get('host', ''))}\n"
+                        f"- username={repr(hpc_args.get('username', ''))}\n"
+                        f"- remote_work_dir={repr(hpc_args.get('remote_work_dir', ''))} (use for submit_to_hpc and download)\n"
+                        f"- port={hpc_args.get('port', 22)}\n"
+                    )
+                    if hpc_args.get("key_path"):
+                        extra += f"- key_path={repr(hpc_args['key_path'])}\n"
+                    else:
+                        extra += "- password=\"__use_config__\" (use when key_path not set)\n"
+                    extra += (
+                        "vaspilot_submit_to_hpc: pass files, host, username, remote_work_dir, port, key_path or password. "
+                        "vaspilot_job_status: pass job_id (from submit result), host, username, port, key_path or password. "
+                        "vaspilot_fetch_job_logs / vaspilot_download_remote_file: same host/username/key_path."
+                    )
+                    agent_input["messages"][main_idx] = HumanMessage(content=main_msg.content + extra)
+        # 第 4 步生成能带图：上一步已把 vasprun/kpoints 存入 state，画图时自动注入；提示 LLM 直接调用即可
+        needs_band_plot = (
+            "vaspilot_plot_band_structure" in step_desc_lower
+            or "生成能带图" in (current_step.title or "")
+            or "能带图" in (current_step.description or "")
+        )
+        if needs_band_plot and state.get("vasp_vasprun_xml_content"):
+            main_idx = 1 if len(agent_input["messages"]) > 1 else 0
+            main_msg = agent_input["messages"][main_idx]
+            if isinstance(main_msg, HumanMessage):
+                band_hint = (
+                    "\n\n**生成能带图**：上一步已下载 vasprun.xml 与 KPOINTS，内容已缓存。"
+                    "请直接调用 vaspilot_plot_band_structure，vasprun_xml_content 与 kpoints_content 可传空字符串 \"\"，系统将自动注入。"
+                    "可选传 output_dir 指定图片保存目录（如 band_workflow_out）。"
+                )
+                agent_input["messages"][main_idx] = HumanMessage(content=main_msg.content + band_hint)
     # Add citation reminder for researcher agent
     if agent_name == "researcher":
         if state.get("resources"):
@@ -1222,7 +2377,70 @@ async def _execute_agent_step(
         result = await agent.ainvoke(
             input=agent_input, config={"recursion_limit": recursion_limit}
         )
-        
+
+        # vasp_executor: 若本轮有 job_status 返回 FAILED 且 exit_code==1，自动从服务端拉取错误日志并再跑一轮 LLM 分析
+        if agent_name == "vasp_executor" and result.get("messages"):
+            tool_id_to_name = {}
+            for m in result["messages"]:
+                if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+                    for tc in m.tool_calls:
+                        tid = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "")
+                        tname = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", "")
+                        if tid:
+                            tool_id_to_name[tid] = tname
+            job_status_failed = False
+            for m in result["messages"]:
+                if isinstance(m, ToolMessage):
+                    tid = getattr(m, "tool_call_id", None)
+                    tname = (tool_id_to_name.get(tid, "") if tid else "") or ""
+                    if tname == "vaspilot_job_status":
+                        try:
+                            data = json.loads(repair_json_output(str(m.content)))
+                            if data.get("status") == "FAILED" and data.get("exit_code") == 1:
+                                job_status_failed = True
+                                break
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
+            if job_status_failed:
+                submit_info = _parse_submit_result_from_completed_steps(completed_steps)
+                job_id = submit_info.get("job_id")
+                remote_dir = submit_info.get("remote_dir")
+                host = submit_info.get("host")
+                username = submit_info.get("username")
+                if job_id and remote_dir and host and username:
+                    try:
+                        from src.server.app import TOOL_REGISTRY
+                        fetch_tool = TOOL_REGISTRY.get("vaspilot_fetch_job_logs")
+                        if fetch_tool:
+                            logs_out = fetch_tool.invoke({
+                                "job_id": str(job_id),
+                                "remote_dir": remote_dir,
+                                "host": host,
+                                "username": username,
+                                "port": submit_info.get("port", 22),
+                                "key_path": submit_info.get("key_path") or "",
+                                "password": "__use_config__",
+                            })
+                            if isinstance(logs_out, str):
+                                try:
+                                    logs_out = json.loads(repair_json_output(logs_out))
+                                except Exception:
+                                    logs_out = {"raw": logs_out}
+                            logs_str = json.dumps(logs_out, ensure_ascii=False, indent=2)
+                            follow_up_messages = list(agent_input["messages"]) + list(result["messages"]) + [
+                                HumanMessage(
+                                    content="【系统】作业状态为 FAILED（退出码 1），已从服务端拉取错误日志。请根据以下内容分析失败原因、定位问题并告知用户。\n\n" + logs_str,
+                                    name="system",
+                                )
+                            ]
+                            result = await agent.ainvoke(
+                                input={"messages": follow_up_messages},
+                                config={"recursion_limit": recursion_limit},
+                            )
+                            logger.info("VASP: auto fetch_job_logs done, LLM re-invoked for failure analysis")
+                    except Exception as e:
+                        logger.exception("VASP auto fetch_job_logs failed: %s", e)
+
         # Log all messages returned from agent
         logger.info(f"=== AGENT RESULT MESSAGES ANALYSIS ===")
         for idx, msg in enumerate(result['messages']):
@@ -1261,7 +2479,7 @@ async def _execute_agent_step(
                 ],
                 "observations": observations + [detailed_error],
             },
-            goto="research_team",
+            goto=next_goto,
         )
 
     # Extract molecular images from ToolMessages (avoiding base64 in LLM context)
@@ -1377,9 +2595,71 @@ async def _execute_agent_step(
     
     # Update the step with the execution result
     # Priority: 1) ToolMessage results, 2) Extracted summary from images, 3) Response content
+    # 若为组合步后的 LLM 参与轮：合并组合结果与 LLM 输出后写 execution_res，并清除 post_composite 标志
+    if agent_name == "vasp_executor" and state.get("vasp_post_composite") and state.get("vasp_composite_result"):
+        composite_res = state["vasp_composite_result"]
+        gen_display = (state.get("vasp_gen_display") or "").strip()
+        llm_part = ("\n\n".join(tool_results) if tool_results else response_content) or "(LLM 已确认)"
+        if gen_display:
+            current_step.execution_res = gen_display + "\n\n--- 提交结果 ---\n" + composite_res.rstrip() + "\n\n--- LLM 总结 ---\n" + str(llm_part)
+        else:
+            current_step.execution_res = composite_res.rstrip() + "\n\n--- LLM 总结 ---\n" + str(llm_part)
+        logger.info("VASP post_composite: set execution_res from composite + LLM summary (with gen_display=%s)", bool(gen_display))
+        return Command(
+            update={
+                "messages": [
+                    HumanMessage(
+                        content=current_step.execution_res,
+                        name=agent_name,
+                    )
+                ],
+                "observations": observations + [current_step.execution_res],
+                "molecular_images": molecular_images,
+                "vasp_post_composite": False,
+                "vasp_composite_result": None,
+                "vasp_gen_display": None,
+            },
+            goto=next_goto,
+        )
+
     logger.info(f"=== SETTING execution_res ===")
     logger.info(f"molecular_images count: {len(molecular_images)}")
     
+    # 第 3 步 vaspilot_wait_and_download_band 返回含整份 vasprun，不写入 execution_res/消息，避免上下文爆炸；存摘要 + state 供第 4 步注入
+    if tool_results and agent_name == "vasp_executor" and len(tool_results) == 1:
+        raw = (tool_results[0] or "").strip()
+        try:
+            data = json.loads(repair_json_output(raw))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            data = None
+        if isinstance(data, dict) and data.get("status") == "COMPLETED" and "vasprun_xml_content" in data:
+            vasprun_content = data.get("vasprun_xml_content") or ""
+            kpoints_content = data.get("kpoints_content") or ""
+            summary = {
+                "status": "COMPLETED",
+                "job_id": data.get("job_id"),
+                "vasprun_length": len(vasprun_content),
+                "kpoints_length": len(kpoints_content),
+                "note": "vasprun 与 KPOINTS 已存入 state，下一步「生成能带图」将自动注入 vaspilot_plot_band_structure，无需在 prompt 中传递大内容。",
+            }
+            current_step.execution_res = json.dumps(summary, ensure_ascii=False)
+            logger.info(
+                "VASP step3 (wait_and_download_band): stored summary in execution_res, vasprun len=%s kpoints len=%s in state",
+                len(vasprun_content), len(kpoints_content),
+            )
+            return Command(
+                update={
+                    "messages": [
+                        HumanMessage(content=current_step.execution_res, name=agent_name),
+                    ],
+                    "observations": observations + [current_step.execution_res],
+                    "molecular_images": molecular_images,
+                    "vasp_vasprun_xml_content": vasprun_content,
+                    "vasp_kpoints_content": kpoints_content,
+                },
+                goto=next_goto,
+            )
+
     if tool_results:
         # Use ToolMessage results (actual tool execution results)
         # Join all tool results with newlines
@@ -1440,7 +2720,7 @@ async def _execute_agent_step(
             "observations": observations + [current_step.execution_res],
             "molecular_images": molecular_images,
         },
-        goto="research_team",
+        goto=next_goto,
     )
 
 
@@ -1449,10 +2729,12 @@ async def _setup_and_execute_agent_step(
     config: RunnableConfig,
     agent_type: str,
     default_tools: list,
-) -> Command[Literal["research_team"]]:
+    *,
+    next_goto: str = "research_team",
+) -> Command[Literal["research_team", "vasp_team"]]:
     """Helper function to set up an agent with appropriate tools and execute a step.
 
-    This function handles the common logic for both researcher_node and coder_node:
+    This function handles the common logic for researcher_node, coder_node, and vasp_executor_node:
     1. Configures MCP servers and tools based on agent type
     2. Creates an agent with the appropriate tools or uses the default agent
     3. Executes the agent on the current step
@@ -1460,11 +2742,12 @@ async def _setup_and_execute_agent_step(
     Args:
         state: The current state
         config: The runnable config
-        agent_type: The type of agent ("researcher" or "coder")
+        agent_type: The type of agent ("researcher", "coder", or "vasp_executor")
         default_tools: The default tools to add to the agent
+        next_goto: Next node after step ("research_team" or "vasp_team")
 
     Returns:
-        Command to update state and go to research_team
+        Command to update state and go to next_goto
     """
     configurable = Configuration.from_runnable_config(config)
     mcp_servers = {}
@@ -1503,7 +2786,7 @@ async def _setup_and_execute_agent_step(
         agent = create_agent(
             agent_type, agent_type, loaded_tools, agent_type, pre_model_hook, selected_model
         )
-        return await _execute_agent_step(state, agent, agent_type)
+        return await _execute_agent_step(state, agent, agent_type, next_goto=next_goto)
     else:
         # Use default tools if no MCP servers are configured
         llm_token_limit = get_llm_token_limit_by_type(AGENT_LLM_MAP[agent_type])
@@ -1512,7 +2795,7 @@ async def _setup_and_execute_agent_step(
         agent = create_agent(
             agent_type, agent_type, default_tools, agent_type, pre_model_hook, selected_model
         )
-        return await _execute_agent_step(state, agent, agent_type)
+        return await _execute_agent_step(state, agent, agent_type, next_goto=next_goto)
 
 
 async def researcher_node(

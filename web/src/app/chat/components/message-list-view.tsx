@@ -52,6 +52,15 @@ import {
 import { parseJSON } from "~/core/utils";
 import { cn } from "~/lib/utils";
 import { toast } from "sonner";
+
+/** 展示时折叠附件内容为占位，不显示全文 */
+function collapseAttachmentInContent(content: string): string {
+  if (!content) return content;
+  return content.replace(
+    /\[附件: ([^\]]+)\]\n```[\s\S]*?```/g,
+    "[已上传附件: $1]"
+  );
+}
 // Dify workflow removed - using ReactFlow workflow system instead
 // import { PlanWorkflowView } from "./plan-workflow-view";
 
@@ -168,11 +177,13 @@ function MessageListItem({
       message.agent === "coordinator" ||
       message.agent === "planner" ||
       message.agent === "molecular_planner" ||
+      message.agent === "vasp_planner" ||
+      message.agent === "vasp_agent" ||
       message.agent === "podcast" ||
       startOfResearch
     ) {
       let content: React.ReactNode;
-      if (message.agent === "planner" || message.agent === "molecular_planner") {
+      if (message.agent === "planner" || message.agent === "molecular_planner" || message.agent === "vasp_planner") {
         content = (
           <div className="w-full px-4">
             <PlanCard
@@ -190,6 +201,18 @@ function MessageListItem({
             <PodcastCard message={message} />
           </div>
         );
+      } else if (message.agent === "vasp_agent") {
+        content = (
+          <div className={cn("flex w-full px-4", className)}>
+            <MessageBubble message={message}>
+              <div className="flex w-full flex-col break-words">
+                <Markdown className="prose dark:prose-invert max-w-none">
+                  {message?.content ?? ""}
+                </Markdown>
+              </div>
+            </MessageBubble>
+          </div>
+        );
       } else if (startOfResearch) {
         content = (
           <div className="w-full px-4">
@@ -200,7 +223,11 @@ function MessageListItem({
           </div>
         );
       } else {
-        content = message.content ? (
+        const displayContent =
+          message.content != null
+            ? collapseAttachmentInContent(String(message.content))
+            : "";
+        content = displayContent ? (
           <div
             className={cn(
               "flex w-full px-4",
@@ -216,7 +243,7 @@ function MessageListItem({
                       "prose-invert not-dark:text-secondary dark:text-inherit",
                   )}
                 >
-                  {message?.content}
+                  {displayContent}
                 </Markdown>
               </div>
             </MessageBubble>

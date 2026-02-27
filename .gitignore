@@ -221,3 +221,4 @@ dmypy.json
 cython_debug/
 web/src/core/api/resolve-service-url.ts
 temp/
+web/temp/

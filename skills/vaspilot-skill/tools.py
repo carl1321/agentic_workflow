@@ -10,6 +10,7 @@ with JSON-serializable args and return values (POSCAR passed as string).
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -29,7 +30,7 @@ def _ensure_skill_path() -> None:
 
 
 def _get_potcar_dir() -> Optional[str]:
-    """Get potcar_dir from conf.yaml or env. Used by generate_inputs."""
+    """Get potcar_dir from conf.yaml, env, or vaspilot config.yaml. Used by generate_inputs."""
     try:
         from src.config.loader import load_yaml_config
         config = load_yaml_config("conf.yaml") or {}
@@ -41,7 +42,20 @@ def _get_potcar_dir() -> Optional[str]:
             return str(hpc.get("potcar_dir")).strip()
     except Exception as e:
         logger.debug("Could not load potcar_dir from config: %s", e)
-    return os.environ.get("VASPILOT_HPC_POTCAR_DIR") or os.environ.get("VASP_PP_PATH") or None
+    env_val = os.environ.get("VASPILOT_HPC_POTCAR_DIR") or os.environ.get("VASP_PP_PATH")
+    if env_val:
+        return env_val.strip() if isinstance(env_val, str) else None
+    # Fallback: vaspilot skill config (configs/config.yaml) so hpc.potcar_dir 生效
+    try:
+        _ensure_skill_path()
+        from skill_package.config_loader import load_config
+        cfg = load_config()
+        hpc = (cfg or {}).get("hpc") or {}
+        if isinstance(hpc, dict) and hpc.get("potcar_dir"):
+            return str(hpc.get("potcar_dir")).strip()
+    except Exception as e:
+        logger.debug("Could not load potcar_dir from vaspilot config: %s", e)
+    return None
 
 
 @tool("vaspilot_create_structure", return_direct=False)
@@ -290,7 +304,30 @@ def vaspilot_generate_inputs(
         files_content["submit.sh"] = slurm_script
         paths_out["submit.sh"] = submit_path
 
-        result = {"files": files_content, "paths": paths_out}
+        # 检查项：便于定位 submit.sh 是否含 gen_potcar 步骤、上传列表是否含 gen_potcar.sh
+        submit_content = files_content.get("submit.sh", "")
+        check = {
+            "submit_has_bash_gen_potcar": "bash gen_potcar.sh" in submit_content,
+            "submit_has_test_potcar": "test -f POTCAR" in submit_content,
+            "files_contains_gen_potcar_sh": "gen_potcar.sh" in files_content,
+        }
+        # 可读展示：生成文件列表、检查结果、各文件完整内容（便于在工具执行结果中查看）
+        display_parts = [
+            "【生成文件列表】",
+            ", ".join(sorted(files_content.keys())),
+            "",
+            "【检查项】",
+            f"  submit.sh 包含 'bash gen_potcar.sh': {'是' if check['submit_has_bash_gen_potcar'] else '否'}",
+            f"  submit.sh 包含 'test -f POTCAR': {'是' if check['submit_has_test_potcar'] else '否'}",
+            f"  上传的 files 包含 gen_potcar.sh: {'是' if check['files_contains_gen_potcar_sh'] else '否'}",
+            "",
+        ]
+        for fname in sorted(files_content.keys()):
+            display_parts.append(f"========== {fname} ==========")
+            display_parts.append(files_content[fname])
+            display_parts.append("")
+
+        result = {"files": files_content, "paths": paths_out, "check": check, "display": "\n".join(display_parts)}
         if potcar_info is not None:
             result["potcar_info"] = potcar_info
         result["note"] = "POTCAR must be generated on HPC by running gen_potcar.sh in the job directory."
@@ -308,11 +345,13 @@ def vaspilot_get_hpc_config() -> str:
     Get HPC/SSH connection config from VASPilot skill (configs/config.yaml, ~/.vaspilot/config.yaml, or env)
     and optional project conf.yaml VASP_WORKFLOW.ssh / VASP_WORKFLOW.hpc.
     Returns host, username, port, work_dir, key_path; password is never returned, only has_password flag.
+    Call this with no arguments: vaspilot_get_hpc_config().
     """
     _ensure_skill_path()
     try:
-        from skill_package.config_loader import load_config
+        from skill_package.config_loader import load_config, get_default_config_paths
     except ImportError as e:
+        logger.warning("vaspilot_get_hpc_config: skill_package not found: %s", e)
         return json.dumps({"error": f"Missing dependency: {e}"}, ensure_ascii=False)
 
     try:
@@ -333,18 +372,35 @@ def vaspilot_get_hpc_config() -> str:
         except Exception:
             pass
 
+        host = (ssh.get("host") or "").strip()
+        username = (ssh.get("username") or "").strip()
         port = ssh.get("port", 22)
         if port is None:
             port = 22
-        return json.dumps({
-            "host": (ssh.get("host") or "").strip(),
-            "username": (ssh.get("username") or "").strip(),
+        work_dir = (hpc.get("work_dir") or "").strip()
+        key_path = (ssh.get("key_path") or "").strip()
+
+        out = {
+            "host": host,
+            "username": username,
             "port": int(port) if port else 22,
-            "work_dir": (hpc.get("work_dir") or "").strip(),
-            "key_path": (ssh.get("key_path") or "").strip(),
+            "work_dir": work_dir,
+            "key_path": key_path,
             "has_password": bool(ssh.get("password")),
             "source": "VASPilot 配置（config.yaml 或环境变量）",
-        }, ensure_ascii=False)
+        }
+        if not host or not username:
+            tried = [str(p) for p in get_default_config_paths()]
+            out["error"] = (
+                "HPC 配置为空：未找到有效 config（host/username）。"
+                "请设置 VASPILOT_CONFIG 或创建 ~/.vaspilot/config.yaml 或项目下 vaspilot_config.yaml，"
+                "或设置环境变量 VASPILOT_SSH_HOST、VASPILOT_SSH_USERNAME 等。"
+            )
+            out["tried_paths"] = tried
+            logger.info("vaspilot_get_hpc_config: no config found, tried paths: %s", tried)
+        else:
+            logger.info("vaspilot_get_hpc_config: loaded host=%s username=%s work_dir=%s", host, username, work_dir)
+        return json.dumps(out, ensure_ascii=False)
     except Exception as e:
         logger.exception("vaspilot_get_hpc_config failed")
         return json.dumps({"error": str(e)}, ensure_ascii=False)
@@ -457,7 +513,6 @@ def vaspilot_submit_to_hpc(
         return json.dumps({"error": str(e)}, ensure_ascii=False)
     finally:
         try:
-            import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception:
             pass
@@ -709,7 +764,11 @@ def vaspilot_download_remote_file(
                     }, ensure_ascii=False)
                 with open(local_tmp, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read()
-                return json.dumps({"success": True, "content": content, "filename": filename}, ensure_ascii=False)
+                out = {"success": True, "content": content, "filename": filename}
+                # 大 vasprun.xml 在经 API 返回时可能被截断，导致后续画能带图解析失败；提示可本地上传
+                if filename == "vasprun.xml" and size > 1024 * 1024:
+                    out["note"] = "vasprun.xml 较大，若之后生成能带图报「解析失败/截断」，请将 content 保存到本机文件后用「本地上传」再生成能带图。"
+                return json.dumps(out, ensure_ascii=False)
             finally:
                 try:
                     os.unlink(local_tmp)
@@ -722,29 +781,198 @@ def vaspilot_download_remote_file(
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
 
+@tool("vaspilot_submit_band_job", return_direct=False)
+def vaspilot_submit_band_job(
+    poscar_content: str,
+    calc_type: str = "band",
+    kpoints_density: int = 40,
+    job_name: str = "vasp_job",
+) -> str:
+    """
+    能带流程「提交作业」组合工具：根据 POSCAR 生成输入文件、读取 HPC 配置并提交 Slurm 作业。
+    与「加载结构」一样作为单次工具调用展示，便于前端统一显示工具调用逻辑。
+
+    Args:
+        poscar_content: 上一步加载的 POSCAR 完整内容。
+        calc_type: 计算类型，固定为 "band"。
+        kpoints_density: K 点密度（默认 40）。
+        job_name: 作业名（默认 vasp_job）。
+
+    Returns:
+        JSON：success, job_id, remote_dir, host, username, port, key_path；或 error。供下一步 vaspilot_wait_and_download_band 使用。
+    """
+    if not (poscar_content or "").strip():
+        return json.dumps({"error": "poscar_content 不能为空"}, ensure_ascii=False)
+    gen_str = vaspilot_generate_inputs.invoke({
+        "poscar_content": poscar_content.strip(),
+        "calc_type": calc_type or "band",
+        "kpoints_density": int(kpoints_density) if kpoints_density else 40,
+        "job_name": (job_name or "vasp_job").strip(),
+    })
+    try:
+        gen = json.loads(gen_str)
+    except json.JSONDecodeError:
+        return gen_str
+    if gen.get("error"):
+        return json.dumps(gen, ensure_ascii=False)
+    files = gen.get("files")
+    if not files or "submit.sh" not in files:
+        return json.dumps({"error": "生成输入未返回有效 files（需含 submit.sh）"}, ensure_ascii=False)
+    hpc_str = vaspilot_get_hpc_config.invoke({})
+    try:
+        hpc = json.loads(hpc_str)
+    except json.JSONDecodeError:
+        return hpc_str
+    if hpc.get("error") or not (hpc.get("host") and hpc.get("username")):
+        return json.dumps(hpc if hpc.get("error") else {"error": "HPC 配置缺少 host/username"}, ensure_ascii=False)
+    remote_work_dir = (hpc.get("work_dir") or "").strip()
+    if not remote_work_dir:
+        return json.dumps({"error": "HPC 配置缺少 work_dir"}, ensure_ascii=False)
+    submit_str = vaspilot_submit_to_hpc.invoke({
+        "files": files,
+        "host": hpc["host"],
+        "username": hpc["username"],
+        "remote_work_dir": remote_work_dir,
+        "port": int(hpc.get("port") or 22),
+        "key_path": (hpc.get("key_path") or "").strip() or None,
+        "password": "__use_config__",
+    })
+    try:
+        submit = json.loads(submit_str)
+    except json.JSONDecodeError:
+        return submit_str
+    if submit.get("error") or not submit.get("success"):
+        return json.dumps(submit, ensure_ascii=False)
+    out = {
+        "success": True,
+        "job_id": submit.get("job_id"),
+        "remote_dir": submit.get("remote_dir"),
+        "message": submit.get("message", ""),
+        "host": hpc.get("host"),
+        "username": hpc.get("username"),
+        "port": int(hpc.get("port") or 22),
+        "key_path": (hpc.get("key_path") or "").strip() or None,
+    }
+    return json.dumps(out, ensure_ascii=False)
+
+
+@tool("vaspilot_wait_and_download_band", return_direct=False)
+def vaspilot_wait_and_download_band(
+    job_id: str,
+    remote_dir: str,
+    host: str,
+    username: str,
+    port: int = 22,
+    key_path: Optional[str] = None,
+    password: Optional[str] = None,
+    poll_interval_sec: int = 30,
+) -> str:
+    """
+    能带流程「等待并下载」组合工具：轮询作业状态直到 COMPLETED 或 FAILED，再下载 vasprun.xml 与 KPOINTS。
+    与加载结构、提交作业一样作为单次工具调用展示。
+
+    Args:
+        job_id: 上一步提交返回的 job_id。
+        remote_dir: 上一步返回的 remote_dir。
+        host: HPC 主机。
+        username: SSH 用户名。
+        port: SSH 端口（默认 22）。
+        key_path: SSH 私钥路径（可选）。
+        password: SSH 密码（可选）；可传 "__use_config__" 使用配置中的密码。
+        poll_interval_sec: 轮询间隔秒数（默认 30）。
+
+    Returns:
+        JSON：status, vasprun_xml_content, kpoints_content；若 FAILED 则含 error。供下一步 vaspilot_plot_band_structure 使用。
+    """
+    if not job_id or not remote_dir or not host or not username:
+        return json.dumps({"error": "job_id、remote_dir、host、username 必填"}, ensure_ascii=False)
+    poll_interval_sec = max(10, int(poll_interval_sec) or 30)
+    status_args = {
+        "job_id": job_id,
+        "host": host,
+        "username": username,
+        "port": port,
+        "key_path": key_path,
+        "password": password or "__use_config__",
+    }
+    while True:
+        st_str = vaspilot_job_status.invoke(status_args)
+        try:
+            st = json.loads(st_str)
+        except json.JSONDecodeError:
+            return st_str
+        if st.get("error"):
+            return json.dumps(st, ensure_ascii=False)
+        status = (st.get("status") or "").strip().upper()
+        logger.info("vaspilot_wait_and_download_band: job_id=%s status=%s", job_id, status)
+        if status == "COMPLETED":
+            break
+        if status == "FAILED":
+            return json.dumps({
+                "error": "作业已失败 (FAILED)，请使用 vaspilot_fetch_job_logs 查看远程日志。",
+                "job_id": job_id,
+                "status": status,
+                "exit_code": st.get("exit_code"),
+            }, ensure_ascii=False)
+        import time
+        time.sleep(poll_interval_sec)
+    dl_args = {
+        "remote_dir": remote_dir,
+        "host": host,
+        "username": username,
+        "port": port,
+        "key_path": key_path,
+        "password": password or "__use_config__",
+    }
+    vasprun_str = vaspilot_download_remote_file.invoke({**dl_args, "filename": "vasprun.xml"})
+    kpoints_str = vaspilot_download_remote_file.invoke({**dl_args, "filename": "KPOINTS"})
+    try:
+        vasprun_dl = json.loads(vasprun_str)
+        kpoints_dl = json.loads(kpoints_str)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "下载结果解析失败", "vasprun_raw": vasprun_str[:200]}, ensure_ascii=False)
+    if vasprun_dl.get("error") or not vasprun_dl.get("content"):
+        return json.dumps(vasprun_dl if vasprun_dl.get("error") else {"error": "下载 vasprun.xml 失败或内容为空"}, ensure_ascii=False)
+    out = {
+        "status": "COMPLETED",
+        "job_id": job_id,
+        "vasprun_xml_content": vasprun_dl.get("content", ""),
+        "kpoints_content": (kpoints_dl.get("content") or "").strip() if not kpoints_dl.get("error") else "",
+    }
+    return json.dumps(out, ensure_ascii=False)
+
+
 @tool("vaspilot_plot_band_structure", return_direct=False)
 def vaspilot_plot_band_structure(
     vasprun_xml_content: str,
     kpoints_content: Optional[str] = None,
+    output_dir: Optional[str] = None,
 ) -> str:
     """
     Generate band structure plot from vasprun.xml content (and optional KPOINTS for line mode).
     Used when job type is band: after HPC calculation, upload vasprun.xml to get the band figure.
+    若 vasprun.xml 较大（如从 HPC 下载后经 API 返回被截断），建议保存到本机后使用「本地上传」再调用本工具。
+    若指定 output_dir，将 band_structure.png 保存到该目录并返回 image_path，便于前端加载展示。
 
     Args:
         vasprun_xml_content: Full content of vasprun.xml as string.
         kpoints_content: Optional content of KPOINTS file (for line-mode k-path).
+        output_dir: Optional directory to save band_structure.png; if set, returns image_path.
 
     Returns:
-        JSON with image_base64 (PNG) or error.
+        JSON with image_base64 (PNG), and image_path if output_dir was set; or error.
     """
     content = (vasprun_xml_content or "").strip()
     if not content:
         return json.dumps({"error": "vasprun_xml_content 不能为空"}, ensure_ascii=False)
     if not content.startswith("<?xml") and not content.startswith("<"):
         return json.dumps({"error": "vasprun.xml 内容不是合法 XML 开头，可能被截断或损坏"}, ensure_ascii=False)
-    if len(content) < 5000:
-        return json.dumps({"error": "vasprun.xml 过短，可能被截断。完整能带 vasprun 通常数百 KB，请确认从 HPC 下载时未超请求大小限制。"}, ensure_ascii=False)
+    _min_len = 2000  # 最小合理长度；完整能带 vasprun 通常数百 KB
+    if len(content) < _min_len:
+        return json.dumps({
+            "error": f"vasprun.xml 过短（当前 {len(content)} 字节），可能被截断。完整能带 vasprun 通常数百 KB，请确认从 HPC 下载时未超请求/响应大小限制；若为服务端限制，可检查下载接口或增大 body 大小限制。",
+            "content_length": len(content),
+        }, ensure_ascii=False)
     _ensure_skill_path()
     import base64
     try:
@@ -768,7 +996,14 @@ def vaspilot_plot_band_structure(
             return json.dumps({"error": "生成能带图失败（未生成图片文件）"}, ensure_ascii=False)
         with open(out_png, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
-        return json.dumps({"success": True, "image_base64": b64}, ensure_ascii=False)
+        result = {"success": True, "image_base64": b64}
+        if output_dir and output_dir.strip():
+            out_dir = Path(output_dir.strip()).resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            dest = out_dir / "band_structure.png"
+            shutil.copy2(out_png, dest)
+            result["image_path"] = str(dest)
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         err_msg = str(e)
         if "no element found" in err_msg or "line" in err_msg and "column" in err_msg:
@@ -779,7 +1014,6 @@ def vaspilot_plot_band_structure(
         return json.dumps({"error": err_msg}, ensure_ascii=False)
     finally:
         try:
-            import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception:
             pass
@@ -794,8 +1028,10 @@ def get_tools():
         vaspilot_generate_inputs,
         vaspilot_get_hpc_config,
         vaspilot_submit_to_hpc,
+        vaspilot_submit_band_job,
         vaspilot_job_status,
         vaspilot_fetch_job_logs,
         vaspilot_download_remote_file,
+        vaspilot_wait_and_download_band,
         vaspilot_plot_band_structure,
     ]

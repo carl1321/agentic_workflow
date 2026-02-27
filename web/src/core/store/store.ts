@@ -288,7 +288,8 @@ function appendMessage(message: Message) {
     message.agent === "coder" ||
     message.agent === "reporter" ||
     message.agent === "common_reporter" ||
-    message.agent === "researcher"
+    message.agent === "researcher" ||
+    message.agent === "vasp_executor"
   ) {
     if (!getOngoingResearchId()) {
       const id = message.id;
@@ -316,7 +317,7 @@ function appendResearch(researchId: string) {
   const reversedMessageIds = [...useStore.getState().messageIds].reverse();
   for (const messageId of reversedMessageIds) {
     const message = getMessage(messageId);
-    if (message?.agent === "planner" || message?.agent === "molecular_planner") {
+    if (message?.agent === "planner" || message?.agent === "molecular_planner" || message?.agent === "vasp_planner") {
       planMessage = message;
       break;
     }
@@ -346,7 +347,8 @@ function appendResearchActivity(message: Message) {
     message.agent === "coder" ||
     message.agent === "researcher" ||
     message.agent === "reporter" ||
-    message.agent === "common_reporter"
+    message.agent === "common_reporter" ||
+    message.agent === "vasp_executor"
   )) {
     // Find the most recent research ID from the current researchIds
     const researchIds = useStore.getState().researchIds;
@@ -360,7 +362,7 @@ function appendResearchActivity(message: Message) {
   
   if (targetResearchId) {
     // Only add non-reporter messages to activity IDs
-    // Activity page should show researcher and coder messages, not reporter messages
+    // Activity page should show researcher, coder, and vasp_executor messages, not reporter messages
     if (message.agent !== "reporter" && message.agent !== "common_reporter") {
       const researchActivityIds = useStore.getState().researchActivityIds;
       const current = researchActivityIds.get(targetResearchId);

@@ -246,6 +246,26 @@ cd web
 pnpm test
 ```
 
+### 能带流程命令行完整脚本
+
+不依赖前端，在项目根目录执行。**默认完整流程**：生成输入 → 提交 → 轮询状态 → 下载 vasprun.xml → 生成能带图。
+
+```bash
+# 完整流程（内置 Si2）：生成输入到 band_workflow_out/ → 提交 → 轮询 → 下载 xml → 画能带图
+uv run python scripts/run_band_workflow.py
+
+# 指定 POSCAR 与输出目录
+uv run python scripts/run_band_workflow.py --poscar path/to/POSCAR --out-dir ./band_out
+
+# 只生成输入文件到 out-dir，不提交（检查 KPOINTS/INCAR/submit.sh）
+uv run python scripts/run_band_workflow.py --no-submit
+
+# 只提交，不轮询、不下载、不画图
+uv run python scripts/run_band_workflow.py --no-poll
+```
+
+需先配置 `skills/vaspilot-skill/configs/config.yaml`（或 `~/.vaspilot/config.yaml`）中的 SSH 与 HPC 参数。
+
 ## 📚 文档
 
 - [配置指南](docs/configuration_guide.md) - 详细的配置说明

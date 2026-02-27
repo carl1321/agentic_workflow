@@ -1039,14 +1039,20 @@ class ChatStreamManager:
                                 # This guarantees: combined = all existing messages (updated) + new messages only
                                 combined_messages = existing_messages + new_messages
                                 
-                                # Validation: ensure no messages were lost
+                                # Validation: ensure no messages were lost (merge may reduce count when chunks merged)
                                 final_count = len(combined_messages)
                                 if final_count < original_count:
-                                    self.logger.warning(
-                                        f"Message count decreased when appending! "
-                                        f"thread_id={thread_id}, original={original_count}, final={final_count}. "
-                                        f"This should not happen - existing messages should be preserved."
-                                    )
+                                    if messages_to_update:
+                                        self.logger.debug(
+                                            f"Merged chunks: thread_id={thread_id}, original={original_count}, "
+                                            f"final={final_count}, updated={len(messages_to_update)} (expected when merging by id)."
+                                        )
+                                    else:
+                                        self.logger.warning(
+                                            f"Message count decreased when appending! "
+                                            f"thread_id={thread_id}, original={original_count}, final={final_count}. "
+                                            f"This should not happen - existing messages should be preserved."
+                                        )
                                 elif final_count == original_count and len(new_messages) > 0:
                                     self.logger.warning(
                                         f"New messages not appended! "

@@ -293,8 +293,8 @@ export default function Main() {
         for (const msg of mergedMessages) {
           const agent = msg.agent;
           
-          // If this is a planner message, start a new research
-          if (agent === "planner" || agent === "molecular_planner") {
+          // If this is a planner message, start a new research（含 vasp_planner，以便能带工作流完成后出现「打开」并展示结果）
+          if (agent === "planner" || agent === "molecular_planner" || agent === "vasp_planner") {
             // Save previous research if exists
             if (currentResearchId && currentPlanMessage) {
               // Ensure activity IDs start with plan message ID and research ID
@@ -310,9 +310,9 @@ export default function Main() {
             currentActivityIds = [];
           }
           
-          // If this is a reporter/coder/researcher message, associate it with current plan
-          // 注意：对于 molecular_planner 的 plan，也需要创建 research 以显示工具执行卡片和结果卡片
-          if (agent === "reporter" || agent === "common_reporter" || agent === "coder" || agent === "researcher") {
+          // If this is a reporter/coder/researcher/vasp_executor/vasp_composite message, associate it with current plan
+          // 注意：vasp_executor、vasp_composite 纳入后，能带工作流完成后会出现「打开」并可在 research 中看到能带图等结果
+          if (agent === "reporter" || agent === "common_reporter" || agent === "coder" || agent === "researcher" || agent === "vasp_executor" || agent === "vasp_composite") {
             if (currentPlanMessage) {
               // Use the first reporter/coder/researcher as research ID
               if (!currentResearchId) {

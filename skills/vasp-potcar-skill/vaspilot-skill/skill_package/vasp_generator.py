@@ -116,7 +116,8 @@ class VASPInputGenerator:
     def generate_incar(
         self,
         calc_type: str,
-        custom_params: Optional[Dict[str, Any]] = None
+        custom_params: Optional[Dict[str, Any]] = None,
+        structure: Optional[Structure] = None
     ) -> Dict[str, Any]:
         """
         Generate INCAR parameters
@@ -124,6 +125,7 @@ class VASPInputGenerator:
         Args:
             calc_type: "relaxation", "scf", "band", "dos"
             custom_params: Override default parameters
+            structure: Optional; when provided and calc_type is scf/dos, small cells (<=4 sites) use ISMEAR=0 to avoid tetrahedron k-point requirement
 
         Returns:
             INCAR parameters dict
@@ -132,6 +134,10 @@ class VASPInputGenerator:
             raise ValueError(f"Unknown calc_type: {calc_type}")
 
         params = DEFAULT_INCAR[calc_type].copy()
+        # 小体系（<=4 原子）SCF/DOS 用高斯展宽，避免四面体方法对 k 点>=4 的要求导致 BZINTS 报错
+        if structure is not None and calc_type in ("scf", "dos") and len(structure) <= 4:
+            params["ISMEAR"] = 0
+            params["SIGMA"] = 0.05
         if custom_params:
             params.update(custom_params)
 
@@ -170,7 +176,29 @@ class VASPInputGenerator:
         else:
             # Automatic mesh for other calculations
             kpoints = Kpoints.automatic_density(structure, kpoints_density)
-            return str(kpoints)
+            # Tetrahedron (ISMEAR=-5) 需要至少 4 个 k 点；强制网格至少 2x2x2 避免 BZINTS 报错
+            out = str(kpoints)
+            grid_replaced = False
+            if getattr(kpoints, "kpts", None) and len(kpoints.kpts) == 1:
+                grid = kpoints.kpts[0]
+                if len(grid) >= 3:
+                    min_grid = tuple(max(2, int(grid[i]) if grid[i] is not None else 2) for i in range(3))
+                    if min_grid != tuple(grid):
+                        kpoints = Kpoints.monkhorst_automatic(list(min_grid))
+                        out = str(kpoints)
+                        grid_replaced = True
+            if not grid_replaced:
+                # 兜底：从字符串中解析网格行并强制至少 2 2 2（只处理全为正整数的行，避免误改 0 0 0 shift）
+                lines = out.splitlines()
+                for i, line in enumerate(lines):
+                    parts = line.split()
+                    if len(parts) == 3 and all(p.isdigit() for p in parts):
+                        n1, n2, n3 = int(parts[0]), int(parts[1]), int(parts[2])
+                        if n1 >= 1 and n2 >= 1 and n3 >= 1 and (n1 * n2 * n3 < 4 or n1 < 2 or n2 < 2 or n3 < 2):
+                            lines[i] = "  2  2  2"
+                            out = "\n".join(lines)
+                        break
+            return out
 
     def get_recommended_potcar(self, element: str) -> str:
         """
@@ -286,7 +314,7 @@ fi''')
 
         # INCAR
         incar_path = os.path.join(output_dir, "INCAR")
-        incar_params_final = self.generate_incar(calc_type, incar_params)
+        incar_params_final = self.generate_incar(calc_type, incar_params, structure=structure)
         incar = Incar(incar_params_final)
         incar.write_file(incar_path)
         # Fix line endings for Unix

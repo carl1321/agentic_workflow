@@ -23,6 +23,9 @@ class Step(BaseModel):
     research_depth: Literal["simple", "deep"] = Field(
         default="simple", description="Research depth: simple (search only) or deep (search + visit)"
     )
+    execution_mode: Optional[Literal["agent", "composite_submit", "composite_band"]] = Field(
+        default=None, description="VASP: agent (LLM+tools) or composite_submit/composite_band (code-only)"
+    )
 
 
 class Plan(BaseModel):

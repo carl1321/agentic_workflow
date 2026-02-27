@@ -76,7 +76,9 @@ class POTCARGenerator:
         if enable_api:
             cmd.append("--enable-api")
 
-        if formula:
+        # Only pass -f/--formula if the skill supports it (avoid "unrecognized arguments: -f Si")
+        # Many potcar_skill.py implementations only have: recommend <elements> -t <calc_type>
+        if formula and formula not in (elements or []):
             cmd.extend(["-f", formula])
 
         try:

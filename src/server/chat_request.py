@@ -111,6 +111,19 @@ class GenerateProseRequest(BaseModel):
     )
 
 
+class VaspStreamRequest(BaseModel):
+    """Request for VASP agent stream: messages + optional thread_id."""
+
+    messages: List[dict] = Field(
+        [],
+        description="Conversation messages (e.g. [{\"role\":\"user\",\"content\":\"...\"}])",
+    )
+    thread_id: Optional[str] = Field(
+        None,
+        description="Optional thread id for VASP session (for multi-turn). If omitted, a new id is generated.",
+    )
+
+
 class EnhancePromptRequest(BaseModel):
     prompt: str = Field(..., description="The original prompt to enhance")
     context: Optional[str] = Field(

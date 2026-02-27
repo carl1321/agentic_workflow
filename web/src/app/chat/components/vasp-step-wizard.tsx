@@ -84,6 +84,8 @@ export function VaspStepWizard() {
   const bandKpointsRef = useRef<HTMLInputElement>(null);
   const [selectedVasprunName, setSelectedVasprunName] = useState<string | null>(null);
   const [selectedKpointsName, setSelectedKpointsName] = useState<string | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const POLL_INTERVAL_MS = 30000;
 
   // 进入步骤 4 时从 VASPilot 配置拉取 HPC/SSH 信息并填充表单
   useEffect(() => {
@@ -119,6 +121,65 @@ export function VaspStepWizard() {
       .catch((e) => setHpcConfigSource(`配置读取失败: ${(e as Error).message}`))
       .finally(() => setHpcConfigLoading(false));
   }, [step]);
+
+  // 步骤 5：提交后自动轮询作业状态，直到 COMPLETED 或 FAILED
+  useEffect(() => {
+    if (step !== 5 || !submitResult?.job_id) return;
+    const host = hpcHost.trim();
+    const user = hpcUser.trim();
+    if (!host || !user) return;
+    if (!hpcKeyPath.trim() && !hpcPassword && !hasPasswordFromConfig) return;
+
+    setError(null);
+    setStatusLoading(true);
+
+    const doPoll = () => {
+      executeTool("vaspilot_job_status", {
+        job_id: submitResult.job_id,
+        host,
+        username: user,
+        port: parseInt(hpcPort, 10) || 22,
+        key_path: hpcKeyPath.trim() || undefined,
+        password: hpcPassword || (hasPasswordFromConfig ? "__use_config__" : undefined),
+      })
+        .then((raw) => {
+          const data = JSON.parse(raw || "{}") as Record<string, unknown> & { error?: string; status?: string };
+          if (data.error) {
+            setError(data.error);
+            setStatusLoading(false);
+            return;
+          }
+          setJobStatus(data);
+          const status = String(data.status ?? "").toUpperCase();
+          if (status === "COMPLETED" || status === "FAILED") {
+            if (pollTimeoutRef.current) {
+              clearTimeout(pollTimeoutRef.current);
+              pollTimeoutRef.current = null;
+            }
+            setStatusLoading(false);
+            return;
+          }
+          pollTimeoutRef.current = setTimeout(doPoll, POLL_INTERVAL_MS);
+        })
+        .catch((e) => {
+          setError((e as Error).message);
+          setStatusLoading(false);
+          if (pollTimeoutRef.current) {
+            clearTimeout(pollTimeoutRef.current);
+            pollTimeoutRef.current = null;
+          }
+        });
+    };
+
+    pollTimeoutRef.current = setTimeout(doPoll, 2000);
+
+    return () => {
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+    };
+  }, [step, submitResult?.job_id, hpcHost, hpcUser, hpcPort, hpcKeyPath, hpcPassword, hasPasswordFromConfig]);
 
   const handleUploadStructure = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -801,15 +862,23 @@ export function VaspStepWizard() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button variant="outline" onClick={handleQueryJobStatus} disabled={statusLoading}>
                     {statusLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                    查询作业状态
+                    {statusLoading ? "轮询中…" : "重新查询作业状态"}
                   </Button>
                   <span className="text-xs text-slate-500 dark:text-slate-400">
-                    需与提交时使用相同的主机、用户名和认证方式
+                    {statusLoading
+                      ? "正在轮询作业状态，直到完成或失败后自动停止"
+                      : "需与提交时使用相同的主机、用户名和认证方式"}
                   </span>
                 </div>
                 {jobStatus && (
                   <div className="rounded border border-slate-200 dark:border-slate-700 p-3 text-sm">
                     <span className="font-medium text-slate-700 dark:text-slate-300">当前状态：</span>
+                    {(jobStatus.status as string) === "COMPLETED" && (
+                      <span className="ml-2 text-green-600 dark:text-green-400">作业已完成，可下载结果或生成能带图。</span>
+                    )}
+                    {(jobStatus.status as string) === "FAILED" && (
+                      <span className="ml-2 text-red-600 dark:text-red-400">作业失败，可点击「查看远程错误/日志」排查。</span>
+                    )}
                     <pre className="mt-1 text-xs text-slate-600 dark:text-slate-400 overflow-auto">
                       {JSON.stringify(jobStatus, null, 2)}
                     </pre>

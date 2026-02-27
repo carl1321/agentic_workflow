@@ -28,6 +28,12 @@ from .nodes import (
     reporter_node,
     research_team_node,
     researcher_node,
+    vasp_agent_node,
+    vasp_composite_node,
+    vasp_executor_node,
+    vasp_planner_node,
+    vasp_team_node,
+    vasp_team_routing,
 )
 from .types import State
 
@@ -119,6 +125,11 @@ def _build_base_graph():
     builder.add_node("planner", planner_node)
     builder.add_node("literature_planner", literature_planner_node)
     builder.add_node("molecular_planner", molecular_planner_node)
+    builder.add_node("vasp_planner", vasp_planner_node)
+    builder.add_node("vasp_team", vasp_team_node)
+    builder.add_node("vasp_executor", vasp_executor_node)
+    builder.add_node("vasp_composite", vasp_composite_node)
+    builder.add_node("vasp_agent", vasp_agent_node)
     builder.add_node("reporter", reporter_node)
     builder.add_node("common_reporter", common_reporter_node)
     builder.add_node("research_team", research_team_node)
@@ -127,6 +138,18 @@ def _build_base_graph():
     builder.add_node("coder", coder_node)
     builder.add_node("human_feedback", human_feedback_node)
     builder.add_edge("background_investigator", "planner")
+    builder.add_edge("vasp_planner", "human_feedback")
+    builder.add_conditional_edges(
+        "vasp_team",
+        vasp_team_routing,
+        {
+            "vasp_executor": "vasp_executor",
+            "vasp_composite": "vasp_composite",
+            "common_reporter": "common_reporter",
+        },
+    )
+    builder.add_edge("vasp_executor", "vasp_team")
+    builder.add_edge("vasp_composite", "vasp_team")
     builder.add_conditional_edges(
         "research_team",
         continue_to_running_research_team,
