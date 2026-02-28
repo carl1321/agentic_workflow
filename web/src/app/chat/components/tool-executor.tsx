@@ -79,6 +79,8 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
   const [pptStep, setPptStep] = useState<1 | 2 | 3>(1);
   const [outlineContent, setOutlineContent] = useState<string>("");
   const [pptDownloadUrl, setPptDownloadUrl] = useState<string | null>(null);
+  const [pptPdfDownloadUrl, setPptPdfDownloadUrl] = useState<string | null>(null);
+  const [pptSlidesPreviewUrls, setPptSlidesPreviewUrls] = useState<string[]>([]);
   
   // Initialize extraction type from params
   useEffect(() => {
@@ -1085,16 +1087,38 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
       const currentType = (params["extraction_type"] as string) || extractionType || "prompt_extraction";
       const currentStep = extractionStep || (params["extraction_step"] as number) || 1;
 
-      // PPT generator: set topic/outline/action by step
+      // PPT generator: set params by engine and step
       if (tool.id === "ppt_generator") {
-        if (pptStep === 1) {
-          executeParams["topic"] = (params["topic"] as string) || "";
-          executeParams["outline"] = "";
-          executeParams["action"] = "outline";
-        } else if (pptStep === 2) {
-          executeParams["topic"] = "";
-          executeParams["outline"] = outlineContent;
-          executeParams["action"] = "generate";
+        const engine = (params["engine"] as string) || "slide_deck";
+        executeParams["engine"] = engine;
+        if (engine === "slide_deck") {
+          if (pptStep === 1) {
+            executeParams["topic"] = (params["topic"] as string) || "";
+            executeParams["content"] = (params["content"] as string) || "";
+            executeParams["outline"] = "";
+            executeParams["outline_only"] = true;
+            executeParams["style"] = params["style"] ?? "blueprint";
+            executeParams["audience"] = params["audience"] ?? "general";
+            executeParams["lang"] = params["lang"] ?? "auto";
+            executeParams["slides"] = params["slides"] ?? 8;
+          } else if (pptStep === 2) {
+            executeParams["topic"] = "";
+            executeParams["content"] = "";
+            executeParams["outline"] = outlineContent;
+            executeParams["outline_only"] = false;
+            executeParams["prompts_only"] = false;
+            executeParams["images_only"] = false;
+          }
+        } else {
+          if (pptStep === 1) {
+            executeParams["topic"] = (params["topic"] as string) || "";
+            executeParams["outline"] = "";
+            executeParams["action"] = "outline";
+          } else if (pptStep === 2) {
+            executeParams["topic"] = "";
+            executeParams["outline"] = outlineContent;
+            executeParams["action"] = "generate";
+          }
         }
       }
 
@@ -1193,7 +1217,15 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
       // Handle PPT generator results
       if (tool.id === "ppt_generator") {
         try {
-          const data = JSON.parse(resultText) as { outline?: string; error?: string; download_url?: string; filename?: string };
+          const data = JSON.parse(resultText) as {
+            outline?: string;
+            error?: string;
+            download_url?: string;
+            filename?: string;
+            pptx_download_url?: string;
+            pdf_download_url?: string;
+            slides_preview_urls?: string[];
+          };
           if (data.error) {
             setError(data.error);
             setResult(resultText);
@@ -1202,11 +1234,38 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
             setPptStep(2);
             setResult(resultText);
             setError(null);
-          } else if (pptStep === 2 && data.download_url) {
-            setPptDownloadUrl(data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`);
-            setPptStep(3);
-            setResult(resultText);
-            setError(null);
+          } else if (pptStep === 2) {
+            const engine = (params["engine"] as string) || "slide_deck";
+            if (engine === "slide_deck" && (data.pptx_download_url || data.pdf_download_url)) {
+              setPptDownloadUrl(
+                data.pptx_download_url
+                  ? (data.pptx_download_url.startsWith("/") ? data.pptx_download_url : `/${data.pptx_download_url}`)
+                  : null
+              );
+              setPptPdfDownloadUrl(
+                data.pdf_download_url
+                  ? (data.pdf_download_url.startsWith("/") ? data.pdf_download_url : `/${data.pdf_download_url}`)
+                  : null
+              );
+              const urls = (data.slides_preview_urls || []).map((u: string) =>
+                u.startsWith("/") ? u : `/${u}`
+              );
+              setPptSlidesPreviewUrls(urls);
+              setPptStep(3);
+              setResult(resultText);
+              setError(null);
+            } else if (engine === "simple" && data.download_url) {
+              setPptDownloadUrl(
+                data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`
+              );
+              setPptPdfDownloadUrl(null);
+              setPptSlidesPreviewUrls([]);
+              setPptStep(3);
+              setResult(resultText);
+              setError(null);
+            } else {
+              setResult(resultText);
+            }
           } else {
             setResult(resultText);
           }
@@ -2795,6 +2854,23 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                 <>
                   <div>
                     <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                      模式
+                    </label>
+                    <select
+                      value={(params["engine"] as string) || "slide_deck"}
+                      onChange={(e) => setParams((prev) => ({ ...prev, engine: e.target.value }))}
+                      className={cn(
+                        "w-full max-w-xs px-3 py-2 text-sm border rounded-lg",
+                        "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                        "text-slate-900 dark:text-slate-100"
+                      )}
+                    >
+                      <option value="slide_deck">整页图幻灯片（PPTX/PDF）</option>
+                      <option value="simple">文字型 PPT</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
                       一句话主题
                     </label>
                     <input
@@ -2810,9 +2886,83 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                       )}
                     />
                   </div>
+                  {(params["engine"] as string) === "slide_deck" && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                          长文/Markdown（可选，与主题二选一）
+                        </label>
+                        <textarea
+                          value={(params["content"] as string) || ""}
+                          onChange={(e) => setParams((prev) => ({ ...prev, content: e.target.value }))}
+                          rows={4}
+                          placeholder="可粘贴长文或 Markdown，将据此生成大纲"
+                          className={cn(
+                            "w-full px-3 py-2 text-sm border rounded-lg",
+                            "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                            "text-slate-900 dark:text-slate-100",
+                            "focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          )}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 max-w-md">
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">风格</label>
+                          <select
+                            value={(params["style"] as string) || "blueprint"}
+                            onChange={(e) => setParams((prev) => ({ ...prev, style: e.target.value }))}
+                            className={cn(
+                              "w-full px-2 py-1.5 text-sm border rounded",
+                              "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                            )}
+                          >
+                            <option value="blueprint">blueprint</option>
+                            <option value="minimal">minimal</option>
+                            <option value="hand-drawn">hand-drawn</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">受众</label>
+                          <select
+                            value={(params["audience"] as string) || "general"}
+                            onChange={(e) => setParams((prev) => ({ ...prev, audience: e.target.value }))}
+                            className={cn(
+                              "w-full px-2 py-1.5 text-sm border rounded",
+                              "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                            )}
+                          >
+                            <option value="general">general</option>
+                            <option value="beginners">beginners</option>
+                            <option value="intermediate">intermediate</option>
+                            <option value="experts">experts</option>
+                            <option value="executives">executives</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">页数</label>
+                          <input
+                            type="number"
+                            min={3}
+                            max={20}
+                            value={(params["slides"] as number) ?? 8}
+                            onChange={(e) =>
+                              setParams((prev) => ({ ...prev, slides: parseInt(e.target.value, 10) || 8 }))
+                            }
+                            className={cn(
+                              "w-full px-2 py-1.5 text-sm border rounded",
+                              "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  )}
                   <Button
                     onClick={handleExecute}
-                    disabled={executing || !((params["topic"] as string)?.trim())}
+                    disabled={
+                      executing ||
+                      !((params["topic"] as string)?.trim() || (params["content"] as string)?.trim())
+                    }
                     className="bg-blue-500 hover:bg-blue-600 text-white"
                   >
                     {executing ? (
@@ -2860,25 +3010,67 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                     ) : (
                       <>
                         <Play className="h-4 w-4 mr-2" />
-                        确认生成 PPT
+                        {(params["engine"] as string) === "slide_deck"
+                          ? "确认并生成图片与 PPTX/PDF"
+                          : "确认生成 PPT"}
                       </>
                     )}
                   </Button>
                 </>
               )}
-              {pptStep === 3 && pptDownloadUrl && (
-                <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800">
-                  <p className="text-sm font-semibold text-green-700 dark:text-green-400 mb-2">PPT 已生成</p>
-                  <a
-                    href={pptDownloadUrl}
-                    download
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    <Download className="h-4 w-4" />
-                    下载 PPT
-                  </a>
+              {pptStep === 3 && (pptDownloadUrl || pptPdfDownloadUrl) && (
+                <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800 space-y-4">
+                  <p className="text-sm font-semibold text-green-700 dark:text-green-400">
+                    {(params["engine"] as string) === "slide_deck" ? "幻灯片已生成" : "PPT 已生成"}
+                  </p>
+                  {pptSlidesPreviewUrls.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">每页预览</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                        {pptSlidesPreviewUrls.map((url, i) => (
+                          <a
+                            key={i}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded border border-slate-200 dark:border-slate-700 overflow-hidden"
+                          >
+                            <img
+                              src={url}
+                              alt={`Slide ${i + 1}`}
+                              className="w-full h-24 object-cover object-center"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-3">
+                    {pptDownloadUrl && (
+                      <a
+                        href={pptDownloadUrl}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        <Download className="h-4 w-4" />
+                        {pptPdfDownloadUrl ? "下载 PPTX" : "下载 PPT"}
+                      </a>
+                    )}
+                    {pptPdfDownloadUrl && (
+                      <a
+                        href={pptPdfDownloadUrl}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        <Download className="h-4 w-4" />
+                        下载 PDF
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

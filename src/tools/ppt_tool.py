@@ -9,13 +9,20 @@ import uuid
 from pathlib import Path
 from typing import Literal, Optional
 
+from pydantic import BaseModel, Field
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
 
 from src.llms.llm import get_llm_by_type
 
 from src.tools.image_gen_tool import generate_image_to_path, is_image_gen_configured
+
+# slide_deck 流程（engine=slide_deck 时委托）
+try:
+    from src.tools.slide_deck_tool import _run_slide_deck
+except ImportError:
+    _run_slide_deck = None
 
 logger = logging.getLogger(__name__)
 
@@ -36,16 +43,29 @@ SLIDE_IMAGE_PROMPT_SYSTEM = """你是一个幻灯片配图助手。根据给定�
 class GeneratePPTInput(BaseModel):
     """Input for the PPT generation tool (outline or generate)."""
 
+    engine: Literal["simple", "slide_deck"] = Field(
+        default="slide_deck",
+        description="'simple': 文字型 PPT；'slide_deck': baoyu 风格整页图片幻灯片（默认）。",
+    )
     topic: str = Field(default="", description="One-sentence topic for the PPT; required when action is 'outline'.")
     outline: str = Field(default="", description="Outline content; required when action is 'generate' (from step 1 or edited by user).")
     action: Literal["outline", "generate"] = Field(
         default="outline",
-        description="'outline' to generate outline from topic; 'generate' to create .pptx from outline.",
+        description="'outline' to generate outline from topic; 'generate' to create .pptx from outline. (Used when engine='simple'.)",
     )
     with_images: bool = Field(
         default=False,
-        description="When action is 'generate', whether to generate an image for each slide (requires IMAGE_GEN configured).",
+        description="When engine='simple' and action='generate', whether to generate an image per slide (requires IMAGE_GEN).",
     )
+    # slide_deck 专用参数（engine='slide_deck' 时生效）
+    content: str = Field(default="", description="长文/Markdown 内容，与 topic 二选一；用于 slide_deck。")
+    style: str = Field(default="blueprint", description="slide_deck 风格：blueprint, minimal, hand-drawn 等。")
+    audience: str = Field(default="general", description="slide_deck 受众：general, beginners, experts, executives 等。")
+    lang: str = Field(default="auto", description="slide_deck 语言：zh, en, auto。")
+    slides: int = Field(default=8, ge=3, le=20, description="slide_deck 目标页数。")
+    outline_only: bool = Field(default=False, description="slide_deck：仅生成并返回 outline。")
+    prompts_only: bool = Field(default=False, description="slide_deck：生成 outline 与 prompts 后即返回。")
+    images_only: bool = Field(default=False, description="slide_deck：生成图片后即返回，不合并 pptx/pdf。")
 
 
 def _generate_outline(topic: str) -> str:
@@ -218,12 +238,36 @@ def _generate_pptx_from_outline(outline: str, with_images: bool = False) -> str:
 
 
 def _run_generate_ppt(
+    engine: Literal["simple", "slide_deck"] = "slide_deck",
     topic: str = "",
     outline: str = "",
     action: Literal["outline", "generate"] = "outline",
     with_images: bool = False,
+    content: str = "",
+    style: str = "blueprint",
+    audience: str = "general",
+    lang: str = "auto",
+    slides: int = 8,
+    outline_only: bool = False,
+    prompts_only: bool = False,
+    images_only: bool = False,
 ) -> str:
     """StructuredTool 会按 schema 字段以关键字参数调用，因此签名需与 GeneratePPTInput 一致。"""
+    engine = (engine or "slide_deck").strip() or "slide_deck"
+    if engine == "slide_deck" and _run_slide_deck is not None:
+        return _run_slide_deck(
+            topic=topic,
+            content=content,
+            outline=outline,
+            style=style,
+            audience=audience,
+            lang=lang,
+            slides=slides,
+            outline_only=outline_only,
+            prompts_only=prompts_only,
+            images_only=images_only,
+        )
+    # engine == "simple"
     topic = (topic or "").strip()
     outline = (outline or "").strip()
     action = (action or "outline").strip() or "outline"
@@ -236,7 +280,7 @@ def _run_generate_ppt(
 
 generate_ppt_tool = StructuredTool(
     name="generate_ppt_tool",
-    description="Generate a PPT: step 1 use action='outline' with topic to get outline; step 2 use action='generate' with outline to create .pptx (optionally with_images=true for AI-generated slide images).",
+    description="Generate a PPT: engine='slide_deck' (default) for baoyu-style full-page image slides (outline→prompts→images→pptx/pdf); engine='simple' for text PPT (action=outline with topic, then action=generate with outline, optional with_images).",
     args_schema=GeneratePPTInput,
     func=_run_generate_ppt,
 )
