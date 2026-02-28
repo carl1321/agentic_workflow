@@ -6,135 +6,90 @@ import { useEffect, useState } from "react";
 import { useAuthStore } from "~/core/store/auth-store";
 import { getCasdoorLoginUrl } from "~/core/api/auth";
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
-import { Label } from "~/components/ui/label";
-import { cn } from "~/lib/utils";
 
+/**
+ * 登录入口：直接跳转到 Casdoor 登录，不展示中间登录页
+ */
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect") || "/chat";
 
-  const { login, loading, error, user } = useAuthStore();
+  const { user } = useAuthStore();
+  const [error, setError] = useState<string | null>(null);
 
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [localError, setLocalError] = useState<string | null>(null);
-  const [casdoorLoading, setCasdoorLoading] = useState(false);
-
-  // 如果已经登录，直接跳转（放在 effect 里，避免在 render 期间触发路由更新）
+  // 已登录则直接去目标页
   useEffect(() => {
     if (user) {
       router.replace(redirect);
     }
   }, [user, router, redirect]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLocalError(null);
-    try {
-      await login({ username, password });
-      router.replace(redirect);
-    } catch (e: any) {
-      const msg =
-        e instanceof Error ? e.message : "登录失败，请检查用户名和密码";
-      setLocalError(msg);
-    }
+  // 未登录时直接跳转 Casdoor
+  useEffect(() => {
+    if (user) return;
+
+    let cancelled = false;
+    setError(null);
+
+    const go = async () => {
+      try {
+        const origin = typeof window !== "undefined" ? window.location.origin : "";
+        const redirectUri = `${origin}/login/callback`;
+        const { url } = await getCasdoorLoginUrl(redirectUri, redirect);
+        if (cancelled) return;
+        window.location.href = url;
+      } catch (e: unknown) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : "获取 Casdoor 登录地址失败";
+        setError(msg);
+      }
+    };
+
+    go();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, redirect]);
+
+  if (user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
+        <p className="text-slate-400">正在跳转…</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
+        <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-950/80 p-8 text-center">
+          <p className="mb-4 text-sm text-red-300">{error}</p>
+          <Button
+            variant="outline"
+            className="border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
+            onClick={() => {
+              setError(null);
+              const origin = typeof window !== "undefined" ? window.location.origin : "";
+              const redirectUri = `${origin}/login/callback`;
+              getCasdoorLoginUrl(redirectUri, redirect).then(
+                ({ url }) => { window.location.href = url; },
+                (e) => setError(e instanceof Error ? e.message : "获取 Casdoor 登录地址失败"),
+              );
+            }}
+          >
+            重试
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-950/80 p-8 shadow-2xl shadow-slate-900/70">
-        <h1 className="mb-2 text-center text-2xl font-semibold text-white">
-          AgenticWorkflow 管理登录
-        </h1>
-        <p className="mb-6 text-center text-sm text-slate-400">
-          使用管理员账号登录以访问用户与权限管理功能
-        </p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="username" className="text-slate-200">
-              用户名
-            </Label>
-            <Input
-              id="username"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500"
-              placeholder="admin"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-slate-200">
-              密码
-            </Label>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500"
-              placeholder="输入密码"
-              required
-            />
-          </div>
-
-          {(localError || error) && (
-            <div className="rounded-md border border-red-500/50 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-              {localError || error}
-            </div>
-          )}
-
-          <Button
-            type="submit"
-            className={cn(
-              "mt-2 w-full bg-emerald-500 text-white hover:bg-emerald-400",
-            )}
-            disabled={loading}
-          >
-            {loading ? "登录中..." : "登录"}
-          </Button>
-
-          <div className="relative my-4">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-slate-600" />
-            </div>
-            <div className="relative flex justify-center text-xs text-slate-500">
-              <span className="bg-slate-950/80 px-2">或</span>
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full border-slate-600 text-slate-200 hover:bg-slate-800 hover:text-white"
-            disabled={casdoorLoading || loading}
-            onClick={async () => {
-              setLocalError(null);
-              setCasdoorLoading(true);
-              try {
-                const origin = typeof window !== "undefined" ? window.location.origin : "";
-                const redirectUri = `${origin}/login/callback`;
-                const { url } = await getCasdoorLoginUrl(redirectUri, redirect);
-                window.location.href = url;
-              } catch (e: unknown) {
-                const msg = e instanceof Error ? e.message : "获取 Casdoor 登录地址失败";
-                setLocalError(msg);
-                setCasdoorLoading(false);
-              }
-            }}
-          >
-            {casdoorLoading ? "跳转中…" : "使用 Casdoor 登录"}
-          </Button>
-        </form>
+      <div className="text-center text-slate-400">
+        <p className="animate-pulse">正在跳转到 Casdoor 登录…</p>
       </div>
     </div>
   );
 }
-
-

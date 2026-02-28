@@ -2993,7 +2993,10 @@ async def save_extraction_record(request: DataExtractionRecordRequest):
         )
         
         if not task_id:
-            raise HTTPException(status_code=500, detail="Failed to save extraction record")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save extraction record. Check server logs for database errors.",
+            )
         
         # Get the saved record
         record = record_manager.get_extraction_record_by_id(task_id, task_id=task_id)
@@ -3003,8 +3006,12 @@ async def save_extraction_record(request: DataExtractionRecordRequest):
         return DataExtractionRecordResponse(**record)
     except HTTPException:
         raise
+    except RuntimeError as e:
+        # e.g. "Data extraction storage is not configured or database is unreachable"
+        logger.warning("Data extraction record save failed (config/connection): %s", e)
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        logger.exception(f"Error saving extraction record: {str(e)}")
+        logger.exception("Error saving extraction record: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to save extraction record: {str(e)}")
 
 

@@ -215,11 +215,20 @@ class DataExtractionRecordManager:
                     task_id=task_id,
                 )
             else:
-                logger.error("No database connection available")
-                return None
+                logger.error("No database connection available for data extraction records")
+                raise RuntimeError(
+                    "Data extraction storage is not configured or database is unreachable. "
+                    "Please set ENV.LANGGRAPH_CHECKPOINT_DB_URL in conf.yaml to a PostgreSQL or MongoDB URL "
+                    "(e.g. postgresql://user:pass@localhost:5432/agenticworkflow) and ensure the database is running."
+                )
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to save extraction record: {e}", exc_info=True)
-            return None
+            raise RuntimeError(
+                f"Database error while saving extraction record: {e!s}. "
+                "Ensure ENV.LANGGRAPH_CHECKPOINT_DB_URL is set and the database is running."
+            ) from e
 
     def _save_to_postgresql(
         self,

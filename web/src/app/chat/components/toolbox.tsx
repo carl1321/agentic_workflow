@@ -1,19 +1,22 @@
 "use client";
 
+import Link from "next/link";
 import { Search, Play, Workflow, FlaskConical, Library, MessageSquare, Cpu } from "lucide-react";
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "~/lib/utils";
 import { tools, type ToolConfig, type ToolCategory } from "~/core/config/tools";
 
-/** 工具箱内「页面」类入口：工作流、SAM、文库、深度研究、VASP */
 export type ToolboxPageId = "workflow" | "library" | "sam" | "deep_research" | "vasp";
 
-interface ToolboxProps {
-  onToolSelect?: (tool: ToolConfig) => void;
-  /** 点击页面类入口时调用（工作流 / 我的文库 / SAM / 深度研究 / VASP） */
-  onOpenPage?: (page: ToolboxPageId) => void;
-}
+/** 置顶功能 id 到独立子页面路径的映射，便于外嵌与分享 */
+const PAGE_ENTRY_HREF: Record<ToolboxPageId, string> = {
+  workflow: "/workflow",
+  sam: "/newSam",
+  library: "/library",
+  deep_research: "/deep-research",
+  vasp: "/vasp-workflow",
+};
 
 const PAGE_ENTRIES: Array<{ id: ToolboxPageId; name: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: "workflow", name: "工作流", description: "编排与运行工作流", icon: Workflow },
@@ -22,6 +25,11 @@ const PAGE_ENTRIES: Array<{ id: ToolboxPageId; name: string; description: string
   { id: "deep_research", name: "深度研究", description: "基于对话的深度研究", icon: MessageSquare },
   { id: "vasp", name: "VASP 计算", description: "VASP 相关计算与对话", icon: Cpu },
 ];
+
+interface ToolboxProps {
+  onToolSelect?: (tool: ToolConfig) => void;
+  onOpenPage?: (page: ToolboxPageId) => void;
+}
 
 export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -56,87 +64,83 @@ export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
   ];
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Search Bar */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-        <div className="relative mb-3">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="搜索工具..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        {/* Category Filter */}
-        <div className="flex gap-2 overflow-x-auto">
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setSelectedCategory(cat.id)}
-              className={cn(
-                "px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors",
-                selectedCategory === cat.id
-                  ? "bg-blue-500 text-white dark:bg-blue-600"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
-              )}
-            >
-              {cat.label}
-            </button>
-          ))}
+    <div className="flex h-full flex-col bg-[#F5F5F5] dark:bg-slate-900">
+      {/* 智能工具箱横幅：深蓝渐变 + 白字描述 */}
+      <div className="px-6 py-4">
+        <div
+          className="rounded-xl overflow-hidden bg-gradient-to-br from-[#0f172a] via-[#1e3a5f] to-[#0f172a] dark:from-slate-900 dark:via-blue-950/50 dark:to-slate-900 p-6 text-white shadow-lg"
+          style={{ minHeight: "120px" }}
+        >
+          <h2 className="text-xl font-bold mb-2">智能工具箱</h2>
+          <p className="text-sm text-white/90 max-w-2xl">
+            高效聚合多种先进自动化仪器与软件平台，为科研人员快速搭建智能实验室，显著提升研发效率，释放科研潜能。
+          </p>
         </div>
       </div>
 
-      {/* 页面入口：工作流 / SAM / 我的文库 / 深度研究 / VASP */}
-      {onOpenPage && (
-        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">置顶功能</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {PAGE_ENTRIES.map((entry) => {
-              const Icon = entry.icon;
-              return (
-                <motion.div
-                  key={entry.id}
-                  whileHover={{ scale: 1.02, y: -2 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="group"
-                >
-                  <div
-                    className={cn(
-                      "p-3 rounded-lg border transition-all cursor-pointer flex flex-col",
-                      "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
-                      "hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-md",
-                      "active:scale-[0.98]"
-                    )}
-                    onClick={() => onOpenPage(entry.id)}
-                  >
-                    <div className="mb-2">
-                      <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 w-fit">
-                        <Icon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                      </div>
-                    </div>
-                    <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100 line-clamp-1 mb-0.5">
-                      {entry.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
-                      {entry.description}
-                    </p>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* 分类筛选：选中项浅蓝底 + 蓝色文字 */}
+      <div className="px-6 py-2 flex gap-2 overflow-x-auto border-b border-slate-200 dark:border-slate-700">
+        {categories.map((cat) => (
+          <button
+            key={cat.id}
+            onClick={() => setSelectedCategory(cat.id)}
+            className={cn(
+              "px-4 py-2 text-sm font-medium rounded-lg whitespace-nowrap transition-colors",
+              selectedCategory === cat.id
+                ? "bg-[#E6F7FF] dark:bg-blue-950/40 text-[#1890FF] dark:text-blue-400"
+                : "text-[#595959] dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+            )}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Tools Grid */}
+      {/* 置顶功能：链接到独立子页面，便于外嵌与分享 */}
+      <div className="px-6 py-3 border-b border-slate-200 dark:border-slate-700">
+        <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">置顶功能</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {PAGE_ENTRIES.map((entry) => {
+            const Icon = entry.icon;
+            const href = PAGE_ENTRY_HREF[entry.id];
+            return (
+              <motion.div
+                key={entry.id}
+                whileHover={{ scale: 1.02, y: -2 }}
+                whileTap={{ scale: 0.98 }}
+                className="group"
+              >
+                <Link
+                  href={href}
+                  className={cn(
+                    "block p-3 rounded-lg border transition-all cursor-pointer flex flex-col bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                    "hover:border-[#1890FF]/40 hover:shadow-md active:scale-[0.98]"
+                  )}
+                >
+                  <div className="mb-2">
+                    <div className="p-1.5 rounded-lg bg-[#E6F7FF] dark:bg-blue-950/40 w-fit">
+                      <Icon className="h-5 w-5 text-[#1890FF] dark:text-blue-400" />
+                    </div>
+                  </div>
+                  <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100 line-clamp-1 mb-0.5">
+                    {entry.name}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                    {entry.description}
+                  </p>
+                </Link>
+              </motion.div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 工具卡片网格：白底、圆角、阴影，全部卡片统一紫色顶边 */}
       <div className="flex-1 overflow-y-auto p-6">
         {filteredTools.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
+          <div className="flex flex-col items-center justify-center min-h-[200px] text-center">
             <Search className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-4" />
-            <p className="text-sm text-slate-500 dark:text-slate-400">未找到匹配的工具</p>
+            <p className="text-sm text-[#595959] dark:text-slate-400">未找到匹配的工具</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -149,44 +153,36 @@ export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
                   whileTap={{ scale: 0.98 }}
                   className="group"
                 >
-                  <div
+                  <Link
+                    href={`/tools/${tool.id}`}
                     className={cn(
-                      "h-full p-4 rounded-lg border transition-all cursor-pointer flex flex-col",
-                      "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
-                      "hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-lg",
-                      "active:scale-[0.98]"
+                      "block h-full p-4 rounded-lg border transition-all cursor-pointer flex flex-col bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm",
+                      "border-t-[3px] border-t-[#9C27B0] dark:border-t-purple-500",
+                      "hover:border-[#1890FF]/40 hover:shadow-lg active:scale-[0.98]"
                     )}
-                    onClick={() => onToolSelect?.(tool)}
                   >
-                    {/* Icon */}
                     <div className="mb-3">
-                      <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 w-fit">
-                        <Icon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                      <div className="p-2 rounded-lg bg-[#E6F7FF] dark:bg-blue-950/40 w-fit">
+                        <Icon className="h-6 w-6 text-[#1890FF] dark:text-blue-400" />
                       </div>
                     </div>
-                    
-                    {/* Title */}
                     <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100 mb-1.5 line-clamp-1">
                       {tool.name}
                     </h3>
-                    
-                    {/* Description */}
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mb-3 flex-1">
+                    <p className="text-xs text-[#595959] dark:text-slate-400 line-clamp-2 mb-3 flex-1">
                       {tool.description}
                     </p>
-                    
-                    {/* Category Badge */}
                     <div className="flex items-center justify-between">
-                      <span className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
                         {tool.category === "molecular"
-                          ? "分子科学"
+                          ? "领域: 分子"
                           : tool.category === "literature"
-                          ? "文献研究"
-                          : "通用工具"}
+                            ? "领域: 文献"
+                            : "领域: 通用"}
                       </span>
-                      <Play className="h-4 w-4 text-slate-400 group-hover:text-blue-500 transition-colors" />
+                      <Play className="h-4 w-4 text-slate-400 group-hover:text-[#1890FF] transition-colors" />
                     </div>
-                  </div>
+                  </Link>
                 </motion.div>
               );
             })}

@@ -564,7 +564,7 @@ export default function Main() {
         onOpenToolbox={handleOpenToolbox}
       />
       
-      <div className="flex flex-1 h-full flex-col overflow-visible">
+      <div className="flex flex-1 h-full flex-col overflow-visible bg-[#F5F5F5] dark:bg-slate-900">
         {/* Model Selector - Top aligned with sidebar header (h-16 = 64px) */}
         {viewMode === "chat" && (
           <div className="relative flex h-16 items-center gap-3 px-4 border-b border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-50 overflow-visible">
@@ -604,7 +604,7 @@ export default function Main() {
         )}
 
         {viewMode === "toolbox" && (
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden flex flex-col bg-[#F5F5F5] dark:bg-slate-900">
             <Toolbox onToolSelect={handleToolSelect} onOpenPage={handleOpenPage} />
           </div>
         )}
