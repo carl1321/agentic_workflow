@@ -493,6 +493,20 @@ export default function Main() {
     setSelectedTool(null);
   };
 
+  const handleOpenKnowledgeBase = () => {
+    router.push("/chat?view=knowledge");
+    setViewMode("knowledge");
+    setSelectedTool(null);
+    setSelectedResource(null);
+  };
+
+  const handleOpenWorkflow = () => {
+    router.push("/chat?view=workflow");
+    setViewMode("workflow");
+    setSelectedTool(null);
+    setSelectedResource(null);
+  };
+
   const handleWorkflowEdit = (workflowId: string) => {
     window.open(`/workflows/${workflowId}/editor`, "_blank");
   };
@@ -512,25 +526,6 @@ export default function Main() {
   };
 
   const handleToolSelect = (tool: ToolConfig) => {
-    const entryType = tool.entryType ?? "executor";
-    if (entryType === "page") {
-      setSelectedTool(null);
-      if (tool.path) {
-        router.push(tool.path);
-        return;
-      }
-      if (tool.pageView) {
-        setViewMode(tool.pageView);
-        return;
-      }
-    }
-    if (entryType === "chat-mode" && tool.chatMode) {
-      setSelectedTool(null);
-      setViewMode("chat");
-      handleNewChat();
-      useStore.getState().setConversationMode(tool.chatMode);
-      return;
-    }
     setSelectedTool(tool);
     setViewMode("tool-executor");
   };
@@ -553,6 +548,9 @@ export default function Main() {
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
         onOpenToolbox={handleOpenToolbox}
+        onOpenKnowledgeBase={handleOpenKnowledgeBase}
+        onOpenWorkflow={handleOpenWorkflow}
+        onOpenExtensionMenu={(view) => setViewMode(view as ViewMode)}
       />
       
       <div className="flex flex-1 h-full flex-col overflow-visible">
@@ -620,19 +618,19 @@ export default function Main() {
 
         {viewMode === "workflow" && (
           <div className="flex-1 overflow-hidden">
-            <WorkflowsPage onBack={() => { setViewMode("toolbox"); setSelectedTool(null); }} />
+            <WorkflowsPage />
           </div>
         )}
 
         {viewMode === "library" && (
           <div className="flex-1 overflow-hidden">
-            <LibraryPage onBack={() => { setViewMode("toolbox"); setSelectedTool(null); }} />
+            <LibraryPage />
           </div>
         )}
 
         {viewMode === "vasp-workflow" && (
           <div className="flex-1 overflow-hidden">
-            <VaspWorkflowPage onBack={() => { setViewMode("toolbox"); setSelectedTool(null); }} />
+            <VaspWorkflowPage />
           </div>
         )}
       </div>

@@ -34,11 +34,7 @@ interface Workflow {
   created_by?: string;
 }
 
-interface WorkflowsPageProps {
-  onBack?: () => void;
-}
-
-export function WorkflowsPage({ onBack }: WorkflowsPageProps) {
+export function WorkflowsPage() {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,16 +148,9 @@ export function WorkflowsPage({ onBack }: WorkflowsPageProps) {
       <div className="flex-1 overflow-auto">
         <div className="container mx-auto p-6">
           <div className="mb-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {onBack && (
-                <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
-                  <span className="text-lg font-medium">&lt;</span>
-                </Button>
-              )}
-              <div>
-                <h1 className="text-2xl font-bold">工作流管理</h1>
-                <p className="text-muted-foreground">创建和管理工作流</p>
-              </div>
+            <div>
+              <h1 className="text-2xl font-bold">工作流管理</h1>
+              <p className="text-muted-foreground">创建和管理工作流</p>
             </div>
             <Button onClick={() => setShowCreateDialog(true)}>创建工作流</Button>
           </div>

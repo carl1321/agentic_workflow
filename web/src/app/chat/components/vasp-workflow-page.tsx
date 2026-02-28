@@ -39,11 +39,7 @@ const SI_PRESET = {
 };
 
 
-interface VaspWorkflowPageProps {
-  onBack?: () => void;
-}
-
-export function VaspWorkflowPage({ onBack }: VaspWorkflowPageProps) {
+export function VaspWorkflowPage() {
   const [step, setStep] = useState(1);
   const [flowType] = useState<"local">("local");
   const [poscarContent, setPoscarContent] = useState<string | null>(null);
@@ -529,13 +525,8 @@ export function VaspWorkflowPage({ onBack }: VaspWorkflowPageProps) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 返回 + 步骤条 */}
-      <div className="flex items-center gap-3 border-b border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50/50 dark:bg-slate-900/30">
-        {onBack && (
-          <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 shrink-0 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
-            <span className="text-lg font-medium">&lt;</span>
-          </Button>
-        )}
+      {/* 步骤条 */}
+      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 px-4 py-3 bg-slate-50/50 dark:bg-slate-900/30">
         {STEPS.map((s, i) => (
           <div key={s.id} className="flex items-center gap-1">
             <button

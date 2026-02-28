@@ -38,22 +38,6 @@ from .nodes import (
 )
 from .types import State
 
-# Optional: for type hint of config in start routing
-from typing import Any, Optional
-
-
-def _start_routing(state: State, config: Optional[Any] = None) -> str:
-    """
-    入口路由（仅对首次请求生效，resume 不经过此处）：
-    - start_at == 'vasp_planner'：VASP 计算入口，直入 vasp_planner → human_feedback → vasp_team → vasp_executor/vasp_composite → common_reporter
-    - 否则：普通/深度研究入口，走 coordinator → planner/molecular_planner/vasp_planner → … → human_feedback → research_team 或 vasp_team → report
-    """
-    if config and isinstance(config, dict):
-        start_at = (config.get("configurable") or {}).get("start_at")
-        if start_at == "vasp_planner":
-            return "vasp_planner"
-    return "coordinator"
-
 
 def continue_to_running_research_team(state: State):
     current_plan = state.get("current_plan")
@@ -136,11 +120,7 @@ def continue_to_running_research_team(state: State):
 def _build_base_graph():
     """Build and return the base state graph with all nodes and edges."""
     builder = StateGraph(State)
-    builder.add_conditional_edges(
-        START,
-        _start_routing,
-        {"vasp_planner": "vasp_planner", "coordinator": "coordinator"},
-    )
+    builder.add_edge(START, "coordinator")
     builder.add_node("coordinator", coordinator_node)
     builder.add_node("background_investigator", background_investigation_node)
     builder.add_node("planner", planner_node)
@@ -160,7 +140,6 @@ def _build_base_graph():
     builder.add_node("coder", coder_node)
     builder.add_node("human_feedback", human_feedback_node)
     builder.add_edge("background_investigator", "planner")
-    # VASP 专用链：vasp_planner → human_feedback（计划确认）→ vasp_team → vasp_executor/vasp_composite → common_reporter
     builder.add_edge("vasp_planner", "human_feedback")
     builder.add_conditional_edges(
         "vasp_team",

@@ -72,7 +72,6 @@ export async function* chatStream(
     enable_background_investigation: boolean;
     report_style?: "academic" | "popular_science" | "news" | "social_media" | "strategic_investment";
     selected_model?: string | null;
-    research_mode?: "standard" | "deep_research";
     mcp_settings?: {
       servers: Record<
         string,

@@ -5,7 +5,6 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Button } from "~/components/ui/button";
 import { SamDesignUnifiedPage } from "../sam-design/components/SamDesignUnifiedPage";
 import { Step1DefineObjective } from "../sam-design/components/Step1DefineObjective";
 import {
@@ -148,16 +147,6 @@ export default function NewSAMDesignPage() {
 
   return (
     <>
-      <div className="sticky top-0 z-10 flex items-center border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => router.push("/chat")}
-          className="h-8 w-8 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-        >
-          <span className="text-lg font-medium">&lt;</span>
-        </Button>
-      </div>
       <SamDesignUnifiedPage
         objective={objective}
         onObjectiveChange={setObjective}
