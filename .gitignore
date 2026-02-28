@@ -229,3 +229,6 @@ llm_cache/
 band_workflow_out/
 skills/vaspilot-skill/band_workflow_out/
 **/smiles_data.csv
+image_output/
+docs/
+ppt_output/

@@ -17,6 +17,7 @@ from .literature_search_tool import search_literature
 from .pdf_crawler_tool import fetch_pdf_text
 from .phase_diagram_tool import phase_diagram_tool
 from .ppt_tool import generate_ppt_tool
+from .image_gen_tool import image_gen_tool
 
 __all__ = [
     "crawl_tool",
@@ -35,4 +36,5 @@ __all__ = [
     "fetch_pdf_text",
     "phase_diagram_tool",
     "generate_ppt_tool",
+    "image_gen_tool",
 ]

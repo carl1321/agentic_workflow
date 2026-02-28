@@ -108,6 +108,7 @@ from src.tools import (
     data_extraction_tool,
     generate_sam_molecules,
     generate_ppt_tool,
+    image_gen_tool,
     molecular_analysis_tool,
     predict_molecular_properties,
     prompt_optimizer_tool,
@@ -147,6 +148,7 @@ TOOL_REGISTRY = {
     "data_extraction_tool": data_extraction_tool,
     "phase_diagram_tool": phase_diagram_tool,
     "generate_ppt_tool": generate_ppt_tool,
+    "image_gen_tool": image_gen_tool,
     # Actual tool.name mappings (for compatibility)
     "predict_molecular_properties": predict_molecular_properties,
     "visualize_molecules": visualize_molecules,

@@ -78,3 +78,23 @@ BASIC_MODEL:
 #   enabled: true
 #   directories:
 #     - skills
+
+# 图像生成（文生图 / 幻灯片配图）可选配置
+# 不配置则文生图工具不可用，幻灯片增强仅生成纯文字 PPT
+# 取消注释并填写 api_key 后，文生图与幻灯片增强配图功能可用
+#
+# 方式一：OpenAI 兼容（如 OpenAI / 自建）
+# IMAGE_GEN:
+#   provider: openai
+#   api_key: sk-xxx
+#   base_url: https://api.openai.com/v1   # 可选
+#   model: dall-e-3
+#   size: 1024x1024
+#
+# 方式二：DMXAPI（使用 Gemini 图像模型，模型列表 https://www.dmxapi.cn/rmb ，使用说明 https://doc.dmxapi.cn/kaishi.html ）
+# IMAGE_GEN:
+#   provider: dmx
+#   api_key: ""   # 请填写您在 DMXAPI 获取的 API Key
+#   base_url: https://www.dmxapi.cn/v1   # 可选，不填则默认此地址
+#   model: gemini-3.1-flash-image-preview
+#   size: 1024x1024   # 可选

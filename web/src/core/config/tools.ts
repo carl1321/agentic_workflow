@@ -13,6 +13,7 @@ import {
   TrendingUp,
   Search,
   Sparkles,
+  Image as ImageIcon,
 } from "lucide-react";
 
 export type ToolCategory = "molecular" | "literature" | "general";
@@ -302,6 +303,29 @@ export const tools: ToolConfig[] = [
     ],
   },
   {
+    id: "image_gen",
+    name: "文生图",
+    description: "根据文本描述生成图片，返回下载链接",
+    category: "general",
+    icon: ImageIcon,
+    toolName: "image_gen_tool",
+    parameters: [
+      {
+        name: "prompt",
+        type: "string",
+        description: "图片描述",
+        required: true,
+      },
+      {
+        name: "size",
+        type: "string",
+        description: "图片尺寸",
+        required: false,
+        default: "1024x1024",
+      },
+    ],
+  },
+  {
     id: "ppt_generator",
     name: "PPT生成",
     description: "一句话生成PPT：先生成大纲，确认后再生成文件",
@@ -328,6 +352,13 @@ export const tools: ToolConfig[] = [
         required: false,
         default: "outline",
         enum: ["outline", "generate"],
+      },
+      {
+        name: "with_images",
+        type: "boolean",
+        description: "是否每页生成配图（需配置图像 API）",
+        required: false,
+        default: false,
       },
     ],
   },

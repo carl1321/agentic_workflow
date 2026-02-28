@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from src.llms.llm import get_llm_by_type
 
+from src.tools.image_gen_tool import generate_image_to_path, is_image_gen_configured
+
 logger = logging.getLogger(__name__)
 
 PPT_OUTPUT_DIR = "ppt_output"
@@ -27,6 +29,10 @@ OUTLINE_SYSTEM = """你是一个专业的PPT大纲撰写助手。根据用户给
 5. 只输出大纲内容，不要输出其他解释。"""
 
 
+SLIDE_IMAGE_PROMPT_SYSTEM = """你是一个幻灯片配图助手。根据给定的幻灯片标题和要点，生成一句英文的图片描述（prompt），用于 DALL-E 等文生图模型。
+要求：一句话，描述该页幻灯片主题对应的简洁、专业、适合做配图的画面，不要包含多余解释。只输出这一句英文。"""
+
+
 class GeneratePPTInput(BaseModel):
     """Input for the PPT generation tool (outline or generate)."""
 
@@ -35,6 +41,10 @@ class GeneratePPTInput(BaseModel):
     action: Literal["outline", "generate"] = Field(
         default="outline",
         description="'outline' to generate outline from topic; 'generate' to create .pptx from outline.",
+    )
+    with_images: bool = Field(
+        default=False,
+        description="When action is 'generate', whether to generate an image for each slide (requires IMAGE_GEN configured).",
     )
 
 
@@ -106,8 +116,21 @@ def _parse_outline_to_slides(outline: str) -> list[dict]:
     return slides
 
 
-def _generate_pptx_from_outline(outline: str) -> str:
-    """Create .pptx from outline and return JSON with download_url and filename."""
+def _slide_image_prompt(title: str, bullets: list) -> str:
+    """用 LLM 根据幻灯片标题和要点生成一句英文配图描述。"""
+    llm = get_llm_by_type("basic")
+    content = f"标题: {title}\n要点: " + "; ".join((bullets or [])[:5])
+    messages = [
+        SystemMessage(content=SLIDE_IMAGE_PROMPT_SYSTEM),
+        HumanMessage(content=content),
+    ]
+    response = llm.invoke(messages)
+    text = (response.content if hasattr(response, "content") else str(response)) or ""
+    return text.strip()[:500]
+
+
+def _generate_pptx_from_outline(outline: str, with_images: bool = False) -> str:
+    """Create .pptx from outline and return JSON with download_url and filename. Optionally add generated image per slide."""
     try:
         from pptx import Presentation
         from pptx.util import Inches, Pt
@@ -121,12 +144,31 @@ def _generate_pptx_from_outline(outline: str) -> str:
     if not slides_data:
         return json.dumps({"error": "无法从大纲解析出幻灯片内容，请检查格式（# 标题，## 页标题，- 要点）"}, ensure_ascii=False)
 
+    use_images = with_images and is_image_gen_configured()
+    image_paths: list[Optional[str]] = []
+    if use_images:
+        for i, slide_data in enumerate(slides_data):
+            title = (slide_data.get("title") or "").strip() or ""
+            bullets = slide_data.get("bullets") or []
+            path_rel: Optional[str] = None
+            try:
+                prompt = _slide_image_prompt(title, bullets)
+                if prompt:
+                    path_rel = generate_image_to_path(prompt, size="1024x1024")
+            except Exception as e:
+                logger.warning("幻灯片 %d 配图失败，跳过: %s", i + 1, e)
+            image_paths.append(path_rel)
+    else:
+        image_paths = [None] * len(slides_data)
+
     prs = Presentation()
     prs.slide_width = Inches(10)
     prs.slide_height = Inches(7.5)
 
     title_slide_layout = prs.slide_layouts[0]
     content_slide_layout = prs.slide_layouts[1]
+
+    cwd = Path(os.getcwd()).resolve()
 
     for i, slide_data in enumerate(slides_data):
         title = (slide_data.get("title") or "").strip() or f"Slide {i + 1}"
@@ -137,6 +179,13 @@ def _generate_pptx_from_outline(outline: str) -> str:
             slide.shapes.title.text = title
             if slide.placeholders[1]:
                 slide.placeholders[1].text = ""
+            if image_paths[i]:
+                try:
+                    full_path = cwd / image_paths[i]
+                    if full_path.is_file():
+                        slide.shapes.add_picture(str(full_path), Inches(5.5), Inches(2), Inches(4), Inches(3.75))
+                except Exception as e:
+                    logger.warning("标题页插入图片失败: %s", e)
         else:
             slide = prs.slides.add_slide(content_slide_layout)
             slide.shapes.title.text = title
@@ -147,8 +196,14 @@ def _generate_pptx_from_outline(outline: str) -> str:
                 p.text = b
                 p.level = 0
                 p.font.size = Pt(14)
+            if image_paths[i]:
+                try:
+                    full_path = cwd / image_paths[i]
+                    if full_path.is_file():
+                        slide.shapes.add_picture(str(full_path), Inches(5.5), Inches(1.8), Inches(4), Inches(3.75))
+                except Exception as e:
+                    logger.warning("内容页 %d 插入图片失败: %s", i + 1, e)
 
-    cwd = Path(os.getcwd()).resolve()
     out_dir = cwd / PPT_OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     filename = f"ppt_{uuid.uuid4().hex[:12]}.pptx"
@@ -162,25 +217,26 @@ def _generate_pptx_from_outline(outline: str) -> str:
     )
 
 
-def _run_generate_ppt(inp: GeneratePPTInput | dict) -> str:
-    if isinstance(inp, dict):
-        topic = inp.get("topic", "") or ""
-        outline = inp.get("outline", "") or ""
-        action = inp.get("action", "outline") or "outline"
-    else:
-        topic = getattr(inp, "topic", "") or ""
-        outline = getattr(inp, "outline", "") or ""
-        action = getattr(inp, "action", "outline") or "outline"
+def _run_generate_ppt(
+    topic: str = "",
+    outline: str = "",
+    action: Literal["outline", "generate"] = "outline",
+    with_images: bool = False,
+) -> str:
+    """StructuredTool 会按 schema 字段以关键字参数调用，因此签名需与 GeneratePPTInput 一致。"""
+    topic = (topic or "").strip()
+    outline = (outline or "").strip()
+    action = (action or "outline").strip() or "outline"
     if action == "outline":
         return _generate_outline(topic)
     if action == "generate":
-        return _generate_pptx_from_outline(outline)
+        return _generate_pptx_from_outline(outline, with_images=with_images)
     return json.dumps({"error": f"invalid action: {action}"}, ensure_ascii=False)
 
 
 generate_ppt_tool = StructuredTool(
     name="generate_ppt_tool",
-    description="Generate a PPT: step 1 use action='outline' with topic to get outline; step 2 use action='generate' with outline to create .pptx and get download link.",
+    description="Generate a PPT: step 1 use action='outline' with topic to get outline; step 2 use action='generate' with outline to create .pptx (optionally with_images=true for AI-generated slide images).",
     args_schema=GeneratePPTInput,
     func=_run_generate_ppt,
 )

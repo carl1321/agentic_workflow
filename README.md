@@ -75,8 +75,9 @@ cp conf.yaml.example conf.yaml
 - **数据库连接** (`ENV.LANGGRAPH_CHECKPOINT_DB_URL`): 配置 PostgreSQL 连接
 - **其他环境变量**: 在 `ENV` 部分配置所有必要的环境变量
 - **扩展页入口**：`ZOTERO` 配置「我的文库」；`VASP_WORKFLOW: { enabled: true }` 配置「VASP 工作流」侧边栏入口
+- **图像生成（可选）**：`IMAGE_GEN` 配置文生图与 PPT 幻灯片配图所用 API，详见 [图像生成配置说明](docs/image_gen_configuration.md)
 
-详细配置请参考 [配置指南](docs/configuration_guide.md)
+详细配置请参考各功能对应的配置文档（如 [Agent Skills](docs/agent_skills.md)、[图像生成](docs/image_gen_configuration.md) 等）。
 
 ### 4. 初始化数据库
 

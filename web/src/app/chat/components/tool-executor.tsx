@@ -893,6 +893,49 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
   const renderResultContent = () => {
     if (!result) return null;
 
+    // 文生图结果：解析 JSON，展示图片与下载链接
+    if (tool.id === "image_gen") {
+      try {
+        const data = JSON.parse(result) as { error?: string; download_url?: string; filename?: string; path?: string };
+        if (data.error) {
+          return (
+            <div className="text-sm text-red-600 dark:text-red-400">{data.error}</div>
+          );
+        }
+        if (data.download_url) {
+          const imgUrl = data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`;
+          return (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-900/50 flex justify-center items-center p-4">
+                <img
+                  src={imgUrl}
+                  alt="生成的图片"
+                  className="max-w-full max-h-[70vh] w-auto h-auto object-contain"
+                />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <a
+                  href={imgUrl}
+                  download={data.filename || "image.png"}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-blue-500 text-white text-sm hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 transition-colors"
+                >
+                  <Download className="h-4 w-4" />
+                  下载图片
+                </a>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {data.filename || data.path || ""}
+                </span>
+              </div>
+            </div>
+          );
+        }
+      } catch {
+        // 解析失败则走默认 Markdown
+      }
+    }
+
     // 文献搜索结果：尝试解析为 JSON 列表并表格展示
     if (tool.id === "literature_search") {
       try {
