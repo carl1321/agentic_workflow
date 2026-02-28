@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 
-import { chatStream, generatePodcast } from "../api";
+import { chatStream, vaspStream, generatePodcast } from "../api";
 import type { Message, Resource } from "../messages";
 import { mergeMessage } from "../messages";
 import { parseJSON } from "../utils";
@@ -29,6 +29,8 @@ export const useStore = create<{
   ongoingResearchId: string | null;
   openResearchId: string | null;
   selectedModel: string | null;
+  /** 对话模式：深度研究走主对话流+research_mode，VASP 走 vasp-stream；null 为普通对话 */
+  conversationMode: null | "deep_research" | "vasp";
 
   appendMessage: (message: Message) => void;
   updateMessage: (message: Message) => void;
@@ -39,6 +41,7 @@ export const useStore = create<{
   closeResearch: () => void;
   setOngoingResearch: (researchId: string | null) => void;
   setSelectedModel: (model: string | null) => void;
+  setConversationMode: (mode: null | "deep_research" | "vasp") => void;
 }>((set, get) => ({
   responding: false,
   threadId: THREAD_ID,
@@ -51,6 +54,7 @@ export const useStore = create<{
   ongoingResearchId: null,
   openResearchId: null,
   selectedModel: null,
+  conversationMode: null,
 
   appendMessage(message: Message) {
     set((state) => {
@@ -85,10 +89,10 @@ export const useStore = create<{
       messages: new Map<string, Message>(),
       researchIds: [],
       researchPlanIds: new Map<string, string>(),
-      researchReportIds: new Map<string, string>(),
       researchActivityIds: new Map<string, string[]>(),
       ongoingResearchId: null,
       openResearchId: null,
+      conversationMode: null,
     }));
   },
   setThreadId(threadId: string) {
@@ -105,6 +109,9 @@ export const useStore = create<{
   },
   setSelectedModel(model: string | null) {
     set({ selectedModel: model });
+  },
+  setConversationMode(mode: null | "deep_research" | "vasp") {
+    set({ conversationMode: mode });
   },
 }));
 
@@ -135,27 +142,47 @@ export async function sendMessage(
 
   const settings = getChatStreamSettings();
   const selectedModel = useStore.getState().selectedModel;
-  const stream = chatStream(
-    content ?? "[REPLAY]",
-    {
-      thread_id: currentThreadId,
-      interrupt_feedback: interruptFeedback,
-      resources,
-      auto_accepted_plan: settings.autoAcceptedPlan,
-      enable_clarification: settings.enableClarification ?? false,
-      max_clarification_rounds: settings.maxClarificationRounds ?? 3,
-      enable_deep_thinking: settings.enableDeepThinking ?? false,
-      enable_background_investigation:
-        settings.enableBackgroundInvestigation ?? true,
-      max_plan_iterations: settings.maxPlanIterations,
-      max_step_num: settings.maxStepNum,
-      max_search_results: settings.maxSearchResults,
-      report_style: settings.reportStyle,
-      selected_model: selectedModel,
-      mcp_settings: settings.mcpSettings,
-    },
-    options,
-  );
+  const conversationMode = useStore.getState().conversationMode;
+
+  // VASP 下若带 interruptFeedback（如点击 Start research），必须走主对话流以 resume，否则后端无法从 human_feedback 继续
+  const useMainStreamForResume =
+    conversationMode === "vasp" && interruptFeedback != null && interruptFeedback !== "";
+
+  const stream =
+    conversationMode === "vasp" && !useMainStreamForResume
+      ? (async function* () {
+          const state = useStore.getState();
+          const vaspMessages: Array<{ role: string; content: string }> = state.messageIds
+            .map((id) => state.messages.get(id))
+            .filter(
+              (m): m is Message =>
+                !!m && (m.role === "user" || m.role === "assistant") && typeof (m.content ?? "") === "string",
+            )
+            .map((m) => ({ role: m.role, content: (m.content ?? "") as string }));
+          yield* vaspStream(vaspMessages, { thread_id: currentThreadId }, options);
+        })()
+      : chatStream(
+          content ?? "[REPLAY]",
+          {
+            thread_id: currentThreadId,
+            interrupt_feedback: interruptFeedback,
+            resources,
+            auto_accepted_plan: settings.autoAcceptedPlan,
+            enable_clarification: settings.enableClarification ?? false,
+            max_clarification_rounds: settings.maxClarificationRounds ?? 3,
+            enable_deep_thinking: settings.enableDeepThinking ?? false,
+            enable_background_investigation:
+              settings.enableBackgroundInvestigation ?? true,
+            max_plan_iterations: settings.maxPlanIterations,
+            max_step_num: settings.maxStepNum,
+            max_search_results: settings.maxSearchResults,
+            report_style: settings.reportStyle,
+            selected_model: selectedModel,
+            mcp_settings: settings.mcpSettings,
+            research_mode: conversationMode === "deep_research" ? "deep_research" : "standard",
+          },
+          options,
+        );
 
   setResponding(true);
   let messageId: string | undefined;

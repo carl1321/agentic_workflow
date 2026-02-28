@@ -411,6 +411,7 @@ async def chat_stream(
             request.selected_model,
             title=title,
             is_new_conversation=is_new_conversation,
+            research_mode=request.research_mode,
         ),
         media_type="text/event-stream",
     )
@@ -455,26 +456,31 @@ def _convert_messages_to_langchain_vasp(messages: List[dict]) -> List[BaseMessag
 
 
 async def _astream_vasp_generator(messages: List[dict], thread_id: str):
-    """Stream events from VASP agent graph in same SSE format as main chat."""
-    lc_messages = _convert_messages_to_langchain_vasp(messages)
-    if not lc_messages:
+    """Stream events from main graph starting at vasp_planner (四步计划、human_feedback、能带图)，与主对话同布局同事件格式。"""
+    if not messages:
         yield _make_event("error", {"thread_id": thread_id, "error": "No messages provided"})
         return
     try:
-        graph_instance = get_vasp_graph()
-    except ValueError as e:
-        yield _make_event("error", {"thread_id": thread_id, "error": str(e)})
-        return
-    workflow_config = {
-        "thread_id": thread_id,
-        "recursion_limit": get_recursion_limit(),
-    }
-    try:
-        async for event in _stream_graph_events(
-            graph_instance,
-            {"messages": lc_messages},
-            workflow_config,
+        async for event in _astream_workflow_generator(
+            messages,
             thread_id,
+            resources=[],
+            max_plan_iterations=3,
+            max_step_num=10,
+            max_search_results=3,
+            auto_accepted_plan=False,
+            interrupt_feedback="",
+            mcp_settings={},
+            enable_background_investigation=False,
+            report_style=ReportStyle.ACADEMIC,
+            enable_deep_thinking=False,
+            enable_clarification=False,
+            max_clarification_rounds=3,
+            selected_model=None,
+            title=None,
+            is_new_conversation=True,
+            research_mode=None,
+            start_at="vasp_planner",
         ):
             yield event
     except Exception as e:
@@ -488,10 +494,30 @@ async def vasp_stream(
     current_user: Optional[CurrentUser] = Depends(get_current_user_optional),
 ):
     """
-    Stream VASP agent responses: user goal -> LLM decides and calls vaspilot tools until done.
-    Same SSE event types as /api/chat/stream (message_chunk, tool_calls, tool_call_result, error).
+    Stream VASP workflow from vasp_planner: 四步计划 -> human_feedback -> vasp_team -> 能带图等.
+    使用主图并 start_at=vasp_planner，与主对话相同 SSE 事件与页面布局。
     """
-    thread_id = request.thread_id or str(uuid4())
+    is_new = not request.thread_id or request.thread_id == "__default__"
+    thread_id = str(uuid4()) if is_new else request.thread_id
+    user_id = str(current_user.id) if current_user else None
+    # 新建对话时写入数据库，侧边栏才能拉取到
+    if is_new and request.messages:
+        title = _extract_title_from_messages(request.messages) or "VASP 计算"
+        first = request.messages[0]
+        if isinstance(first, dict) and first.get("role") == "user":
+            initial_messages = [{
+                "id": str(uuid4()),
+                "thread_id": thread_id,
+                "role": first.get("role", "user"),
+                "content": first.get("content", ""),
+            }]
+        else:
+            initial_messages = None
+        if get_bool_env("LANGGRAPH_CHECKPOINT_SAVER", False):
+            try:
+                create_conversation(thread_id, title or "新对话", initial_messages, user_id)
+            except Exception as e:
+                logger.warning("vasp-stream create_conversation failed: %s", e)
     return StreamingResponse(
         _astream_vasp_generator(request.messages, thread_id),
         media_type="text/event-stream",
@@ -889,6 +915,8 @@ async def _astream_workflow_generator(
     selected_model: Optional[str] = None,
     title: Optional[str] = None,
     is_new_conversation: bool = False,
+    research_mode: Optional[str] = None,
+    start_at: Optional[str] = None,
 ):
     # Skip conversation updates for tool execution requests
     is_tool_execution = thread_id and thread_id.startswith("__tool_exec_")
@@ -918,7 +946,7 @@ async def _astream_workflow_generator(
             resume_msg += f" {messages[-1]['content']}"
         workflow_input = Command(resume=resume_msg)
 
-    # Prepare workflow config
+    # Prepare workflow config (configurable is read by Configuration.from_runnable_config)
     workflow_config = {
         "thread_id": thread_id,
         "resources": resources,
@@ -930,6 +958,10 @@ async def _astream_workflow_generator(
         "enable_deep_thinking": enable_deep_thinking,
         "recursion_limit": get_recursion_limit(),
         "selected_model": selected_model,
+        "configurable": {
+            "research_mode": research_mode if research_mode else "standard",
+            **({"start_at": start_at} if start_at else {}),
+        },
     }
 
     # Track conversation title and save when stream completes

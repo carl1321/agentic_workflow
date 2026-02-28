@@ -77,6 +77,10 @@ class ChatRequest(BaseModel):
         None,
         description="The selected model identifier to use for all agents in this session",
     )
+    research_mode: Optional[str] = Field(
+        None,
+        description="Research mode: standard or deep_research. When deep_research, uses iterative research engine.",
+    )
 
 
 class TTSRequest(BaseModel):

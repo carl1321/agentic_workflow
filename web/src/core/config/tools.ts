@@ -14,9 +14,18 @@ import {
   TrendingUp,
   Search,
   Sparkles,
+  Workflow,
+  Library,
+  Cpu,
 } from "lucide-react";
 
 export type ToolCategory = "molecular" | "literature" | "general";
+
+/** 页面类入口在 chat 内切换的 viewMode */
+export type PageViewMode = "workflow" | "library";
+
+/** 对话模式：深度研究走主对话流 + research_mode，VASP 走 vasp-stream */
+export type ChatModeType = "deep_research" | "vasp";
 
 export interface ToolParameter {
   name: string;
@@ -34,10 +43,76 @@ export interface ToolConfig {
   category: ToolCategory;
   icon: LucideIcon;
   parameters: ToolParameter[];
-  toolName: string; // 后端工具名称
+  /** 后端工具名称；页面类/对话模式类可为空 */
+  toolName: string;
+  /** 入口类型：执行类打开 ToolExecutor，页面类切换 view/跳转，对话模式类进入对话并设 mode */
+  entryType?: "executor" | "page" | "chat-mode";
+  /** 当 entryType === "page" 时，在 chat 内切换的 viewMode（与 path 二选一） */
+  pageView?: PageViewMode;
+  /** 当 entryType === "page" 时，外链路径（如 /newSam） */
+  path?: string;
+  /** 当 entryType === "chat-mode" 时：deep_research | vasp */
+  chatMode?: ChatModeType;
 }
 
 export const tools: ToolConfig[] = [
+  // 页面类入口（点击打开新页面）
+  {
+    id: "workflow",
+    name: "工作流",
+    description: "创建、编辑与运行工作流",
+    category: "general",
+    icon: Workflow,
+    toolName: "",
+    parameters: [],
+    entryType: "page",
+    pageView: "workflow",
+  },
+  {
+    id: "sam_design",
+    name: "SAM分子设计",
+    description: "自组装单分子层（SAM）分子设计流程",
+    category: "molecular",
+    icon: Atom,
+    toolName: "",
+    parameters: [],
+    entryType: "page",
+    path: "/newSam",
+  },
+  {
+    id: "library",
+    name: "我的文库",
+    description: "管理个人文献与资料库",
+    category: "general",
+    icon: Library,
+    toolName: "",
+    parameters: [],
+    entryType: "page",
+    pageView: "library",
+  },
+  // 对话模式入口（点击进入对话并走对应流）
+  {
+    id: "deep_research",
+    name: "深度研究",
+    description: "进入深度研究对话，多轮迭代生成综合报告",
+    category: "literature",
+    icon: FileSearch,
+    toolName: "",
+    parameters: [],
+    entryType: "chat-mode",
+    chatMode: "deep_research",
+  },
+  {
+    id: "vasp_calc",
+    name: "VASP计算",
+    description: "进入 VASP 计算对话，规划与执行第一性原理计算",
+    category: "molecular",
+    icon: Cpu,
+    toolName: "",
+    parameters: [],
+    entryType: "chat-mode",
+    chatMode: "vasp",
+  },
   // 分子科学工具
   {
     id: "sam_generator",
@@ -182,29 +257,6 @@ export const tools: ToolConfig[] = [
         description: "返回结果数量",
         required: false,
         default: 10,
-      },
-    ],
-  },
-  {
-    id: "deep_research",
-    name: "深度研究",
-    description: "综合研究分析工具",
-    category: "literature",
-    icon: FileSearch,
-    toolName: "deep_research_tool",
-    parameters: [
-      {
-        name: "query",
-        type: "string",
-        description: "研究主题",
-        required: true,
-      },
-      {
-        name: "max_iterations",
-        type: "number",
-        description: "最大迭代次数",
-        required: false,
-        default: 5,
       },
     ],
   },

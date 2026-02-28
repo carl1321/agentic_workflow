@@ -1229,12 +1229,18 @@ def human_feedback_node(
     # if the plan is accepted, run the following node
     plan_iterations = state["plan_iterations"] if state.get("plan_iterations", 0) else 0
     goto = "research_team"
-    # VASP flow: last plan message is from vasp_planner -> go to vasp_team
-    for m in reversed(state.get("messages", [])):
-        if hasattr(m, "name") and getattr(m, "name", None) == "vasp_planner":
+    # 按「最近一条计划消息」决定下一跳：vasp_planner → vasp_team（plan→vasp_executor→report）；否则 → research_team（深度研究/分子/文献）
+    messages = state.get("messages", [])
+    for m in reversed(messages):
+        if not hasattr(m, "name"):
+            continue
+        name = getattr(m, "name", None)
+        if name == "vasp_planner":
             goto = "vasp_team"
+            logger.info("human_feedback: routing to vasp_team (plan → vasp_executor → report)")
             break
-        if hasattr(m, "name") and getattr(m, "name", None) in ("planner", "molecular_planner", "literature_planner"):
+        if name in ("planner", "molecular_planner", "literature_planner"):
+            logger.info("human_feedback: routing to %s (last plan from %s)", goto, name)
             break
     
     # Handle both Plan object and string

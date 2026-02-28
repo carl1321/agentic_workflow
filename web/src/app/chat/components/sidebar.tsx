@@ -10,7 +10,6 @@ import { Logo } from "~/components/ui/logo";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import { fetchConversations, deleteConversation, type ConversationSummary } from "~/core/api/conversations";
-import { fetchExtensionMenus, type ExtensionMenu } from "~/core/api/chat";
 import { useAuthStore } from "~/core/store/auth-store";
 import type { MenuInfo } from "~/core/api/auth";
 
@@ -28,10 +27,6 @@ interface SidebarProps {
   onSelectChat?: (id: string) => void;
   currentChatId?: string | null;
   onOpenToolbox?: () => void;
-  onOpenKnowledgeBase?: () => void;
-  onOpenWorkflow?: () => void;
-  /** 扩展菜单点击时回调，用于在 URL 未变化时仍能切换视图 */
-  onOpenExtensionMenu?: (view: string) => void;
 }
 
 export interface SidebarRef {
@@ -53,15 +48,11 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
   onSelectChat,
   currentChatId,
   onOpenToolbox,
-  onOpenKnowledgeBase,
-  onOpenWorkflow,
-  onOpenExtensionMenu,
 }, ref) => {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { token, user } = useAuthStore();
-  const [extensionMenus, setExtensionMenus] = useState<ExtensionMenu[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,12 +159,6 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
     loadConversations();
   }, []);
 
-  useEffect(() => {
-    fetchExtensionMenus()
-      .then(setExtensionMenus)
-      .catch(() => setExtensionMenus([]));
-  }, []);
-
   // map to old ChatSession shape for rendering
   const chatHistory: ChatSession[] = useMemo(() => {
     return (conversations || []).map((c) => ({
@@ -264,17 +249,6 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
         </Button>
       </div>
 
-      {/* New Chat Button */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-        <Button
-          onClick={onNewChat}
-          className="w-full bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 text-white"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          新建对话
-        </Button>
-      </div>
-
       {/* Navigation Buttons */}
       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex flex-col gap-2">
         <Button
@@ -285,50 +259,18 @@ export const Sidebar = forwardRef<SidebarRef, SidebarProps>(({
           <Wrench className="h-4 w-4 mr-2" />
           工具箱
         </Button>
-        <Button
-          variant="outline"
-          className="w-full justify-start"
-          onClick={onOpenKnowledgeBase}
-        >
-          <BookOpen className="h-4 w-4 mr-2" />
-          知识库
-        </Button>
-        <Button
-          variant="outline"
-          className="w-full justify-start"
-          onClick={onOpenWorkflow}
-        >
-          <Workflow className="h-4 w-4 mr-2" />
-          工作流
-        </Button>
 
-        {/* 扩展菜单（由后端配置驱动，如我的文库）；VASP 工作流菜单已隐藏 */}
-        {extensionMenus.filter((menu) => menu.code !== "vasp-workflow").map((menu) => {
-          const IconComponent = menu.icon ? iconMap[menu.icon] : Library;
-          const isActive = pathname === "/chat" && searchParams.get("view") === menu.code;
-          return (
-            <Link
-              key={menu.code}
-              href={menu.path}
-              className="block w-full"
-              onClick={() => onOpenExtensionMenu?.(menu.code)}
-            >
-              <Button
-                variant="outline"
-                className={cn(
-                  "w-full justify-start",
-                  isActive && "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-700"
-                )}
-              >
-                {IconComponent ? <IconComponent className="h-4 w-4 mr-2" /> : <Library className="h-4 w-4 mr-2" />}
-                {menu.name}
-              </Button>
-            </Link>
-          );
-        })}
-
-        {/* 动态菜单项 */}
-        {userMenus.map((menu) => {
+        {/* 动态菜单项（排除知识库、SAM分子设计） */}
+        {userMenus
+          .filter(
+            (menu) =>
+              menu.name !== "知识库" &&
+              menu.name !== "SAM分子设计" &&
+              (menu.code || "") !== "knowledge_base" &&
+              (menu.code || "") !== "sam-design" &&
+              (menu.path || "").indexOf("newSam") < 0
+          )
+          .map((menu) => {
           const IconComponent = menu.icon ? iconMap[menu.icon] : FlaskConical;
           const isActive = pathname === menu.path;
           return (

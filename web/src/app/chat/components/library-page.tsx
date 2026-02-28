@@ -27,7 +27,11 @@ interface ZoteroDetail extends ZoteroSearchItem {
   fulltext?: string;
 }
 
-export function LibraryPage() {
+interface LibraryPageProps {
+  onBack?: () => void;
+}
+
+export function LibraryPage({ onBack }: LibraryPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ZoteroSearchItem[]>([]);
@@ -163,8 +167,16 @@ export function LibraryPage() {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 搜索区 */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex gap-2">
+      {/* 顶部：返回 + 搜索区 */}
+      <div className="border-b border-slate-200 dark:border-slate-700">
+        {onBack && (
+          <div className="px-4 py-2">
+            <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300">
+              <span className="text-lg font-medium">&lt;</span>
+            </Button>
+          </div>
+        )}
+      <div className="px-4 py-3 flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -180,6 +192,7 @@ export function LibraryPage() {
           {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
           搜索
         </Button>
+      </div>
       </div>
 
       {error && (

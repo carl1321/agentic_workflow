@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Play, Loader2, CheckCircle2, AlertCircle, Download, Upload, X, FileText, ChevronRight, History, Trash2 } from "lucide-react";
+import { Play, Loader2, CheckCircle2, AlertCircle, Download, Upload, X, FileText, ChevronRight, History, Trash2 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "~/lib/utils";
 import type { ToolConfig, ToolParameter } from "~/core/config/tools";
@@ -2039,9 +2039,9 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
             variant="ghost"
             size="icon"
             onClick={onBack || onClose}
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <span className="text-lg font-medium">&lt;</span>
           </Button>
           <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30">
             <Icon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
