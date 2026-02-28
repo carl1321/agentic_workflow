@@ -1,16 +1,29 @@
 "use client";
 
-import { Search, Play } from "lucide-react";
+import { Search, Play, Workflow, FlaskConical, Library, MessageSquare, Cpu } from "lucide-react";
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "~/lib/utils";
-import { tools, toolsByCategory, type ToolConfig, type ToolCategory } from "~/core/config/tools";
+import { tools, type ToolConfig, type ToolCategory } from "~/core/config/tools";
+
+/** 工具箱内「页面」类入口：工作流、SAM、文库、深度研究、VASP */
+export type ToolboxPageId = "workflow" | "library" | "sam" | "deep_research" | "vasp";
 
 interface ToolboxProps {
   onToolSelect?: (tool: ToolConfig) => void;
+  /** 点击页面类入口时调用（工作流 / 我的文库 / SAM / 深度研究 / VASP） */
+  onOpenPage?: (page: ToolboxPageId) => void;
 }
 
-export function Toolbox({ onToolSelect }: ToolboxProps) {
+const PAGE_ENTRIES: Array<{ id: ToolboxPageId; name: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
+  { id: "workflow", name: "工作流", description: "编排与运行工作流", icon: Workflow },
+  { id: "sam", name: "SAM 分子设计", description: "分子设计与结构优化", icon: FlaskConical },
+  { id: "library", name: "我的文库", description: "管理个人文献与资料", icon: Library },
+  { id: "deep_research", name: "深度研究", description: "基于对话的深度研究", icon: MessageSquare },
+  { id: "vasp", name: "VASP 计算", description: "VASP 相关计算与对话", icon: Cpu },
+];
+
+export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<ToolCategory | "all">("all");
 
@@ -75,6 +88,48 @@ export function Toolbox({ onToolSelect }: ToolboxProps) {
           ))}
         </div>
       </div>
+
+      {/* 页面入口：工作流 / SAM / 我的文库 / 深度研究 / VASP */}
+      {onOpenPage && (
+        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700">
+          <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">置顶功能</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {PAGE_ENTRIES.map((entry) => {
+              const Icon = entry.icon;
+              return (
+                <motion.div
+                  key={entry.id}
+                  whileHover={{ scale: 1.02, y: -2 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="group"
+                >
+                  <div
+                    className={cn(
+                      "p-3 rounded-lg border transition-all cursor-pointer flex flex-col",
+                      "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                      "hover:border-blue-300 dark:hover:border-blue-600 hover:shadow-md",
+                      "active:scale-[0.98]"
+                    )}
+                    onClick={() => onOpenPage(entry.id)}
+                  >
+                    <div className="mb-2">
+                      <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/30 w-fit">
+                        <Icon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                      </div>
+                    </div>
+                    <h3 className="font-semibold text-sm text-slate-900 dark:text-slate-100 line-clamp-1 mb-0.5">
+                      {entry.name}
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                      {entry.description}
+                    </p>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Tools Grid */}
       <div className="flex-1 overflow-y-auto p-6">

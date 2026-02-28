@@ -5,6 +5,7 @@
 
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 
 import { useStore } from "~/core/store";
 import { cn } from "~/lib/utils";
@@ -12,11 +13,12 @@ import { fetchConversation, type ConversationMessage } from "~/core/api/conversa
 import { useAuthStore } from "~/core/store/auth-store";
 import { nanoid } from "nanoid";
 
+import { Button } from "~/components/ui/button";
 import { Sidebar, type SidebarRef } from "./components/sidebar";
 import { MessagesBlock } from "./components/messages-block";
 import { ResearchBlock } from "./components/research-block";
 import { ModelSelector } from "./components/model-selector";
-import { Toolbox } from "./components/toolbox";
+import { Toolbox, type ToolboxPageId } from "./components/toolbox";
 import { KnowledgeBase } from "./components/knowledge-base";
 import { KnowledgeBaseDetail } from "./components/knowledge-base-detail";
 import { ToolExecutor } from "./components/tool-executor";
@@ -493,18 +495,30 @@ export default function Main() {
     setSelectedTool(null);
   };
 
-  const handleOpenKnowledgeBase = () => {
-    router.push("/chat?view=knowledge");
-    setViewMode("knowledge");
-    setSelectedTool(null);
-    setSelectedResource(null);
-  };
-
-  const handleOpenWorkflow = () => {
-    router.push("/chat?view=workflow");
-    setViewMode("workflow");
-    setSelectedTool(null);
-    setSelectedResource(null);
+  /** 工具箱内「页面」入口：工作流 / 我的文库 / SAM / 深度研究 / VASP */
+  const handleOpenPage = (page: ToolboxPageId) => {
+    if (page === "workflow") {
+      router.push("/chat?view=workflow");
+      setViewMode("workflow");
+      setSelectedTool(null);
+      setSelectedResource(null);
+      return;
+    }
+    if (page === "library") {
+      router.push("/chat?view=library");
+      setViewMode("library");
+      setSelectedTool(null);
+      setSelectedResource(null);
+      return;
+    }
+    if (page === "sam") {
+      router.push("/newSam");
+      return;
+    }
+    if (page === "deep_research" || page === "vasp") {
+      handleNewChat();
+      setViewMode("chat");
+    }
   };
 
   const handleWorkflowEdit = (workflowId: string) => {
@@ -548,15 +562,15 @@ export default function Main() {
         onNewChat={handleNewChat}
         onSelectChat={handleSelectChat}
         onOpenToolbox={handleOpenToolbox}
-        onOpenKnowledgeBase={handleOpenKnowledgeBase}
-        onOpenWorkflow={handleOpenWorkflow}
-        onOpenExtensionMenu={(view) => setViewMode(view as ViewMode)}
       />
       
       <div className="flex flex-1 h-full flex-col overflow-visible">
         {/* Model Selector - Top aligned with sidebar header (h-16 = 64px) */}
         {viewMode === "chat" && (
-          <div className="relative flex h-16 items-center px-4 border-b border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-50 overflow-visible">
+          <div className="relative flex h-16 items-center gap-3 px-4 border-b border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm z-50 overflow-visible">
+            <Button variant="ghost" size="icon" onClick={handleOpenToolbox} className="h-8 w-8 flex-shrink-0" title="返回工具箱">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
             <ModelSelector />
           </div>
         )}
@@ -591,7 +605,7 @@ export default function Main() {
 
         {viewMode === "toolbox" && (
           <div className="flex-1 overflow-hidden">
-            <Toolbox onToolSelect={handleToolSelect} />
+            <Toolbox onToolSelect={handleToolSelect} onOpenPage={handleOpenPage} />
           </div>
         )}
 
@@ -618,13 +632,13 @@ export default function Main() {
 
         {viewMode === "workflow" && (
           <div className="flex-1 overflow-hidden">
-            <WorkflowsPage />
+            <WorkflowsPage onBack={handleBackToToolbox} />
           </div>
         )}
 
         {viewMode === "library" && (
           <div className="flex-1 overflow-hidden">
-            <LibraryPage />
+            <LibraryPage onBack={handleBackToToolbox} />
           </div>
         )}
 

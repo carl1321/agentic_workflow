@@ -5,7 +5,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   FlaskConical,
   Microscope,
-  FileSearch,
   FileText,
   Code,
   Globe,
@@ -182,29 +181,6 @@ export const tools: ToolConfig[] = [
         description: "返回结果数量",
         required: false,
         default: 10,
-      },
-    ],
-  },
-  {
-    id: "deep_research",
-    name: "深度研究",
-    description: "综合研究分析工具",
-    category: "literature",
-    icon: FileSearch,
-    toolName: "deep_research_tool",
-    parameters: [
-      {
-        name: "query",
-        type: "string",
-        description: "研究主题",
-        required: true,
-      },
-      {
-        name: "max_iterations",
-        type: "number",
-        description: "最大迭代次数",
-        required: false,
-        default: 5,
       },
     ],
   },

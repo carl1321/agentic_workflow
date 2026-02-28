@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { createWorkflow, deleteWorkflow, listWorkflows, updateWorkflow } from "~/core/api/workflow";
 import type { Workflow } from "~/core/api/workflow";
-import { Trash2, Edit2 } from "lucide-react";
+import { Trash2, Edit2, ArrowLeft } from "lucide-react";
 import { CreateWorkflowDialog } from "~/app/workflows/components/CreateWorkflowDialog";
 import {
   Dialog,
@@ -34,7 +34,12 @@ interface Workflow {
   created_by?: string;
 }
 
-export function WorkflowsPage() {
+interface WorkflowsPageProps {
+  /** 从工具箱进入时传入，用于显示返回工具箱按钮 */
+  onBack?: () => void;
+}
+
+export function WorkflowsPage({ onBack }: WorkflowsPageProps = {}) {
   const router = useRouter();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,7 +149,15 @@ export function WorkflowsPage() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col">
+    <div className="flex h-full w-full flex-col bg-white dark:bg-slate-900">
+      {onBack && (
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+          <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">工作流</span>
+        </div>
+      )}
       <div className="flex-1 overflow-auto">
         <div className="container mx-auto p-6">
           <div className="mb-6 flex items-center justify-between">

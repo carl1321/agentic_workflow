@@ -5,6 +5,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "~/components/ui/button";
 import { SamDesignUnifiedPage } from "../sam-design/components/SamDesignUnifiedPage";
 import { Step1DefineObjective } from "../sam-design/components/Step1DefineObjective";
 import {
@@ -145,15 +147,29 @@ export default function NewSAMDesignPage() {
     );
   }
 
+  const handleBackToToolbox = () => {
+    router.push("/chat?view=toolbox");
+  };
+
   return (
     <>
-      <SamDesignUnifiedPage
-        objective={objective}
-        onObjectiveChange={setObjective}
-        constraints={constraints}
-        onConstraintsChange={setConstraints}
-        onEditObjective={() => setEditObjectiveDialogOpen(true)}
-      />
+      <div className="flex h-screen flex-col bg-slate-50 dark:bg-slate-950">
+        <div className="flex flex-shrink-0 items-center gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+          <Button variant="ghost" size="icon" onClick={handleBackToToolbox} className="h-8 w-8">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">SAM 分子设计</span>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <SamDesignUnifiedPage
+            objective={objective}
+            onObjectiveChange={setObjective}
+            constraints={constraints}
+            onConstraintsChange={setConstraints}
+            onEditObjective={() => setEditObjectiveDialogOpen(true)}
+          />
+        </div>
+      </div>
 
       {/* 编辑研究目标对话框 */}
       <Dialog open={editObjectiveDialogOpen} onOpenChange={setEditObjectiveDialogOpen}>

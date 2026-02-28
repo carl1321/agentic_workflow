@@ -436,7 +436,7 @@ export function SamDesignUnifiedPage({
   };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-50 dark:bg-slate-950">
+    <div className="flex h-full min-h-0 flex-col bg-slate-50 dark:bg-slate-950">
       {/* 顶部信息条 */}
       <div className="flex-shrink-0 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
         <div className="container mx-auto max-w-[1920px] px-4 py-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Loader2, ChevronDown, ChevronRight, FileText, BarChart3 } from "lucide-react";
+import { Search, Loader2, ChevronDown, ChevronRight, FileText, BarChart3, ArrowLeft } from "lucide-react";
 import { useState, useEffect } from "react";
 import { cn } from "~/lib/utils";
 import { executeTool } from "~/core/api/tools";
@@ -27,7 +27,12 @@ interface ZoteroDetail extends ZoteroSearchItem {
   fulltext?: string;
 }
 
-export function LibraryPage() {
+interface LibraryPageProps {
+  /** 从工具箱进入时传入，用于显示返回工具箱按钮 */
+  onBack?: () => void;
+}
+
+export function LibraryPage({ onBack }: LibraryPageProps = {}) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ZoteroSearchItem[]>([]);
@@ -162,7 +167,15 @@ export function LibraryPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col bg-white dark:bg-slate-900">
+      {onBack && (
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+          <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">我的文库</span>
+        </div>
+      )}
       {/* 搜索区 */}
       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex gap-2">
         <div className="relative flex-1">
