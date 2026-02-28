@@ -23,7 +23,8 @@ import numpy as np
 print(f"The result is: {np.mean([1,2,3])}")
 </code>
 </tool_call>", "parameters": {"type": "object", "properties": {}, "required": []}}}
-{"type": "function", "function": {"name": "google_scholar", "description": "Leverage Google Scholar to retrieve relevant information from academic publications. Accepts multiple queries. This tool will also return results from google search", "parameters": {"type": "object", "properties": {"query": {"type": "array", "items": {"type": "string", "description": "The search query."}, "minItems": 1, "description": "The list of search queries for Google Scholar."}}, "required": ["query"]}}}
+{"type": "function", "function": {"name": "web_search", "description": "Search the web for current and general information (e.g. via Tavily). Use for news, overviews, and non-paper sources.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "The search query."}}, "required": ["query"]}}}
+{"type": "function", "function": {"name": "arxiv_search", "description": "Search arXiv for papers. Use SHORT keyword query (2-8 terms), e.g. 'perovskite solar cell' or 'transformer attention'. arXiv is keyword-based, not natural language like Google.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "Short keyword query, 2-8 terms (e.g. 'calcium titanate band gap')."}}, "required": ["query"]}}}
 {"type": "function", "function": {"name": "parse_file", "description": "This is a tool that can be used to parse multiple user uploaded local files such as PDF, DOCX, PPTX, TXT, CSV, XLSX, DOC, ZIP, MP4, MP3.", "parameters": {"type": "object", "properties": {"files": {"type": "array", "items": {"type": "string"}, "description": "The file name of the user uploaded local files to be parsed."}}, "required": ["files"]}}}
 </tools>
 

@@ -4,10 +4,8 @@ import os
 
 from .tool_search import Search
 from .tool_visit import Visit
-from .tool_scholar import Scholar
 from .tool_python import PythonInterpreter
 from src.config.loader import load_yaml_config
-from src.config import SELECTED_SEARCH_ENGINE, SearchEngine
 
 # 从conf.yaml加载配置
 def load_deepresearch_config():
@@ -57,28 +55,12 @@ def visit(url: Union[str, List[str]], goal: str) -> str:
     visit_tool = Visit()
     return visit_tool.call({"url": url, "goal": goal})
 
-@tool
-def _google_scholar_serper(query: List[str]) -> str:
-    """Leverage Google Scholar (Serper API) to retrieve academic publications."""
-    config = load_deepresearch_config()
-    os.environ['SERPER_KEY_ID'] = config['serper_key']
-    scholar_tool = Scholar()
-    return scholar_tool.call({"query": query})
+# 深度研究中的网络与文献检索：统一使用 web_search + arxiv_search，不再使用 google_scholar
+from src.tools.search import get_web_search_tool
+from src.tools.literature_search import get_arxiv_search_tool
 
-
-def _use_tavily_for_scholar() -> bool:
-    """当配置了 TAVILY 且存在 TAVILY_API_KEY 时，使用 Tavily 做学术检索，不再用 Serper/Google。"""
-    config = load_yaml_config("conf.yaml")
-    env = config.get("ENV", {})
-    key = (env.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", "") or "").strip()
-    return SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value and bool(key)
-
-
-if _use_tavily_for_scholar():
-    from src.tools.literature_search import get_google_scholar_tool
-    google_scholar = get_google_scholar_tool(5)
-else:
-    google_scholar = _google_scholar_serper
+_web_search_tool = get_web_search_tool(5)
+_arxiv_search_tool = get_arxiv_search_tool(5)
 
 
 @tool  
@@ -96,14 +78,16 @@ def get_deep_research_tools():
         print("📝 请在 conf.yaml 中配置 DEEPRESEARCH_APIS 部分")
         print("🔄 将使用回退工具...")
         
-        # 返回回退工具
+        # 返回回退工具（web_search + arxiv + crawl + python）
         from src.tools import get_web_search_tool, crawl_tool, python_repl_tool
+        from src.tools.literature_search import get_arxiv_search_tool
         
         return [
-            get_web_search_tool(3),  # 使用现有的web_search工具
-            crawl_tool,              # 使用现有的crawl工具
-            python_repl_tool         # 使用现有的python工具
+            get_web_search_tool(3),
+            get_arxiv_search_tool(3),
+            crawl_tool,
+            python_repl_tool,
         ]
     
     print(f"✅ DeepResearch工具配置完整，使用统一模型: {config['model_name']}")
-    return [search, visit, google_scholar, python_interpreter]
+    return [search, visit, _web_search_tool, _arxiv_search_tool, python_interpreter]

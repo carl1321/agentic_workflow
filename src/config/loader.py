@@ -25,9 +25,26 @@ def load_yaml_config(file_path: str = "conf.yaml") -> Dict[str, Any]:
         config = yaml.safe_load(f) or {}
     processed_config = process_dict(config)
 
+    # 将 conf 中 ENV 的 API Key 同步到 os.environ，供依赖环境变量的库（如 Tavily）使用
+    _inject_env_from_config(processed_config.get("ENV", {}))
+
     # 将处理后的配置存入缓存
     _config_cache[file_path] = processed_config
     return processed_config
+
+
+def _inject_env_from_config(env_config: Dict[str, Any]) -> None:
+    """若未设置环境变量，则用 conf.yaml ENV 中的值注入，便于 Tavily/Brave 等从 os.environ 读 key。"""
+    if not env_config:
+        return
+    if not os.getenv("TAVILY_API_KEY"):
+        val = env_config.get("TAVILY_API_KEY")
+        if val and str(val).strip():
+            os.environ["TAVILY_API_KEY"] = str(val).strip()
+    if not os.getenv("BRAVE_SEARCH_API_KEY"):
+        val = env_config.get("BRAVE_API_KEY")
+        if val and str(val).strip():
+            os.environ["BRAVE_SEARCH_API_KEY"] = str(val).strip()
 
 
 def _get_config_value(key_path: str, default: Any = None) -> Any:

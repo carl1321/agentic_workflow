@@ -16,6 +16,7 @@ from .visualize_molecules_tool import visualize_molecules
 from .literature_search_tool import search_literature
 from .pdf_crawler_tool import fetch_pdf_text
 from .phase_diagram_tool import phase_diagram_tool
+from .ppt_tool import generate_ppt_tool
 
 __all__ = [
     "crawl_tool",
@@ -33,4 +34,5 @@ __all__ = [
     "search_literature",
     "fetch_pdf_text",
     "phase_diagram_tool",
+    "generate_ppt_tool",
 ]

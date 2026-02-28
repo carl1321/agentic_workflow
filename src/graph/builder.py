@@ -28,6 +28,7 @@ from .nodes import (
     reporter_node,
     research_team_node,
     researcher_node,
+    rag_agent_node,
     vasp_agent_node,
     vasp_composite_node,
     vasp_executor_node,
@@ -130,6 +131,7 @@ def _build_base_graph():
     builder.add_node("vasp_executor", vasp_executor_node)
     builder.add_node("vasp_composite", vasp_composite_node)
     builder.add_node("vasp_agent", vasp_agent_node)
+    builder.add_node("rag_agent", rag_agent_node)
     builder.add_node("reporter", reporter_node)
     builder.add_node("common_reporter", common_reporter_node)
     builder.add_node("research_team", research_team_node)

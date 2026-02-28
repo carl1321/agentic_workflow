@@ -201,63 +201,38 @@ def get_literature_search_tool(max_search_results: int, literature_focus: bool =
         return get_web_search_tool(max_search_results)
 
 
-class _GoogleScholarInput(BaseModel):
-    """兼容原有 google_scholar 的入参：支持单条或多条查询。"""
-    query: Union[str, List[str]] = Field(
-        description="The search query or list of queries for academic literature."
-    )
+# arXiv 检索不如谷歌智能，需要短关键词；规范化为 2–8 个核心词，去掉问句与停用词
+_ARXIV_QUERY_MAX_WORDS = 8
+_ARXIV_LEADING_STOP = (
+    "what is ", "what are ", "how to ", "how do ", "how does ", "why ", "when ",
+    "where ", "which ", "who ", "can you ", "could you ", "please ",
+    "什么是", "有哪些", "怎么", "如何", "为什么", "哪些", "请",
+)
 
 
-def get_google_scholar_tool(max_search_results: int):
-    """
-    创建学术文献检索工具。
-    - 当 SEARCH_API=tavily 且已配置 TAVILY_API_KEY 时，使用 Tavily 学术检索（学术域名偏好）。
-    - 否则回退到 Brave Search（需 BRAVE_SEARCH_API_KEY）。
-    """
-    config = load_yaml_config("conf.yaml")
-    env = config.get("ENV", {})
-    tavily_key = env.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY", "")
-
-    if SELECTED_SEARCH_ENGINE == SearchEngine.TAVILY.value and (tavily_key and tavily_key.strip()):
-        logger.info("Using Tavily (TAVILY_API_KEY) for academic literature search")
-
-        def _run(query: Union[str, List[str]]) -> str:
-            queries = [query] if isinstance(query, str) else list(query)
-            if not queries:
-                return "请提供至少一条检索词。"
-            parts = []
-            for q in queries:
-                q = (q or "").strip()
-                if not q:
-                    continue
-                logger.info("google_scholar (Tavily) query: %s", q[:200])
-                part = _tavily_academic_search(q, max_search_results, tavily_key)
-                parts.append(f"## 检索: {q}\n\n{part}")
-            return "\n\n=======\n\n".join(parts) if parts else "未提供有效检索词。"
-
-        return StructuredTool(
-            name="google_scholar",
-            description="Leverage academic search (Tavily) to retrieve relevant information from academic publications. Accepts a single query or a list of queries.",
-            args_schema=_GoogleScholarInput,
-            func=lambda inp: _run(inp.query),
-        )
-    else:
-        logger.info("Using Brave Search as Google Scholar fallback (configure TAVILY_API_KEY and SEARCH_API=tavily for Tavily academic search)")
-        return LoggedBraveSearch(
-            name="google_scholar",
-            search_wrapper=BraveSearchWrapper(
-                api_key=os.getenv("BRAVE_SEARCH_API_KEY", ""),
-                search_kwargs={
-                    "count": max_search_results,
-                    "safesearch": "moderate",
-                },
-            ),
-        )
+def _normalize_arxiv_query(query: str) -> str:
+    """将自然语言/长句规范为 arXiv 适用的短关键词（2–8 词）。"""
+    if not query or not isinstance(query, str):
+        return query or ""
+    s = query.strip().rstrip("?.,;:!").strip()
+    if not s:
+        return query
+    s_lower = s.lower()
+    for lead in _ARXIV_LEADING_STOP:
+        if s_lower.startswith(lead):
+            s = s[len(lead) :].strip()
+            s_lower = s.lower()
+            break
+    # 只保留前 N 个词，避免过长查询
+    words = s.split()
+    if len(words) > _ARXIV_QUERY_MAX_WORDS:
+        s = " ".join(words[: _ARXIV_QUERY_MAX_WORDS])
+    return s.strip() or query.strip()
 
 
 def get_arxiv_search_tool(max_search_results: int):
-    """创建arXiv专用搜索工具"""
-    return LoggedArxivSearch(
+    """创建 arXiv 专用搜索工具；内部会对 query 做短关键词规范化以适配 arXiv 检索。"""
+    base = LoggedArxivSearch(
         name="arxiv_search",
         api_wrapper=ArxivAPIWrapper(
             top_k_results=max_search_results,
@@ -266,33 +241,58 @@ def get_arxiv_search_tool(max_search_results: int):
         ),
     )
 
+    def _get_query(inp) -> str:
+        if isinstance(inp, dict):
+            return (inp.get("query") or "").strip()
+        return (getattr(inp, "query", None) or "").strip()
 
-# 文献调研工具优先级配置
+    def _invoke_sync(inp) -> str:
+        raw = _get_query(inp)
+        q = _normalize_arxiv_query(raw)
+        if q != raw:
+            logger.info("arxiv_search query normalized: %r -> %r", raw[:80], q[:80])
+        return base.invoke({"query": q})
+
+    async def _ainvoke_async(inp) -> str:
+        raw = _get_query(inp)
+        q = _normalize_arxiv_query(raw)
+        if q != raw:
+            logger.info("arxiv_search query normalized: %r -> %r", raw[:80], q[:80])
+        return await base.ainvoke({"query": q})
+
+    class _ArxivInput(BaseModel):
+        query: str = Field(description="Short keyword query (2-8 terms work best), e.g. 'perovskite solar cell efficiency'.")
+
+    return StructuredTool(
+        name="arxiv_search",
+        description="Search arXiv for papers. Use SHORT keyword queries (2-8 terms), e.g. 'perovskite solar cell' or 'transformer attention'. Avoid long sentences or questions; arXiv is keyword-based, not like Google.",
+        args_schema=_ArxivInput,
+        func=_invoke_sync,
+        coroutine=_ainvoke_async,
+    )
+
+
+# 文献调研工具优先级配置（已移除 google_scholar，统一使用 web_search + arxiv_search）
 LITERATURE_RESEARCH_TOOLS = [
-    "google_scholar",  # 优先
+    "web_search",
     "arxiv_search",
-    "literature_search",  # 学术优先的通用搜索
-    "web_search",      # 补充
+    "literature_search",
     "crawl_tool",
-    "python_repl"      # 数据分析
+    "python_repl",
 ]
 
 
 def get_literature_research_tools(max_search_results: int, literature_focus: bool = True):
     """
-    获取文献调研工具列表，按优先级排序
+    获取文献调研工具列表：web_search、arxiv_search，可选 literature_search（学术偏好）。
     """
     tools = []
-    
     if literature_focus:
-        # 学术优先工具
         tools.extend([
-            get_google_scholar_tool(max_search_results),
+            get_web_search_tool(max_search_results),
             get_arxiv_search_tool(max_search_results),
             get_literature_search_tool(max_search_results, literature_focus=True),
         ])
     else:
-        # 标准工具
         tools.append(get_web_search_tool(max_search_results))
-    
     return tools

@@ -37,6 +37,7 @@ dependencies = [
     "langchain-google-genai>=2.0.6",
     "wikipedia>=1.4.0",
     "langchain-tavily<0.3",
+    "python-pptx>=0.6.21",
     "langgraph-checkpoint-mongodb>=0.1.4",
     "langgraph-checkpoint-postgres==2.0.21",
     "pymilvus>=2.3.0",

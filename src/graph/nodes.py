@@ -34,9 +34,8 @@ from src.tools import (
     search_literature,
     fetch_pdf_text,
 )
-from src.tools.literature_search import get_literature_research_tools
+from src.tools.literature_search import get_literature_research_tools, get_arxiv_search_tool
 from src.tools.search import LoggedTavilySearch
-from src.tools.deep_research import google_scholar
 from src.utils.context_manager import ContextManager
 from src.utils.json_utils import repair_json_output
 
@@ -1274,6 +1273,43 @@ def coordinator_node(
     logger.info("Coordinator talking.")
     configurable = Configuration.from_runnable_config(config)
 
+    # 如果会话启用了知识库（前端通过 resources 传入），则直接走 RAG 问答模式，
+    # 不再进入 planner 流程，而是交给 rag_agent_node。
+    resources = configurable.resources or state.get("resources", [])
+    if resources:
+        logger.info("Knowledge base resources detected, routing directly to rag_agent")
+        messages = state.get("messages", [])
+        research_topic = state.get("research_topic", "")
+        locale = state.get("locale", "en-US")
+
+        # 尝试用最后一条用户消息作为问题标题，并根据内容粗略识别语言（中/英）
+        last_user = None
+        for m in reversed(messages):
+            if isinstance(m, HumanMessage) or (isinstance(m, dict) and m.get("role") == "user"):
+                last_user = m
+                break
+        if last_user:
+            content = last_user.content if hasattr(last_user, "content") else last_user.get("content", "")
+            text = (content or "")[:200]
+            if not research_topic:
+                research_topic = text
+            # 简单语言检测：包含中文字符则使用 zh-CN，否则保持默认
+            try:
+                if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+                    locale = "zh-CN"
+            except Exception:
+                pass
+        return Command(
+            update={
+                "messages": messages,
+                "locale": locale,
+                "research_topic": research_topic,
+                "resources": resources,
+                "goto": "rag_agent",
+            },
+            goto="rag_agent",
+        )
+
     # Check if clarification is enabled
     enable_clarification = state.get("enable_clarification", False)
 
@@ -1639,6 +1675,67 @@ async def vasp_agent_node(state: State, config: RunnableConfig):
             "observations": [],
         },
         goto="common_reporter",
+    )
+
+
+async def rag_agent_node(
+    state: State, config: RunnableConfig
+) -> Command[Literal["__end__"]]:
+    """
+    Single-turn RAG QA agent（直接面向用户流式输出）.
+
+    当会话启用了知识库（state.resources 非空）时，优先、强制使用本地知识库检索
+    来回答用户问题，并由 `rag_agent` 自己直接给出最终回答（不再经过 common_reporter 二次整理），
+    以便前端可以看到完整的流式输出体验。
+    当前实现：只挂载 local_search_tool；仅在完全没有 retriever 时才兜底使用 web_search。
+    """
+    logger.info("RAG agent node running")
+    configurable = Configuration.from_runnable_config(config)
+
+    tools = []
+
+    # 1. 知识库检索工具（RAGFlow / 其他 provider）——RAG 模式的核心，必须优先使用
+    retriever_tool = get_retriever_tool(state.get("resources", []))
+    if retriever_tool:
+        tools.append(retriever_tool)
+        logger.info("RAG agent: added local_search_tool with resources")
+    else:
+        # 理论上启用 @知识库 时一定会有 retriever；这里做兜底，避免前端挂了知识库但后端未正确配置时完全报错
+        try:
+            web_tool = get_web_search_tool(configurable.max_search_results)
+            tools.append(web_tool)
+            logger.warning(
+                "RAG agent: no retriever found for resources, falling back to web_search only"
+            )
+        except Exception as e:
+            logger.error("RAG agent: failed to init fallback web_search tool: %s", e)
+
+    # 创建基于 researcher 提示词的 ReAct agent（只用检索类工具）
+    llm_token_limit = get_llm_token_limit_by_type(AGENT_LLM_MAP["researcher"])
+    pre_model_hook = partial(ContextManager(llm_token_limit, 3).compress_messages)
+    selected_model = configurable.selected_model if configurable else None
+
+    agent = create_agent(
+        "rag_agent",
+        "researcher",
+        tools,
+        "researcher",
+        pre_model_hook,
+        selected_model,
+    )
+
+    out = await agent.ainvoke(
+        {"messages": state["messages"]},
+        config=config,
+    )
+    new_messages = out.get("messages", state["messages"])
+
+    # 直接更新消息并结束流程，由 rag_agent 的回答作为最终输出（支持流式）
+    return Command(
+        update={
+            "messages": new_messages,
+        },
+        goto="__end__",
     )
 
 
@@ -2851,7 +2948,7 @@ async def _execute_deep_research(
     
     logger.info(f"Executing step: {current_step.title}")
     
-    # 构建新的工具集：knowledge_base, google_scholar, fetch_pdf_text
+    # 构建新的工具集：knowledge_base, web_search, arxiv_search, fetch_pdf_text
     tools = []
     
     # 1. 知识库工具（如果存在 resources，优先级最高）
@@ -2860,12 +2957,13 @@ async def _execute_deep_research(
         tools.append(retriever_tool)
         logger.info("Added knowledge base tool (retriever_tool)")
     
-    # 2. Google Scholar 工具（学术文献搜索）
+    # 2. 网络搜索与 arXiv 文献检索（已完全替代 google_scholar）
     try:
-        tools.append(google_scholar)
-        logger.info("Added google_scholar tool")
+        tools.append(get_web_search_tool(configurable.max_search_results))
+        tools.append(get_arxiv_search_tool(configurable.max_search_results))
+        logger.info("Added web_search and arxiv_search tools")
     except Exception as e:
-        logger.warning(f"Failed to add google_scholar tool: {e}")
+        logger.warning("Failed to add web_search/arxiv_search tools: %s", e)
     
     # 3. PDF 提取工具
     tools.append(fetch_pdf_text)

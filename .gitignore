@@ -222,8 +222,10 @@ cython_debug/
 web/src/core/api/resolve-service-url.ts
 temp/
 web/temp/
-smiles_data.csv
 # ============================================
 # LLM Cache
 # ============================================
 llm_cache/
+band_workflow_out/
+skills/vaspilot-skill/band_workflow_out/
+**/smiles_data.csv

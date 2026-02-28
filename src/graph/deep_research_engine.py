@@ -54,9 +54,9 @@ class WorkspaceManager:
             completed_steps = step_context.get('completed_steps', [])
             
             # 根据研究深度过滤工具
-            # 新工具集：knowledge_base (local_search_tool), google_scholar, pdf_crawler (fetch_pdf_text), python_repl_tool
-            tool_names_simple = ['local_search_tool', 'google_scholar', 'python_repl_tool']
-            tool_names_deep = ['local_search_tool', 'google_scholar', 'pdf_crawler', 'python_repl_tool']
+            # 工具集：knowledge_base, web_search, arxiv_search, pdf_crawler, python_repl_tool（已移除 google_scholar）
+            tool_names_simple = ['local_search_tool', 'web_search', 'arxiv_search', 'python_repl_tool']
+            tool_names_deep = ['local_search_tool', 'web_search', 'arxiv_search', 'pdf_crawler', 'python_repl_tool']
             
             if research_depth == 'simple':
                 available_tools = [t for t in self.tools if t.name in tool_names_simple]
@@ -78,7 +78,7 @@ class WorkspaceManager:
                 knowledge_base_priority = """
 **CRITICAL: Knowledge Base Priority**
 - If knowledge base (local_search_tool) is available, you MUST use it FIRST before any other search tools
-- Only use google_scholar or pdf_crawler if knowledge base doesn't provide sufficient information
+- Only use web_search, arxiv_search or pdf_crawler if knowledge base doesn't provide sufficient information
 - The knowledge base contains curated, high-quality information that should be prioritized
 """
             
@@ -121,7 +121,11 @@ Explain your reasoning, what information you need, which tools to use...
 </tool_call>
 OR
 <tool_call>
-{{"name": "google_scholar", "arguments": {{"query": ["keyword1 keyword2", "keyword3"]}}}}
+{{"name": "web_search", "arguments": {{"query": "keyword1 keyword2"}}}}
+</tool_call>
+OR
+<tool_call>
+{{"name": "arxiv_search", "arguments": {{"query": "keyword1 keyword2"}}}}  (use 2-8 short keywords)
 </tool_call>
 OR
 <tool_call>
@@ -141,10 +145,12 @@ OR
 
 # Tool Usage Guidelines
 
-{("- **local_search_tool** (Knowledge Base): Search curated knowledge base FIRST if available\n  - Format: {{\"keywords\": \"search keywords\"}}\n  - Example: {{\"keywords\": \"钙钛矿 NIP 结构\"}}\n  - Priority: Use this FIRST before any other search tools\n" if has_knowledge_base else "")}- **google_scholar**: Search academic literature and research papers
-  - Format: {{"query": ["keyword1 keyword2", "keyword3 keyword4"]}}
-  - Example: {{"query": ["钙钛矿 NIP 结构 性能", "钙钛矿 PIN 结构 对比"]}}
-  - Use when: Knowledge base doesn't provide sufficient information or for academic papers
+{("- **local_search_tool** (Knowledge Base): Search curated knowledge base FIRST if available\n  - Format: {{\"keywords\": \"search keywords\"}}\n  - Example: {{\"keywords\": \"钙钛矿 NIP 结构\"}}\n  - Priority: Use this FIRST before any other search tools\n" if has_knowledge_base else "")}- **web_search**: General web search (Tavily etc.)
+  - Format: {{"query": "keyword1 keyword2"}}
+  - Use when: Need current information or general web sources
+- **arxiv_search**: Search arXiv for papers (keyword-based, not like Google)
+  - Format: {{"query": "keyword1 keyword2"}} — use 2-8 short terms, e.g. "perovskite solar cell efficiency"
+  - Avoid long sentences or questions; use concise keywords only
 {"- **pdf_crawler**: Extract text content from PDF documents\n  - Format: {{\"url\": \"https://example.com/paper.pdf\"}}\n  - Example: {{\"url\": \"https://arxiv.org/pdf/1234.5678.pdf\"}}\n  - Use when: You need to extract detailed content from PDF documents\n" if research_depth == "deep" else ""}- **python_repl_tool**: Data analysis and calculations (REQUIRED for deep research)
   - Format: {{"code": "python code here"}}
   - Use when: You need to perform calculations, data analysis, or process research data
@@ -155,17 +161,17 @@ OR
 You can make multiple tool calls in sequence:
 
 Round 1:
-<think>Need to search for information. {"Checking knowledge base first..." if has_knowledge_base else "Searching academic literature..."}</think>
+<think>Need to search for information. {"Checking knowledge base first..." if has_knowledge_base else "Searching web / arXiv..."}</think>
 <tool_call>
-{("{{\"name\": \"local_search_tool\", \"arguments\": {{\"keywords\": \"keyword1 keyword2\"}}}}" if has_knowledge_base else "{{\"name\": \"google_scholar\", \"arguments\": {{\"query\": [\"keyword1\", \"keyword2\"]}}}}")}
+{("{{\"name\": \"local_search_tool\", \"arguments\": {{\"keywords\": \"keyword1 keyword2\"}}}}" if has_knowledge_base else "{{\"name\": \"web_search\", \"arguments\": {{\"query\": \"keyword1 keyword2\"}}}}")}
 </tool_call>
 
 [Tool response will be provided]
 
 Round 2:
-<think>{"Knowledge base provided some info, but need more academic sources..." if has_knowledge_base else "Found promising papers, need to extract detailed content..."}</think>
+<think>{"Knowledge base provided some info, but need more sources..." if has_knowledge_base else "Found promising papers, need to extract detailed content..."}</think>
 <tool_call>
-{"{{\"name\": \"google_scholar\", \"arguments\": {{\"query\": [\"keyword3\", \"keyword4\"]}}}}" if has_knowledge_base else "{{\"name\": \"pdf_crawler\", \"arguments\": {{\"url\": \"https://arxiv.org/pdf/1234.5678.pdf\"}}}}"}
+{"{{\"name\": \"web_search\", \"arguments\": {{\"query\": \"keyword3 keyword4\"}}}}" if has_knowledge_base else "{{\"name\": \"pdf_crawler\", \"arguments\": {{\"url\": \"https://arxiv.org/pdf/1234.5678.pdf\"}}}}"}
 </tool_call>
 
 [Tool response will be provided]
@@ -192,12 +198,12 @@ Description: {step_info.get('description', '')}
 - {"Focus on gathering information" if not is_final_step else "Provide comprehensive final answer with <answer> tag"}
 
 **Research Strategy**:
-{"- **PRIORITY 1**: Use `local_search_tool` (knowledge base) FIRST if available - it contains curated, high-quality information\n" if has_knowledge_base else ""}- Use `google_scholar` for academic literature and research papers
+{"- **PRIORITY 1**: Use `local_search_tool` (knowledge base) FIRST if available - it contains curated, high-quality information\n" if has_knowledge_base else ""}- Use `web_search` for general web; use `arxiv_search` with short keywords (2-8 terms) for papers
 {"- Use `pdf_crawler` to extract detailed content from PDF documents (deep research mode only)\n" if research_depth == "deep" else ""}- Use `python_repl_tool` for data analysis and calculations
 
 **Smart Tool Selection**:
-{"- **If knowledge base is available**: Always start with `local_search_tool`, then use `google_scholar` if more information is needed\n" if has_knowledge_base else ""}- For simple concepts/definitions: {"`local_search_tool` (if available) or " if has_knowledge_base else ""}`google_scholar`
-- For detailed academic research: {"`local_search_tool` (if available) + " if has_knowledge_base else ""}`google_scholar`{" + `pdf_crawler` for PDF extraction" if research_depth == "deep" else ""}
+{"- **If knowledge base is available**: Always start with `local_search_tool`, then use `web_search` or `arxiv_search` if more information is needed\n" if has_knowledge_base else ""}- For simple concepts/definitions: {"`local_search_tool` (if available) or " if has_knowledge_base else ""}`web_search` or `arxiv_search`
+- For detailed academic research: {"`local_search_tool` (if available) + " if has_knowledge_base else ""}`web_search` + `arxiv_search`{" + `pdf_crawler` for PDF extraction" if research_depth == "deep" else ""}
 - For data analysis: `python_repl_tool`
 
 **Information Sufficiency Judgment**:
@@ -485,7 +491,7 @@ class IterativeResearchEngine:
                             results.append("[Python Tool Error]: Formatting error.")
                             continue
                 else:
-                    # 解析JSON工具调用（支持所有其他工具：local_search_tool, google_scholar, pdf_crawler）
+                    # 解析JSON工具调用（支持：local_search_tool, web_search, arxiv_search, pdf_crawler）
                     tool_call = json.loads(repair_json_output(tool_call_str))
                     tool_name = tool_call.get('name')
                     tool_args = tool_call.get('arguments', {})

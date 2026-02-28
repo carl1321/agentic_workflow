@@ -107,6 +107,7 @@ from src.tools import (
     crawl_tool,
     data_extraction_tool,
     generate_sam_molecules,
+    generate_ppt_tool,
     molecular_analysis_tool,
     predict_molecular_properties,
     prompt_optimizer_tool,
@@ -145,6 +146,7 @@ TOOL_REGISTRY = {
     "tts_tool": tts_tool,
     "data_extraction_tool": data_extraction_tool,
     "phase_diagram_tool": phase_diagram_tool,
+    "generate_ppt_tool": generate_ppt_tool,
     # Actual tool.name mappings (for compatibility)
     "predict_molecular_properties": predict_molecular_properties,
     "visualize_molecules": visualize_molecules,
@@ -1315,21 +1317,27 @@ async def _astream_workflow_generator(
                         append=is_continuation,  # Append if continuation, replace if new
                     )
                 
-                # Verify after update
+                # Verify after update（仅做轻量校验，避免 chunk 合并时误报）
                 if is_continuation and existing_db_count > 0:
                     try:
                         updated_conv = get_conversation_by_thread_id(thread_id, None, True)
                         if updated_conv:
                             updated_messages = updated_conv.get("messages", [])
                             updated_count = len(updated_messages) if isinstance(updated_messages, list) else 0
+                            # 注意：由于我们在持久化前会对同一 id 的流式 chunk 做合并，
+                            # updated_count 变小在多数情况下是**预期行为**，不能简单视为消息丢失。
                             if updated_count < existing_db_count:
-                                logger.error(
-                                    f"CRITICAL: Message count decreased after final update! "
-                                    f"thread_id={thread_id}, before={existing_db_count}, after={updated_count}. "
-                                    f"Messages were lost!"
+                                logger.warning(
+                                    "Message count decreased after final update "
+                                    "(likely due to chunk merging by id). "
+                                    f"thread_id={thread_id}, before={existing_db_count}, after={updated_count}."
                                 )
                             else:
-                                logger.info(f"Final update verified: thread_id={thread_id}, before={existing_db_count}, after={updated_count}, added={updated_count - existing_db_count}")
+                                logger.info(
+                                    "Final update verified: "
+                                    f"thread_id={thread_id}, before={existing_db_count}, "
+                                    f"after={updated_count}, added={updated_count - existing_db_count}"
+                                )
                     except Exception as e:
                         logger.warning(f"Failed to verify messages after final update: {e}")
                 logger.info(f"Conversation updated successfully: thread_id={thread_id}")
@@ -1799,7 +1807,14 @@ async def get_workspace_file(path: str = Query(..., description="Relative path u
     if not full.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     suffix = full.suffix.lower()
-    media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".svg": "image/svg+xml"}
+    media_types = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    }
     media_type = media_types.get(suffix, "application/octet-stream")
     return FileResponse(path=str(full), media_type=media_type, filename=full.name)
 

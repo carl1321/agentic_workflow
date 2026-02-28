@@ -47,8 +47,8 @@ Either:
 
 ## Tool Usage Priority (for literature research)
 
-1. **google_scholar** - For academic papers and scholarly sources
-2. **web_search** - For current information and general web sources  
+1. **web_search** - For current information and general web sources
+2. **arxiv_search** - For arXiv papers; use short keyword queries (2-8 terms), not long sentences  
 3. **visit** - For detailed webpage analysis
 4. **parse_file** - For document analysis
 5. **PythonInterpreter** - For data analysis and calculations

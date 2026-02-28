@@ -65,7 +65,13 @@ if __name__ == "__main__":
         # You can override this by setting LANGGRAPH_CHECKPOINT_DB_URL in conf.yaml or environment variable
         db_url = env_config.get("LANGGRAPH_CHECKPOINT_DB_URL", "postgresql://localhost:5432/agenticworkflow")
         os.environ["LANGGRAPH_CHECKPOINT_DB_URL"] = db_url
-    
+
+    # 搜索引擎等工具从 os.environ 读取 API Key，将 conf.yaml ENV 中的 key 注入（若尚未设置）
+    if not os.getenv("TAVILY_API_KEY") and env_config.get("TAVILY_API_KEY"):
+        os.environ["TAVILY_API_KEY"] = str(env_config["TAVILY_API_KEY"]).strip()
+    if not os.getenv("BRAVE_SEARCH_API_KEY") and env_config.get("BRAVE_API_KEY"):
+        os.environ["BRAVE_SEARCH_API_KEY"] = str(env_config["BRAVE_API_KEY"]).strip()
+
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Run the AgenticWorkflow API server")
     parser.add_argument(

@@ -74,6 +74,11 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
   const [currentRecordId, setCurrentRecordId] = useState<string | null>(null); // Deprecated, use currentTaskId
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // PPT generator: step 1=输入主题, 2=确认大纲, 3=下载
+  const [pptStep, setPptStep] = useState<1 | 2 | 3>(1);
+  const [outlineContent, setOutlineContent] = useState<string>("");
+  const [pptDownloadUrl, setPptDownloadUrl] = useState<string | null>(null);
   
   // Initialize extraction type from params
   useEffect(() => {
@@ -1037,6 +1042,19 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
       const currentType = (params["extraction_type"] as string) || extractionType || "prompt_extraction";
       const currentStep = extractionStep || (params["extraction_step"] as number) || 1;
 
+      // PPT generator: set topic/outline/action by step
+      if (tool.id === "ppt_generator") {
+        if (pptStep === 1) {
+          executeParams["topic"] = (params["topic"] as string) || "";
+          executeParams["outline"] = "";
+          executeParams["action"] = "outline";
+        } else if (pptStep === 2) {
+          executeParams["topic"] = "";
+          executeParams["outline"] = outlineContent;
+          executeParams["action"] = "generate";
+        }
+      }
+
       // For data_extraction tool, convert uploaded file to base64
       if (tool.id === "data_extraction" && uploadedFile) {
         try {
@@ -1128,7 +1146,32 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
         // 使用工具执行API
         resultText = await executeTool(tool.toolName, executeParams);
       }
-      
+
+      // Handle PPT generator results
+      if (tool.id === "ppt_generator") {
+        try {
+          const data = JSON.parse(resultText) as { outline?: string; error?: string; download_url?: string; filename?: string };
+          if (data.error) {
+            setError(data.error);
+            setResult(resultText);
+          } else if (pptStep === 1 && data.outline !== undefined) {
+            setOutlineContent(data.outline);
+            setPptStep(2);
+            setResult(resultText);
+            setError(null);
+          } else if (pptStep === 2 && data.download_url) {
+            setPptDownloadUrl(data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`);
+            setPptStep(3);
+            setResult(resultText);
+            setError(null);
+          } else {
+            setResult(resultText);
+          }
+        } catch {
+          setResult(resultText);
+        }
+      }
+
       // Handle material extraction results
       if (tool.id === "data_extraction" && currentType === "material_extraction") {
         try {
@@ -2637,8 +2680,8 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
           )}
 
 
-          {/* Parameters - show pdf_file, model_name for prompt extraction mode */}
-          {!(tool.id === "data_extraction" && extractionType === "material_extraction") && (
+          {/* Parameters - hide for data_extraction material_extraction and ppt_generator (custom UI) */}
+          {!(tool.id === "data_extraction" && extractionType === "material_extraction") && tool.id !== "ppt_generator" && (
             <div className="space-y-5 mb-6">
               {tool.parameters
                 .filter((param) => {
@@ -2679,8 +2722,8 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
             </div>
           )}
 
-          {/* Execute Button - Only show for prompt extraction mode */}
-          {!(tool.id === "data_extraction" && extractionType === "material_extraction") && (
+          {/* Execute Button - hide for data_extraction material_extraction and ppt_generator (custom buttons) */}
+          {!(tool.id === "data_extraction" && extractionType === "material_extraction") && tool.id !== "ppt_generator" && (
           <div className="flex items-center justify-end gap-2 mb-6">
             <Button
               onClick={handleExecute}
@@ -2700,6 +2743,102 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
               )}
             </Button>
           </div>
+          )}
+
+          {/* PPT Generator: step 1 = 输入主题, step 2 = 确认大纲, step 3 = 下载 */}
+          {tool.id === "ppt_generator" && (
+            <div className="space-y-5 mb-6">
+              {pptStep === 1 && (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                      一句话主题
+                    </label>
+                    <input
+                      type="text"
+                      value={(params["topic"] as string) || ""}
+                      onChange={(e) => setParams((prev) => ({ ...prev, topic: e.target.value }))}
+                      placeholder="例如：钙钛矿太阳能电池研究进展"
+                      className={cn(
+                        "w-full px-3 py-2 text-sm border rounded-lg",
+                        "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                        "text-slate-900 dark:text-slate-100",
+                        "focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      )}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleExecute}
+                    disabled={executing || !((params["topic"] as string)?.trim())}
+                    className="bg-blue-500 hover:bg-blue-600 text-white"
+                  >
+                    {executing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        生成中...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        生成大纲
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
+              {pptStep === 2 && (
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2">
+                      大纲（可编辑后再生成 PPT）
+                    </label>
+                    <textarea
+                      value={outlineContent}
+                      onChange={(e) => setOutlineContent(e.target.value)}
+                      rows={14}
+                      className={cn(
+                        "w-full px-3 py-2 text-sm border rounded-lg font-mono",
+                        "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                        "text-slate-900 dark:text-slate-100",
+                        "focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      )}
+                    />
+                  </div>
+                  <Button
+                    onClick={handleExecute}
+                    disabled={executing || !outlineContent.trim()}
+                    className="bg-blue-500 hover:bg-blue-600 text-white"
+                  >
+                    {executing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        生成中...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-2" />
+                        确认生成 PPT
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
+              {pptStep === 3 && pptDownloadUrl && (
+                <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800">
+                  <p className="text-sm font-semibold text-green-700 dark:text-green-400 mb-2">PPT 已生成</p>
+                  <a
+                    href={pptDownloadUrl}
+                    download
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    <Download className="h-4 w-4" />
+                    下载 PPT
+                  </a>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Material Extraction Step 3: Result Display */}
