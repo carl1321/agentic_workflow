@@ -11,16 +11,46 @@ import logging
 import os
 import signal
 import sys
+from pathlib import Path
 
 import uvicorn
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-
+# 日志格式（后续若指定日志目录会复用）
+_LOG_FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+logging.basicConfig(level=logging.INFO, format=_LOG_FMT)
 logger = logging.getLogger(__name__)
+
+
+def _setup_log_file(log_dir: str) -> None:
+    """将根 logger 的日志同时写入指定目录下的 server.log。无权限时回退到当前工作目录下的同名目录。"""
+    if not log_dir or not str(log_dir).strip():
+        return
+    log_path = Path(log_dir).resolve()
+    try:
+        log_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # 无权限（如 /logs）时回退到当前工作目录下的同名目录，如 ./logs
+        fallback = Path.cwd() / Path(log_dir).name
+        if fallback != log_path:
+            try:
+                fallback.mkdir(parents=True, exist_ok=True)
+                log_path = fallback
+                logger.info("Using log directory under cwd: %s", log_path)
+            except OSError:
+                logger.warning("Cannot create log directory %s or %s: %s. Logging to console only.", log_path, fallback, e)
+                return
+        else:
+            logger.warning("Cannot create log directory %s: %s. Logging to console only.", log_path, e)
+            return
+    log_file = log_path / "server.log"
+    try:
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(_LOG_FMT))
+        logging.getLogger().addHandler(fh)
+        logger.info("Logging to file: %s", log_file)
+    except OSError as e:
+        logger.warning("Cannot open log file %s: %s. Logging to console only.", log_file, e)
 
 # To ensure compatibility with Windows event loop issues when using Uvicorn and Asyncio Checkpointer,
 # This is necessary because some libraries expect a selector-based event loop.
@@ -98,8 +128,19 @@ if __name__ == "__main__":
         choices=["debug", "info", "warning", "error", "critical"],
         help="Log level (default: info)",
     )
+    parser.add_argument(
+        "--log-dir",
+        type=str,
+        default=None,
+        help="Directory to write server.log (overrides conf.yaml ENV.LOG_DIR)",
+    )
 
     args = parser.parse_args()
+
+    # 日志写入目录：命令行 --log-dir > 环境变量 LOG_DIR > conf.yaml ENV.LOG_DIR
+    log_dir = args.log_dir or os.getenv("LOG_DIR") or (env_config.get("LOG_DIR") if isinstance(env_config.get("LOG_DIR"), str) else None)
+    if log_dir:
+        _setup_log_file(log_dir)
 
     # Determine reload setting
     reload = False

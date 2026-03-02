@@ -1100,11 +1100,21 @@ def create_release(
         发布ID
     """
     version_col = _get_release_version_column(conn)
-    # 兼容 INTEGER 与 VARCHAR：用 ::text 避免类型不匹配
     with conn.cursor() as cursor:
+        # 先锁住该工作流行，避免并发发布得到相同 version（重复键）
+        cursor.execute(
+            "SELECT id FROM workflows WHERE id = %s FOR UPDATE",
+            (workflow_id,),
+        )
+        if cursor.fetchone() is None:
+            raise ValueError(f"Workflow not found: {workflow_id}")
+        # 按数值取最大版本号，避免 VARCHAR 下 MAX 按字典序导致 '9' > '10'
         cursor.execute(
             f"""
-            SELECT (COALESCE(MAX({version_col})::text, '0')::int + 1) AS next_version
+            SELECT (COALESCE(MAX(
+                CASE WHEN ({version_col}::text) ~ '^[0-9]+$'
+                THEN (({version_col}::text)::int) END
+            ), 0) + 1) AS next_version
             FROM workflow_releases
             WHERE workflow_id = %s
             """,

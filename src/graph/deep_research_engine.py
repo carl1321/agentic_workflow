@@ -148,9 +148,9 @@ OR
 {("- **local_search_tool** (Knowledge Base): Search curated knowledge base FIRST if available\n  - Format: {{\"keywords\": \"search keywords\"}}\n  - Example: {{\"keywords\": \"钙钛矿 NIP 结构\"}}\n  - Priority: Use this FIRST before any other search tools\n" if has_knowledge_base else "")}- **web_search**: General web search (Tavily etc.)
   - Format: {{"query": "keyword1 keyword2"}}
   - Use when: Need current information or general web sources
-- **arxiv_search**: Search arXiv for papers (keyword-based, not like Google)
-  - Format: {{"query": "keyword1 keyword2"}} — use 2-8 short terms, e.g. "perovskite solar cell efficiency"
-  - Avoid long sentences or questions; use concise keywords only
+- **arxiv_search**: Search arXiv for papers. **English only**, short keywords (2-8 words).
+  - Format: {{"query": "word1 word2 word3"}} — e.g. "perovskite solar cell efficiency stability"
+  - Do NOT use Chinese. Do NOT use long space-separated phrases. Use English keywords only, like "recent progress solar cells".
 {"- **pdf_crawler**: Extract text content from PDF documents\n  - Format: {{\"url\": \"https://example.com/paper.pdf\"}}\n  - Example: {{\"url\": \"https://arxiv.org/pdf/1234.5678.pdf\"}}\n  - Use when: You need to extract detailed content from PDF documents\n" if research_depth == "deep" else ""}- **python_repl_tool**: Data analysis and calculations (REQUIRED for deep research)
   - Format: {{"code": "python code here"}}
   - Use when: You need to perform calculations, data analysis, or process research data

@@ -1,6 +1,7 @@
 # Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 # SPDX-License-Identifier: MIT
 
+import asyncio
 import logging
 import os
 from typing import List, Optional, Union
@@ -201,17 +202,55 @@ def get_literature_search_tool(max_search_results: int, literature_focus: bool =
         return get_web_search_tool(max_search_results)
 
 
-# arXiv 检索不如谷歌智能，需要短关键词；规范化为 2–8 个核心词，去掉问句与停用词
+# arXiv 检索仅支持英文简短关键词（2–8 词），不支持中文或长句；需先转英文再查
 _ARXIV_QUERY_MAX_WORDS = 8
 _ARXIV_LEADING_STOP = (
     "what is ", "what are ", "how to ", "how do ", "how does ", "why ", "when ",
     "where ", "which ", "who ", "can you ", "could you ", "please ",
     "什么是", "有哪些", "怎么", "如何", "为什么", "哪些", "请",
 )
+_ARXIV_TO_ENGLISH_PROMPT = """Convert the following search topic into 2-8 English keywords suitable for arXiv paper search. Output ONLY the keywords on one line (e.g. "perovskite solar cell efficiency stability"), no explanation, no quotes. arXiv does NOT support Chinese or long sentences."""
+
+
+def _has_cjk(text: str) -> bool:
+    """判断是否包含中日韩字符（arXiv 不支持，必须转成英文关键词）。"""
+    if not text:
+        return False
+    for ch in text:
+        if "\u4e00" <= ch <= "\u9fff" or "\u3000" <= ch <= "\u303f":
+            return True
+    return False
+
+
+def _query_to_english_keywords(normalized_query: str) -> str:
+    """将查询转为英文简短术语（2–8 词），失败时返回原串。"""
+    if not normalized_query or not _has_cjk(normalized_query):
+        return normalized_query
+    try:
+        from langchain_core.messages import HumanMessage
+        from src.llms.llm import get_llm_by_type
+
+        llm = get_llm_by_type("basic")
+        prompt = _ARXIV_TO_ENGLISH_PROMPT + "\n\nTopic: " + (normalized_query.strip()[:500])
+        out = llm.invoke([HumanMessage(content=prompt)])
+        text = (out.content or "").strip()
+        if not text:
+            return normalized_query
+        first_line = text.split("\n")[0].strip()
+        words = []
+        for w in first_line.split():
+            clean = "".join(c for c in w if c.isalnum() or c in ".-")
+            if clean:
+                words.append(clean)
+        result = " ".join(words[:_ARXIV_QUERY_MAX_WORDS])
+        return result if result else normalized_query
+    except Exception as e:
+        logger.warning("arxiv_query to English keywords failed, using original: %s", e)
+        return normalized_query
 
 
 def _normalize_arxiv_query(query: str) -> str:
-    """将自然语言/长句规范为 arXiv 适用的短关键词（2–8 词）。"""
+    """规范为 arXiv 适用的短关键词（2–8 词）。arXiv 仅支持英文简短关键词，中文或长句会先转成英文。"""
     if not query or not isinstance(query, str):
         return query or ""
     s = query.strip().rstrip("?.,;:!").strip()
@@ -223,11 +262,46 @@ def _normalize_arxiv_query(query: str) -> str:
             s = s[len(lead) :].strip()
             s_lower = s.lower()
             break
-    # 只保留前 N 个词，避免过长查询
     words = s.split()
     if len(words) > _ARXIV_QUERY_MAX_WORDS:
         s = " ".join(words[: _ARXIV_QUERY_MAX_WORDS])
-    return s.strip() or query.strip()
+    s = s.strip() or query.strip()
+    # 中文或含 CJK 时必须转成英文简短关键词，否则 arXiv 无法检索
+    if _has_cjk(s):
+        en = _query_to_english_keywords(s)
+        if en and en != s:
+            logger.info("arxiv_search query -> English: %r -> %r", s[:80], en[:80])
+            return en
+    return s
+
+
+def _arxiv_search_with_retriever(query: str, top_k: int) -> str:
+    """使用 ArxivRetriever 执行检索（与 literature_search_tool 一致），失败时返回错误信息。"""
+    if not (query or "").strip():
+        return "No query provided."
+    try:
+        from langchain_community.retrievers import ArxivRetriever  # type: ignore
+
+        max_k = min(max(top_k, 1), 50)
+        retriever = ArxivRetriever(
+            top_k_results=max_k,
+            load_max_docs=max_k,
+            load_all_available_meta=True,
+        )
+        docs = retriever.get_relevant_documents(query.strip())
+        if not docs:
+            return "No arXiv results found for the query."
+        lines = []
+        for i, doc in enumerate(docs, 1):
+            meta = getattr(doc, "metadata", {}) or {}
+            title = meta.get("title") or meta.get("Title") or ""
+            summary = meta.get("summary") or meta.get("Summary") or (doc.page_content or "")[:500]
+            entry_id = meta.get("entry_id") or meta.get("Entry ID") or meta.get("url") or ""
+            lines.append(f"{i}. {title}\n   {entry_id}\n   {summary}")
+        return "\n\n".join(lines)
+    except Exception as e:
+        logger.warning("arxiv_search fallback (ArxivRetriever) failed: %s", e)
+        return f"[ERROR] arxiv_search failed: {e}"
 
 
 def get_arxiv_search_tool(max_search_results: int):
@@ -246,26 +320,43 @@ def get_arxiv_search_tool(max_search_results: int):
             return (inp.get("query") or "").strip()
         return (getattr(inp, "query", None) or "").strip()
 
-    def _invoke_sync(inp) -> str:
-        raw = _get_query(inp)
+    def _invoke_sync(query: str) -> str:
+        """StructuredTool 会按 args_schema 将参数以关键字传入，此处为 query。"""
+        raw = (query or "").strip() if isinstance(query, str) else _get_query(query)
         q = _normalize_arxiv_query(raw)
+        if not (q or "").strip():
+            logger.warning("arxiv_search: empty query after normalize, skipping")
+            return "No query provided or query was empty after normalization."
         if q != raw:
             logger.info("arxiv_search query normalized: %r -> %r", raw[:80], q[:80])
-        return base.invoke({"query": q})
+        try:
+            return base.invoke({"query": q})
+        except Exception as e:
+            logger.warning("arxiv_search (ArxivQueryRun) failed, fallback to ArxivRetriever: %s", e)
+            return _arxiv_search_with_retriever(q, max_search_results)
 
-    async def _ainvoke_async(inp) -> str:
-        raw = _get_query(inp)
+    async def _ainvoke_async(query: str) -> str:
+        """StructuredTool 会按 args_schema 将参数以关键字传入，此处为 query。"""
+        raw = (query or "").strip() if isinstance(query, str) else _get_query(query)
         q = _normalize_arxiv_query(raw)
+        if not (q or "").strip():
+            logger.warning("arxiv_search: empty query after normalize, skipping")
+            return "No query provided or query was empty after normalization."
         if q != raw:
             logger.info("arxiv_search query normalized: %r -> %r", raw[:80], q[:80])
-        return await base.ainvoke({"query": q})
+        try:
+            # 在线程中执行同步调用，避免 ArxivQueryRun/arxiv 在 async 下的兼容问题
+            return await asyncio.to_thread(base.invoke, {"query": q})
+        except Exception as e:
+            logger.warning("arxiv_search (ArxivQueryRun) failed, fallback to ArxivRetriever: %s", e)
+            return await asyncio.to_thread(_arxiv_search_with_retriever, q, max_search_results)
 
     class _ArxivInput(BaseModel):
-        query: str = Field(description="Short keyword query (2-8 terms work best), e.g. 'perovskite solar cell efficiency'.")
+        query: str = Field(description="English short keywords only, 2-8 terms, e.g. 'perovskite solar cell efficiency'. No Chinese.")
 
     return StructuredTool(
         name="arxiv_search",
-        description="Search arXiv for papers. Use SHORT keyword queries (2-8 terms), e.g. 'perovskite solar cell' or 'transformer attention'. Avoid long sentences or questions; arXiv is keyword-based, not like Google.",
+        description="Search arXiv for papers. English only: use 2-8 short English keywords (e.g. 'perovskite solar cell efficiency'). Do NOT use Chinese or long phrases; arXiv does not support them.",
         args_schema=_ArxivInput,
         func=_invoke_sync,
         coroutine=_ainvoke_async,

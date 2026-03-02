@@ -10,7 +10,7 @@ export default function DeepResearchRoutePage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/chat");
+    router.replace("/chat?new=1");
   }, [router]);
 
   return (

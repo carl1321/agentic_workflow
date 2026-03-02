@@ -10,7 +10,7 @@ export default function VaspWorkflowRoutePage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/chat");
+    router.replace("/chat?new=1");
   }, [router]);
 
   return (

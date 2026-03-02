@@ -60,7 +60,20 @@ export default function Main() {
       setViewMode(viewParam as ViewMode);
     }
   }, [searchParams]);
-  
+
+  // 深度研究、VASP 计算等入口：带 ?new=1 时先执行新建对话再清除参数，确保进入的是新建对话页
+  useEffect(() => {
+    const wantNew = searchParams.get("new");
+    if (!wantNew) return;
+    setCurrentChatId(null);
+    setViewMode("chat");
+    setSelectedTool(null);
+    setSelectedResource(null);
+    useStore.getState().resetConversation();
+    useStore.getState().setThreadId("__default__");
+    router.replace("/chat", { scroll: false });
+  }, [searchParams, router]);
+
   // Auto-update currentChatId when threadId changes (new conversation created)
   // This ensures the sidebar shows the current conversation as selected
   // Also refresh sidebar when threadId changes from "__default__" to actual ID
