@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 import type { MenuInfo, UserInfo } from "~/core/api/auth";
-import { useAuthStore } from "~/core/store/auth-store";
+import { useAuthStore, useAuthRehydratedStore } from "~/core/store/auth-store";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 
@@ -29,6 +29,7 @@ export default function AdminLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { user, token, loading, refreshUser, logout } = useAuthStore();
+  const hasRehydrated = useAuthRehydratedStore((s) => s.hasRehydrated);
 
   // 菜单计算必须放在任何可能 return 之前，避免 Hooks 顺序在不同渲染之间变化
   const menus = useMemo(() => {
@@ -56,22 +57,33 @@ export default function AdminLayout({
     }
   }, [token, user, loading, refreshUser, router, pathname]);
 
-  // 未登录访问 /admin/** -> 跳转登录
+  // 未登录访问 /admin/** -> 跳转登录（等 persist 恢复后再判断）
   useEffect(() => {
+    if (!hasRehydrated) return;
     if (loading) return;
     if (!token) {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
-  }, [loading, token, pathname, router]);
+  }, [hasRehydrated, loading, token, pathname, router]);
 
   // 已登录但不是管理员：在副作用中触发重定向，避免在渲染阶段调用 router
   useEffect(() => {
+    if (!hasRehydrated) return;
     if (loading) return;
     if (!token || !user) return;
     if (!isAdminUser(user)) {
       router.replace("/chat");
     }
-  }, [loading, token, user, router]);
+  }, [hasRehydrated, loading, token, user, router]);
+
+  // 未恢复完 auth 时只显示 loading，不跳转
+  if (!hasRehydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
+        Loading...
+      </div>
+    );
+  }
 
   // 加载中或刚拿到 token 但还没拉到 user
   if (loading || (!user && token)) {

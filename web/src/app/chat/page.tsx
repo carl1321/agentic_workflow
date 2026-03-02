@@ -14,7 +14,7 @@ import { Button } from "~/components/ui/button";
 import { ThemeToggle } from "~/components/ui/theme-toggle";
 import { Tooltip } from "~/components/ui/tooltip";
 import { SettingsDialog } from "~/app/settings/dialogs/settings-dialog";
-import { useAuthStore } from "~/core/store/auth-store";
+import { useAuthStore, useAuthRehydratedStore } from "~/core/store/auth-store";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,17 +48,20 @@ export default function HomePage() {
   const router = useRouter();
   const pathname = usePathname();
   const { token, user, logout, refreshUser } = useAuthStore();
+  const hasRehydrated = useAuthRehydratedStore((s) => s.hasRehydrated);
   const [pwdOpen, setPwdOpen] = useState(false);
   const [pwd1, setPwd1] = useState("");
   const [pwd2, setPwd2] = useState("");
   const [pwdError, setPwdError] = useState<string | null>(null);
   const [pwdSaving, setPwdSaving] = useState(false);
 
+  // 仅在 persist 从 localStorage 恢复后再根据 token 跳转，避免刷新时误判未登录
   useEffect(() => {
+    if (!hasRehydrated) return;
     if (!token) {
       router.replace(`/login?redirect=${encodeURIComponent(pathname)}`);
     }
-  }, [token, router, pathname]);
+  }, [hasRehydrated, token, router, pathname]);
 
   // 如果用户已登录但没有菜单信息，尝试刷新用户信息
   useEffect(() => {
@@ -69,6 +72,13 @@ export default function HomePage() {
     }
   }, [token, user, refreshUser]);
 
+  if (!hasRehydrated) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-100">
+        Loading AgenticWorkflow...
+      </div>
+    );
+  }
   if (!token) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-100">

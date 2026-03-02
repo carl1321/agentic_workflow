@@ -6,6 +6,11 @@ import { persist } from "zustand/middleware";
 import type { LoginRequest, LoginResponse, UserInfo } from "../api/auth";
 import { fetchCurrentUser, login as apiLogin } from "../api/auth";
 
+/** 供页面判断「已从 localStorage 恢复」后再决定是否跳登录，避免刷新时误跳 */
+export const useAuthRehydratedStore = create<{ hasRehydrated: boolean }>(() => ({
+  hasRehydrated: false,
+}));
+
 export interface AuthState {
   user: UserInfo | null;
   token: string | null;
@@ -68,6 +73,9 @@ export const useAuthStore = create<AuthState>()(
         token: state.token,
         user: state.user,
       }),
+      onRehydrateStorage: () => (state, err) => {
+        useAuthRehydratedStore.setState({ hasRehydrated: true });
+      },
     },
   ),
 );

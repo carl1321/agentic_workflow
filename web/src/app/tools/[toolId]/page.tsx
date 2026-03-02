@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { ToolExecutor } from "~/app/chat/components/tool-executor";
 import { getToolById } from "~/core/config/tools";
-import { useAuthStore } from "~/core/store/auth-store";
+import { useAuthStore, useAuthRehydratedStore } from "~/core/store/auth-store";
 
 /**
  * 独立工具子页面，便于外嵌或分享链接，如 /tools/ppt_generator
@@ -16,21 +16,29 @@ export default function ToolPage() {
   const router = useRouter();
   const pathname = usePathname();
   const { token } = useAuthStore();
+  const hasRehydrated = useAuthRehydratedStore((s) => s.hasRehydrated);
   const toolId = typeof params.toolId === "string" ? params.toolId : "";
   const tool = getToolById(toolId);
 
   useEffect(() => {
-    if (token === undefined) return;
+    if (!hasRehydrated) return;
     if (!token) {
       router.replace(`/login?redirect=${encodeURIComponent(pathname ?? `/tools/${toolId}`)}`);
     }
-  }, [token, router, pathname, toolId]);
+  }, [hasRehydrated, token, router, pathname, toolId]);
 
   const handleBack = () => {
     router.push("/chat?view=toolbox");
   };
 
-  if (token !== undefined && !token) {
+  if (!hasRehydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F5F5] dark:bg-slate-900">
+        <p className="text-slate-500">Loading...</p>
+      </div>
+    );
+  }
+  if (!token) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#F5F5F5] dark:bg-slate-900">
         <p className="text-slate-500">正在跳转到登录页...</p>

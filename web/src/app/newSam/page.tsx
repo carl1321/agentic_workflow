@@ -16,7 +16,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import type { DesignState, DesignObjective, Constraint } from "../sam-design/types";
-import { useAuthStore } from "~/core/store/auth-store";
+import { useAuthStore, useAuthRehydratedStore } from "~/core/store/auth-store";
 
 /**
  * 从 localStorage 加载设计状态
@@ -53,6 +53,7 @@ export default function NewSAMDesignPage() {
   const router = useRouter();
   const pathname = usePathname();
   const { token, loading, refreshUser } = useAuthStore();
+  const hasRehydrated = useAuthRehydratedStore((s) => s.hasRehydrated);
   const hasCheckedAuthRef = useRef(false);
 
   // 使用useState和useEffect来避免hydration错误
@@ -106,9 +107,10 @@ export default function NewSAMDesignPage() {
     }
   }, []);
 
-  // 访问 /newSam 时进行登录态校验：token 不存在 -> 跳转登录；token 过期 -> refreshUser 触发 401 自动跳登录
+  // 访问 /newSam 时进行登录态校验：等 persist 恢复后再判断；token 不存在 -> 跳转登录；token 过期 -> refreshUser 触发 401 自动跳登录
   useEffect(() => {
     if (!isClient) return;
+    if (!hasRehydrated) return;
     if (loading) return;
 
     if (!token) {
@@ -121,7 +123,7 @@ export default function NewSAMDesignPage() {
     hasCheckedAuthRef.current = true;
     // refreshUser 内部会调用 /auth/me；若 401，则 api-client 会 logout 并重定向到 /login
     refreshUser();
-  }, [isClient, loading, token, refreshUser, router, pathname]);
+  }, [isClient, hasRehydrated, loading, token, refreshUser, router, pathname]);
 
   // 保存状态到 localStorage
   useEffect(() => {
@@ -136,6 +138,14 @@ export default function NewSAMDesignPage() {
 
   if (!isClient) {
     return null; // 避免 hydration 错误
+  }
+
+  if (!hasRehydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-100">
+        Loading...
+      </div>
+    );
   }
 
   // 未登录：已在 effect 里触发跳转，这里只做占位
