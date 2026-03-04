@@ -14,13 +14,13 @@ import { env } from "~/env";
 import { Toaster } from "../components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "AgenticWorkflow",
+  title: "MatGPT",
   description:
-    "AgenticWorkflow: deep exploration and efficient research with workflow-first automation.",
+    "MatGPT: deep exploration and efficient research with workflow-first automation.",
   icons: [
-    { rel: "icon", url: "/favicon.svg" },
-    { rel: "shortcut icon", url: "/favicon.svg" },
-    { rel: "apple-touch-icon", url: "/favicon.svg" },
+    { rel: "icon", url: "/subtitle.jpg", type: "image/jpeg" },
+    { rel: "shortcut icon", url: "/subtitle.jpg", type: "image/jpeg" },
+    { rel: "apple-touch-icon", url: "/subtitle.jpg", type: "image/jpeg" },
   ],
 };
 

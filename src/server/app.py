@@ -87,6 +87,12 @@ from src.server.data_extraction_request import (
     DataExtractionRecordListResponse,
 )
 from src.server.data_extraction_records import get_record_manager
+from src.server.tool_run_history import (
+    save_tool_run,
+    list_tool_runs,
+    get_tool_run,
+    delete_tool_run,
+)
 from src.server.workflow_request import (
     WorkflowConfigRequest,
     WorkflowConfigResponse,
@@ -2087,7 +2093,7 @@ async def execute_tool(request: ToolExecuteRequest):
         logger.info(f"Tool name: '{request.tool_name}'")
         logger.info(f"Mapped arguments: {compressed_args}")
         logger.info(f"=== TOOL EXECUTION START ===")
-        
+        logger.info("[API-DBG] 8 before tool invoke ts=%.3f", time.time())
         # Tools are LangChain tools, so we need to invoke them
         # Use ainvoke for async tools, invoke for sync tools
         try:
@@ -2102,7 +2108,7 @@ async def execute_tool(request: ToolExecuteRequest):
             # Fallback to sync invoke
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, lambda: tool.invoke(mapped_args))
-        
+        logger.info("[API-DBG] 9 after tool invoke ts=%.3f", time.time())
         result_str = str(result) if result is not None else ""
         logger.info(f"=== TOOL EXECUTION END ===")
         logger.info(f"Tool '{request.tool_name}' executed successfully, result length=%d", len(result_str))
@@ -3079,6 +3085,71 @@ async def delete_extraction_record(record_id: str):
     except Exception as e:
         logger.exception(f"Error deleting extraction record: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete extraction record: {str(e)}")
+
+
+# Tool run history (文生图、PPT 生成等历史加载)
+@app.post("/api/tool-history")
+async def api_save_tool_run(request: dict):
+    """保存一次工具运行记录。body: { tool_id, params, result }"""
+    try:
+        tool_id = request.get("tool_id")
+        params = request.get("params") or {}
+        result = request.get("result")
+        if not tool_id or result is None:
+            raise HTTPException(status_code=400, detail="tool_id and result are required")
+        row = save_tool_run(tool_id, params, result if isinstance(result, str) else json.dumps(result, ensure_ascii=False))
+        # created_at 需再查一次或由 DB 返回，此处简化
+        rec = get_tool_run(row["id"]) if row.get("id") else row
+        return rec or row
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error saving tool run: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tool-history")
+async def api_list_tool_runs(
+    tool_id: str = Query(..., description="tool_id, e.g. image_gen or ppt_generator"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """按 tool_id 分页列出历史记录。"""
+    try:
+        return {"records": list_tool_runs(tool_id, limit=limit, offset=offset)}
+    except Exception as e:
+        logger.exception("Error listing tool runs: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tool-history/{record_id}")
+async def api_get_tool_run(record_id: str):
+    """获取单条工具运行记录。"""
+    try:
+        rec = get_tool_run(record_id)
+        if not rec:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return rec
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error getting tool run: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/tool-history/{record_id}")
+async def api_delete_tool_run(record_id: str):
+    """删除一条工具运行记录。"""
+    try:
+        deleted = delete_tool_run(record_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error deleting tool run: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== Workflow API Endpoints ====================

@@ -61,7 +61,7 @@ export default function Main() {
     }
   }, [searchParams]);
 
-  // 深度研究、VASP 计算等入口：带 ?new=1 时先执行新建对话再清除参数，确保进入的是新建对话页
+  // VASP 计算等入口：带 ?new=1 时先执行新建对话再清除参数，确保进入的是新建对话页
   useEffect(() => {
     const wantNew = searchParams.get("new");
     if (!wantNew) return;
@@ -508,7 +508,7 @@ export default function Main() {
     setSelectedTool(null);
   };
 
-  /** 工具箱内「页面」入口：工作流 / 我的文库 / SAM / 深度研究 / VASP */
+  /** 工具箱内「页面」入口：工作流 / 我的文库 / SAM / VASP / 文生图 */
   const handleOpenPage = (page: ToolboxPageId) => {
     if (page === "workflow") {
       router.push("/chat?view=workflow");
@@ -528,9 +528,13 @@ export default function Main() {
       router.push("/newSam");
       return;
     }
-    if (page === "deep_research" || page === "vasp") {
+    if (page === "vasp") {
       handleNewChat();
       setViewMode("chat");
+    }
+    if (page === "image_gen") {
+      router.push("/tools/image_gen");
+      return;
     }
   };
 

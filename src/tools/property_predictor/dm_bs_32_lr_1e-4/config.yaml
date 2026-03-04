@@ -15,6 +15,7 @@ max_norm: 5.0
 metrics: mae
 model_name: unimolv1
 model_size: 84m
+multi_process: false
 num_classes: 1
 patience: 5
 remove_hs: false

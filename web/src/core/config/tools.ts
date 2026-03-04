@@ -38,7 +38,7 @@ export interface ToolConfig {
 }
 
 export const tools: ToolConfig[] = [
-  // 分子科学工具
+  // 分子科学工具（前三个：SAM分子生成器、分子可视化、分子性质预测）
   {
     id: "sam_generator",
     name: "SAM分子生成器",
@@ -69,25 +69,32 @@ export const tools: ToolConfig[] = [
     ],
   },
   {
-    id: "phase_diagram",
-    name: "相图分析",
-    description: "基于 Materials Project 的 0 K 能量凸包分析化学体系的稳定相与亚稳相",
+    id: "visualize_molecules",
+    name: "分子可视化",
+    description: "生成分子结构图",
     category: "molecular",
-    icon: Globe,
-    toolName: "phase_diagram_tool",
+    icon: Microscope,
+    toolName: "visualize_molecules_tool",
     parameters: [
       {
-        name: "chemical_system",
+        name: "smiles",
         type: "string",
-        description: "化学体系，例如 Li-Fe-P-O（元素用短横线分隔）",
+        description: "SMILES字符串",
         required: true,
       },
       {
-        name: "max_entries",
+        name: "width",
         type: "number",
-        description: "最多加载的材料条目数（用于构建相图）",
+        description: "图片宽度（像素）",
         required: false,
-        default: 128,
+        default: 800,
+      },
+      {
+        name: "height",
+        type: "number",
+        description: "图片高度（像素）",
+        required: false,
+        default: 600,
       },
     ],
   },
@@ -116,32 +123,25 @@ export const tools: ToolConfig[] = [
     ],
   },
   {
-    id: "visualize_molecules",
-    name: "分子可视化",
-    description: "生成分子结构图",
+    id: "phase_diagram",
+    name: "相图分析",
+    description: "基于 Materials Project 的 0 K 能量凸包分析化学体系的稳定相与亚稳相",
     category: "molecular",
-    icon: Microscope,
-    toolName: "visualize_molecules_tool",
+    icon: Globe,
+    toolName: "phase_diagram_tool",
     parameters: [
       {
-        name: "smiles",
+        name: "chemical_system",
         type: "string",
-        description: "SMILES字符串",
+        description: "化学体系，例如 Li-Fe-P-O（元素用短横线分隔）",
         required: true,
       },
       {
-        name: "width",
+        name: "max_entries",
         type: "number",
-        description: "图片宽度（像素）",
+        description: "最多加载的材料条目数（用于构建相图）",
         required: false,
-        default: 800,
-      },
-      {
-        name: "height",
-        type: "number",
-        description: "图片高度（像素）",
-        required: false,
-        default: 600,
+        default: 128,
       },
     ],
   },

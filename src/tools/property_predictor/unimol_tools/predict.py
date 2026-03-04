@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 import joblib
 import os
+import time
 
 from .data import DataHub
 from .models import NNModel
@@ -62,9 +63,13 @@ class MolPredict(object):
             self.config.metrics = metrics
         ## load test data
         self.datahub = DataHub(data = data, is_train = False, save_path=self.load_model, **self.config)
+        logger.info("[PROP-DBG] 4 DataHub done, before Trainer ts=%.3f", time.time())
         self.trainer = Trainer(save_path=self.load_model, **self.config)
+        logger.info("[PROP-DBG] 5 Trainer created, before NNModel ts=%.3f", time.time())
         self.model = NNModel(self.datahub.data, self.trainer, **self.config)
+        logger.info("[PROP-DBG] 6 NNModel created, before evaluate ts=%.3f", time.time())
         self.model.evaluate(self.trainer, self.load_model)
+        logger.info("[PROP-DBG] 7 evaluate returned ts=%.3f", time.time())
 
         y_pred = self.model.cv['test_pred']
         scalar = self.datahub.data['target_scaler']

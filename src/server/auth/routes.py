@@ -27,6 +27,22 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 security = HTTPBearer()
 
 
+def _normalize_email(email: Optional[str], username: str) -> str:
+    """返回合法邮箱，避免 DB 中 xxx@yyy@example.com 等非法值导致前端/校验失败。"""
+    e = (email or "").strip()
+    if not e or " " in e or e.lower().endswith(".local"):
+        return f"{(username or 'user').replace('@', '_')}@example.com"
+    # 若是误拼的 xxx@yyy@example.com，去掉末尾 @example.com 得到真实邮箱
+    if e.endswith("@example.com") and e.count("@") >= 2:
+        candidate = e[: -len("@example.com")]
+        if candidate.count("@") == 1 and "." in candidate.split("@")[-1]:
+            return candidate
+    parts = e.split("@")
+    if len(parts) != 2 or not parts[0] or "." not in parts[1]:
+        return f"{(username or 'user').replace('@', '_')}@example.com"
+    return e
+
+
 @router.get("/public-key")
 async def get_public_key_endpoint():
     """
@@ -124,11 +140,11 @@ async def login(request: LoginRequest):
     # Update last login time
     UserDB.update_last_login(user_id)
     
-    # Build user response
+    # Build user response（邮箱与 /me 一致做规范化，避免 DB 非法值）
     user_response = {
         "id": user_id,
         "username": user_data["username"],
-        "email": user_data["email"],
+        "email": _normalize_email(user_data.get("email"), user_data["username"]),
         "real_name": user_data.get("real_name"),
         "is_superuser": user_data.get("is_superuser", False),
         "roles": roles,
@@ -313,7 +329,7 @@ async def get_current_user_info(
     return UserInfoResponse(
         id=current_user.id,
         username=current_user.username,
-        email=user_data["email"],
+        email=_normalize_email(user_data.get("email"), current_user.username or user_data.get("username", "user")),
         real_name=current_user.real_name,
         is_superuser=current_user.is_superuser,
         roles=[

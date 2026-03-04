@@ -1,29 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { Search, Play, Workflow, FlaskConical, Library, MessageSquare, Cpu } from "lucide-react";
+import { Search, Play, Workflow, FlaskConical, Library, Cpu, Image as ImageIcon } from "lucide-react";
 import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { cn } from "~/lib/utils";
 import { tools, type ToolConfig, type ToolCategory } from "~/core/config/tools";
 
-export type ToolboxPageId = "workflow" | "library" | "sam" | "deep_research" | "vasp";
+export type ToolboxPageId = "workflow" | "library" | "sam" | "vasp" | "image_gen";
 
 /** 置顶功能 id 到独立子页面路径的映射，便于外嵌与分享 */
 const PAGE_ENTRY_HREF: Record<ToolboxPageId, string> = {
-  workflow: "/workflow",
-  sam: "/newSam",
   library: "/library",
-  deep_research: "/deep-research",
+  sam: "/newSam",
   vasp: "/vasp-workflow",
+  workflow: "/workflow",
+  image_gen: "/tools/image_gen",
 };
 
 const PAGE_ENTRIES: Array<{ id: ToolboxPageId; name: string; description: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: "workflow", name: "工作流", description: "编排与运行工作流", icon: Workflow },
-  { id: "sam", name: "SAM 分子设计", description: "分子设计与结构优化", icon: FlaskConical },
   { id: "library", name: "我的文库", description: "管理个人文献与资料", icon: Library },
-  { id: "deep_research", name: "深度研究", description: "基于对话的深度研究", icon: MessageSquare },
+  { id: "sam", name: "SAM 分子设计", description: "分子设计与结构优化", icon: FlaskConical },
   { id: "vasp", name: "VASP 计算", description: "VASP 相关计算与对话", icon: Cpu },
+  { id: "workflow", name: "工作流", description: "编排与运行工作流", icon: Workflow },
+  { id: "image_gen", name: "文生图", description: "根据文本描述生成图片", icon: ImageIcon },
 ];
 
 interface ToolboxProps {
@@ -36,7 +36,8 @@ export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
   const [selectedCategory, setSelectedCategory] = useState<ToolCategory | "all">("all");
 
   const filteredTools = useMemo(() => {
-    let result = tools;
+    // 不在下方工具网格重复展示已置顶的「文生图」工具
+    let result = tools.filter((t) => t.id !== "image_gen");
 
     // 按分类筛选
     if (selectedCategory !== "all") {
@@ -60,7 +61,7 @@ export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
     { id: "all", label: "全部" },
     { id: "molecular", label: "分子科学" },
     { id: "literature", label: "文献研究" },
-    { id: "general", label: "通用工具" },
+    { id: "general", label: "通用技能" },
   ];
 
   return (
@@ -96,9 +97,9 @@ export function Toolbox({ onToolSelect, onOpenPage }: ToolboxProps) {
         ))}
       </div>
 
-      {/* 置顶功能：链接到独立子页面，便于外嵌与分享 */}
+      {/* 置顶技能：链接到独立子页面，便于外嵌与分享 */}
       <div className="px-6 py-3 border-b border-slate-200 dark:border-slate-700">
-        <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">置顶功能</div>
+        <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">置顶技能</div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           {PAGE_ENTRIES.map((entry) => {
             const Icon = entry.icon;

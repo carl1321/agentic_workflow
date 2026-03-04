@@ -1,11 +1,15 @@
 import os
+import time
 import pandas as pd
 from typing import List
+import logging
 
 # Get the directory of this file
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 
 from src.tools.property_predictor.unimol_tools.predict import MolPredict
+
+_logger = logging.getLogger(__name__)
 
 # convert input to csv 
 def input_form(smiles_list):
@@ -23,12 +27,14 @@ class Predictor:
         self.DM_dir = os.path.join(_current_dir, 'dm_bs_32_lr_1e-4')
         
     def HOMO_pred(self, smiles, generated):
+        _logger.info("[PROP-DBG] 2 HOMO_pred start, before MolPredict ts=%.3f", time.time())
         if generated:
             smiles_dir = "src/tools/molecular_generator/generated_data.csv"
         else:
             smiles = input_form(smiles)
             smiles_dir = "smiles_data.csv"
         HOMO_predictor = MolPredict(load_model=self.HOMO_dir)
+        _logger.info("[PROP-DBG] 3 HOMO MolPredict created, before predict() ts=%.3f", time.time())
         HOMO_pred = HOMO_predictor.predict(smiles_dir)
         return HOMO_pred
     
@@ -53,6 +59,7 @@ class Predictor:
         return DM_pred
     
     def prop_pred(self, smiles, generated, HOMO=False, LUMO=False, DM=False):
+        _logger.info("[PROP-DBG] 1 prop_pred entered ts=%.3f", time.time())
         results = {}
         if HOMO:
             results['HOMO'] = self.HOMO_pred(smiles, generated)

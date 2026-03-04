@@ -132,4 +132,31 @@ export async function casdoorCallback(
   return res.json();
 }
 
+/** 调用后端登出，使 token 加入黑名单 */
+export async function logoutApi(token: string): Promise<void> {
+  const url = resolveServiceURL("auth/logout");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `登出失败: ${res.status}`);
+  }
+}
+
+/** 获取 Casdoor 登出 URL，用于清除 Casdoor 会话；未配置时返回 null */
+export async function getCasdoorLogoutUrl(
+  redirectUri?: string | null,
+): Promise<{ url: string | null; configured: boolean }> {
+  const params = new URLSearchParams();
+  if (redirectUri) params.set("redirect_uri", redirectUri);
+  const url =
+    resolveServiceURL("auth/casdoor/logout-url") +
+    (params.toString() ? `?${params.toString()}` : "");
+  const res = await fetch(url);
+  if (!res.ok) return { url: null, configured: false };
+  return res.json();
+}
+
 

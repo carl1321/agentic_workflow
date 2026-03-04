@@ -550,6 +550,25 @@ def create_data_extraction_tables(conn):
         logger.info("数据提取系统表创建完成")
 
 
+def create_tool_run_history_tables(conn):
+    """创建工具箱运行历史表（文生图、PPT 生成等）"""
+    logger.info("创建工具箱运行历史表...")
+    with conn.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tool_run_history (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tool_id VARCHAR(64) NOT NULL,
+                params_json JSONB,
+                result_json TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_tool_run_history_tool_id ON tool_run_history(tool_id);
+            CREATE INDEX IF NOT EXISTS idx_tool_run_history_created_at ON tool_run_history(created_at DESC);
+        """)
+        conn.commit()
+    logger.info("工具箱运行历史表创建完成")
+
+
 def create_sam_design_tables(conn):
     """创建SAM分子设计历史记录表"""
     logger.info("创建SAM分子设计历史记录表...")
@@ -634,6 +653,7 @@ def init_database():
         create_workflow_tables(conn)
         create_chat_tables(conn)
         create_data_extraction_tables(conn)
+        create_tool_run_history_tables(conn)
         create_sam_design_tables(conn)
         
         logger.info("数据库初始化完成！")

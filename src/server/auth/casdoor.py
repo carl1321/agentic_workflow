@@ -10,6 +10,9 @@ Failure to register does not affect core auth routes (login, public-key, etc.).
 import json
 import logging
 import os
+import ssl
+import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -17,7 +20,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src.config.loader import load_yaml_config, get_str_env
 
@@ -50,6 +53,7 @@ def _get_casdoor_config() -> Optional[dict]:
                     "client_secret": _norm_key(casdoor, "client_secret", "client-secret") or "",
                     "organization_name": _norm_key(casdoor, "organization_name", "organization-name") or "built-in",
                     "application_name": _norm_key(casdoor, "application_name", "application-name") or "app-built-in",
+                    "certificate": _norm_key(casdoor, "certificate") or "",
                 }
     except Exception as e:
         logger.debug("No casdoor in conf.yaml: %s", e)
@@ -63,7 +67,29 @@ def _get_casdoor_config() -> Optional[dict]:
         "client_secret": get_str_env("CASDOOR_CLIENT_SECRET", ""),
         "organization_name": get_str_env("CASDOOR_ORG_NAME", ""),
         "application_name": get_str_env("CASDOOR_APP_NAME", ""),
+        "certificate": get_str_env("CASDOOR_CERTIFICATE", ""),
     }
+
+
+def _ssl_context_for_casdoor(cfg: dict) -> ssl.SSLContext:
+    """若配置了 certificate，则用其校验 Casdoor 的 HTTPS；否则用系统默认。"""
+    ctx = ssl.create_default_context()
+    cert = (cfg.get("certificate") or "").strip()
+    if cert:
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False) as f:
+                f.write(cert)
+                tmp = f.name
+            try:
+                ctx.load_verify_locations(tmp)
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.warning("Casdoor certificate load failed, using default SSL: %s", e)
+    return ctx
 
 
 class CasdoorCallbackBody(BaseModel):
@@ -104,8 +130,26 @@ async def casdoor_login(
     return {"url": url}
 
 
-def _exchange_code_for_token(cfg: dict, code: str, redirect_uri: str) -> Optional[dict]:
-    """Exchange authorization code for access token. Returns token response or None."""
+@router.get("/casdoor/logout-url")
+async def casdoor_logout_url(redirect_uri: Optional[str] = None):
+    """
+    返回 Casdoor SSO 登出 URL。前端登出时跳转至此 URL 可清除 Casdoor 会话；
+    登出后默认跳转到 Casdoor 的登录页（非本应用登录页）。
+    """
+    cfg = _get_casdoor_config()
+    if not cfg or not cfg.get("client_id"):
+        return {"url": None, "configured": False}
+    endpoint = cfg["endpoint"].rstrip("/")
+    path = "/api/sso-logout"
+    # 默认跳转到 Casdoor 登录页，便于用户下次从 Casdoor 重新登录
+    redirect = (redirect_uri or "").strip() or f"{endpoint}/login"
+    params = {"redirect_uri": redirect}
+    url = f"{endpoint}{path}?{urllib.parse.urlencode(params)}"
+    return {"url": url, "configured": True}
+
+
+def _exchange_code_for_token(cfg: dict, code: str, redirect_uri: str) -> tuple[Optional[dict], Optional[str]]:
+    """Exchange authorization code for access token. Returns (token_response, error_message)."""
     endpoint = cfg["endpoint"]
     client_id = cfg["client_id"]
     client_secret = cfg["client_secret"]
@@ -123,12 +167,17 @@ def _exchange_code_for_token(cfg: dict, code: str, redirect_uri: str) -> Optiona
         method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
+    ctx = _ssl_context_for_casdoor(cfg)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
+            return json.loads(resp.read().decode()), None
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        logger.warning("Casdoor token exchange HTTP %s: %s", e.code, body[:200])
+        return None, f"Casdoor 返回 {e.code}: {body[:200]}" if body else str(e)
     except Exception as e:
         logger.warning("Casdoor token exchange failed: %s", e)
-        return None
+        return None, str(e)
 
 
 def _get_casdoor_user(cfg: dict, access_token: str) -> Optional[dict]:
@@ -140,8 +189,9 @@ def _get_casdoor_user(cfg: dict, access_token: str) -> Optional[dict]:
         method="GET",
         headers={"Authorization": f"Bearer {access_token}"},
     )
+    ctx = _ssl_context_for_casdoor(cfg)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
             return json.loads(resp.read().decode())
     except Exception as e:
         logger.warning("Casdoor get-account failed: %s", e)
@@ -153,6 +203,25 @@ async def casdoor_callback(body: CasdoorCallbackBody):
     """
     Exchange code for Casdoor token, get user, sync to local user, return same LoginResponse as /auth/login.
     """
+    try:
+        return await _casdoor_callback_impl(body)
+    except HTTPException:
+        raise
+    except ValidationError as e:
+        logger.exception("Casdoor callback validation error: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid response data: {e.errors()}",
+        )
+    except Exception as e:
+        logger.exception("Casdoor callback failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Casdoor login failed: {getattr(e, 'message', str(e))}",
+        )
+
+
+async def _casdoor_callback_impl(body: CasdoorCallbackBody):
     cfg = _get_casdoor_config()
     if not cfg or not cfg.get("client_id"):
         raise HTTPException(
@@ -170,11 +239,14 @@ async def casdoor_callback(body: CasdoorCallbackBody):
             detail="redirect_uri required in callback or set CASDOOR_REDIRECT_URI.",
         )
 
-    token_resp = _exchange_code_for_token(cfg, body.code, redirect_uri)
+    token_resp, token_err = _exchange_code_for_token(cfg, body.code, redirect_uri)
     if not token_resp or not token_resp.get("access_token"):
+        detail = "Failed to exchange code for token."
+        if token_err:
+            detail += " " + token_err
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Failed to exchange code for token.",
+            detail=detail,
         )
     access_token = token_resp["access_token"]
     casdoor_user = _get_casdoor_user(cfg, access_token)
@@ -188,10 +260,14 @@ async def casdoor_callback(body: CasdoorCallbackBody):
     name = casdoor_user.get("name") or casdoor_user.get("sub") or casdoor_user.get("displayName") or "casdoor_user"
     raw_email = (casdoor_user.get("email") or "").strip()
     # LoginResponse.user.email 需为合法邮箱，.local 等保留域会被 Pydantic EmailStr 拒绝
-    if raw_email and "@" in raw_email and " " not in raw_email and not raw_email.lower().endswith(".local"):
-        email = raw_email
+    if raw_email and " " not in raw_email and not raw_email.lower().endswith(".local"):
+        # 仅当 @ 后是合法域且不含多个 @ 时才用（避免 name 为邮箱时再拼 @example.com）
+        if raw_email.count("@") == 1 and "." in raw_email.split("@")[-1]:
+            email = raw_email
+        else:
+            email = f"{name.replace('@', '_')}@example.com"
     else:
-        email = f"{name}@example.com"
+        email = f"{name.replace('@', '_')}@example.com"
     sub = casdoor_user.get("sub") or casdoor_user.get("id") or name
 
     from .db import UserDB
@@ -257,7 +333,12 @@ async def casdoor_callback(body: CasdoorCallbackBody):
     def _normalize_role(role: dict) -> dict:
         out = {}
         for k, v in role.items():
-            out[k] = v.isoformat() if isinstance(v, datetime) else v
+            if isinstance(v, datetime):
+                out[k] = v.isoformat()
+            elif v is None and k in ("created_at", "updated_at"):
+                out[k] = datetime.utcnow().isoformat()
+            else:
+                out[k] = v
         return out
 
     token = create_access_token(
@@ -265,10 +346,23 @@ async def casdoor_callback(body: CasdoorCallbackBody):
         username=user_data["username"],
         is_superuser=user_data.get("is_superuser", False),
     )
-    # 返回的 email 须通过 Pydantic EmailStr，.local 等会被拒绝
+    # 返回的 email 须通过 Pydantic EmailStr；若 DB 里存了非法值（如 xxx@yyy@example.com）也走后备
     resp_email = (user_data.get("email") or "").strip()
-    if not resp_email or " " in resp_email or resp_email.lower().endswith(".local"):
-        resp_email = f"{user_data['username']}@example.com"
+    def _email_ok(e: str) -> bool:
+        if not e or " " in e or e.lower().endswith(".local"):
+            return False
+        parts = e.split("@")
+        if len(parts) != 2 or not parts[0] or "." not in parts[1]:
+            return False
+        return True
+    if not _email_ok(resp_email):
+        safe_local = (user_data.get("username") or "user").replace("@", "_")
+        resp_email = f"{safe_local}@example.com"
+    # UserResponse 要求 created_at/updated_at 为 str，不能为 None
+    _ca = user_data.get("created_at")
+    _ua = user_data.get("updated_at")
+    created_at_str = _ca.isoformat() if _ca else datetime.utcnow().isoformat()
+    updated_at_str = _ua.isoformat() if _ua else datetime.utcnow().isoformat()
     user_response = {
         "id": user_id,
         "username": user_data["username"],
@@ -282,7 +376,7 @@ async def casdoor_callback(body: CasdoorCallbackBody):
         "data_permission_level": user_data.get("data_permission_level", "self"),
         "is_active": user_data.get("is_active", True),
         "last_login_at": datetime.utcnow().isoformat(),
-        "created_at": user_data.get("created_at").isoformat() if user_data.get("created_at") else None,
-        "updated_at": user_data.get("updated_at").isoformat() if user_data.get("updated_at") else None,
+        "created_at": created_at_str,
+        "updated_at": updated_at_str,
     }
     return LoginResponse(access_token=token, token_type="bearer", user=user_response)

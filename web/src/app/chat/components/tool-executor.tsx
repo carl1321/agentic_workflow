@@ -17,6 +17,12 @@ import {
   type DataExtractionRecord,
   type DataExtractionRecordRequest,
 } from "~/core/api/data-extraction";
+import {
+  saveToolRunHistory,
+  getToolRunHistoryList,
+  deleteToolRunRecord,
+  type ToolRunHistoryRecord,
+} from "~/core/api/tool-history";
 import { toast } from "sonner";
 
 interface ToolExecutorProps {
@@ -81,6 +87,11 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
   const [pptDownloadUrl, setPptDownloadUrl] = useState<string | null>(null);
   const [pptPdfDownloadUrl, setPptPdfDownloadUrl] = useState<string | null>(null);
   const [pptSlidesPreviewUrls, setPptSlidesPreviewUrls] = useState<string[]>([]);
+
+  // 文生图 / PPT 生成 历史记录（与 data_extraction 的 historyRecords 分开）
+  const [toolHistoryRecords, setToolHistoryRecords] = useState<ToolRunHistoryRecord[]>([]);
+  const [showToolHistory, setShowToolHistory] = useState(false);
+  const [loadingToolHistory, setLoadingToolHistory] = useState(false);
   
   // Initialize extraction type from params
   useEffect(() => {
@@ -298,6 +309,73 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
       toast.error("加载历史记录失败");
     } finally {
       setLoadingHistory(false);
+    }
+  };
+
+  // 文生图 / PPT 生成：加载历史列表
+  const loadToolHistoryRecords = async () => {
+    if (tool.id !== "image_gen" && tool.id !== "ppt_generator") return;
+    try {
+      setLoadingToolHistory(true);
+      const res = await getToolRunHistoryList(tool.id, 50, 0);
+      setToolHistoryRecords(res.records || []);
+    } catch (e) {
+      console.error("Failed to load tool history:", e);
+      toast.error("加载历史记录失败");
+    } finally {
+      setLoadingToolHistory(false);
+    }
+  };
+
+  // 从历史记录恢复：文生图 或 PPT
+  const restoreFromToolRecord = (record: ToolRunHistoryRecord) => {
+    if (tool.id === "image_gen") {
+      setResult(record.result_json ?? null);
+      setError(null);
+      setShowToolHistory(false);
+      return;
+    }
+    if (tool.id === "ppt_generator" && record.result_json) {
+      try {
+        const data = JSON.parse(record.result_json) as {
+          outline?: string;
+          pptx_download_url?: string;
+          pdf_download_url?: string;
+          slides_preview_urls?: string[];
+          download_url?: string;
+        };
+        if (data.outline !== undefined) setOutlineContent(data.outline);
+        setPptDownloadUrl(
+          data.pptx_download_url
+            ? (data.pptx_download_url.startsWith("/") ? data.pptx_download_url : `/${data.pptx_download_url}`)
+            : data.download_url
+            ? (data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`)
+            : null
+        );
+        setPptPdfDownloadUrl(
+          data.pdf_download_url
+            ? (data.pdf_download_url.startsWith("/") ? data.pdf_download_url : `/${data.pdf_download_url}`)
+            : null
+        );
+        setPptSlidesPreviewUrls((data.slides_preview_urls || []).map((u) => (u.startsWith("/") ? u : `/${u}`)));
+        setPptStep(3);
+        setResult(record.result_json);
+        setError(null);
+        setShowToolHistory(false);
+      } catch {
+        toast.error("历史记录格式无效");
+      }
+    }
+  };
+
+  const handleDeleteToolRecord = async (recordId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteToolRunRecord(recordId);
+      toast.success("已删除");
+      loadToolHistoryRecords();
+    } catch {
+      toast.error("删除失败");
     }
   };
 
@@ -1254,6 +1332,11 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
               setPptStep(3);
               setResult(resultText);
               setError(null);
+              saveToolRunHistory(
+                "ppt_generator",
+                { topic: params.topic, outline: outlineContent, engine: params.engine },
+                resultText
+              ).catch(() => {});
             } else if (engine === "simple" && data.download_url) {
               setPptDownloadUrl(
                 data.download_url.startsWith("/") ? data.download_url : `/${data.download_url}`
@@ -1263,6 +1346,11 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
               setPptStep(3);
               setResult(resultText);
               setError(null);
+              saveToolRunHistory(
+                "ppt_generator",
+                { topic: params.topic, outline: outlineContent, engine: params.engine },
+                resultText
+              ).catch(() => {});
             } else {
               setResult(resultText);
             }
@@ -1429,6 +1517,16 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
         }
       } else {
         setResult(resultText);
+        if (tool.id === "image_gen" && resultText) {
+          try {
+            const parsed = JSON.parse(resultText) as { error?: string; download_url?: string };
+            if (parsed && !parsed.error && parsed.download_url) {
+              saveToolRunHistory("image_gen", { ...params }, resultText).catch(() => {});
+            }
+          } catch {
+            // ignore
+          }
+        }
       }
     } catch (e) {
       setError((e as Error).message || "工具执行失败");
@@ -2136,21 +2234,21 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
     <div className="flex h-full w-full flex-col bg-white dark:bg-slate-900">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <Button
             variant="ghost"
             size="icon"
             onClick={onBack || onClose}
-            className="h-8 w-8"
+            className="h-8 w-8 flex-shrink-0"
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30">
+          <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 flex-shrink-0">
             <Icon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
           </div>
           {tool.id === "data_extraction" && extractionType === "material_extraction" && (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               onClick={() => {
                 setShowHistory(!showHistory);
@@ -2158,13 +2256,30 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                   loadHistoryRecords();
                 }
               }}
-              className="h-8"
+              className="h-8 flex-shrink-0"
             >
               <History className="h-4 w-4 mr-2" />
-              历史记录
+              运行历史
             </Button>
           )}
-          <div>
+          {(tool.id === "image_gen" || tool.id === "ppt_generator") && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setShowToolHistory(!showToolHistory);
+                if (!showToolHistory) {
+                  loadToolHistoryRecords();
+                }
+              }}
+              className="h-8 flex-shrink-0"
+              title="加载运行历史"
+            >
+              <History className="h-4 w-4 mr-2" />
+              运行历史
+            </Button>
+          )}
+          <div className="min-w-0 flex-1">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
               {tool.name}
             </h2>
@@ -2259,6 +2374,78 @@ export function ToolExecutor({ tool, onClose, onBack, onExecute }: ToolExecutorP
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 文生图 / PPT 生成 历史记录面板 */}
+      {showToolHistory && (tool.id === "image_gen" || tool.id === "ppt_generator") && (
+        <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 max-h-96 overflow-y-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">历史记录</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowToolHistory(false)}
+              className="h-7 text-xs"
+            >
+              关闭
+            </Button>
+          </div>
+          {loadingToolHistory ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+              <span className="ml-2 text-sm text-slate-600 dark:text-slate-400">加载中...</span>
+            </div>
+          ) : toolHistoryRecords.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+              <p className="text-sm">暂无历史记录</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {toolHistoryRecords.map((record) => {
+                const title =
+                  tool.id === "image_gen"
+                    ? (record.params_json && typeof record.params_json === "object" && "prompt" in record.params_json
+                        ? String((record.params_json as { prompt?: string }).prompt ?? "").slice(0, 40) + "..."
+                        : "文生图")
+                    : (record.params_json && typeof record.params_json === "object" && "topic" in record.params_json
+                        ? String((record.params_json as { topic?: string }).topic ?? "").slice(0, 40) + "..."
+                        : "PPT");
+                return (
+                  <div
+                    key={record.id}
+                    onClick={() => restoreFromToolRecord(record)}
+                    className={cn(
+                      "p-3 rounded-lg border cursor-pointer transition-colors",
+                      "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700",
+                      "hover:bg-slate-50 dark:hover:bg-slate-700"
+                    )}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+                          {title || "未命名"}
+                        </div>
+                        {record.created_at && (
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            {new Date(record.created_at).toLocaleString("zh-CN")}
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => handleDeleteToolRecord(record.id, e)}
+                        className="h-7 w-7 text-slate-400 hover:text-red-500"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
