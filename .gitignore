@@ -98,7 +98,7 @@ conf.yaml
 # Data & Workflows
 # ============================================
 # Workflow files (user-generated)
-workflows/
+
 workflows/**/*.json
 
 # Data directories
@@ -199,6 +199,11 @@ htmlcov/
 
 # ============================================
 # ============================================
+# Casdoor（可选 SSO，当前已注释改用普通登录）
+# ============================================
+src/server/auth/casdoor.py
+
+# ============================================
 # Security & Keys
 # ============================================
 # RSA keys for password encryption
@@ -235,3 +240,4 @@ ppt_output/
 slide_deck/
 src/third_party/
 outputs/
+.pnpm-store/
